@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown } from './markerEngine'
+import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, renameMatchingTag } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -36,5 +36,12 @@ describe('marker engine', () => {
   it('adds separate opening and closing marker lines', () => {
     const result = addTagToRange('one\ntwo\nthree', 1, 1, 'therapy')
     expect(result.source).toBe('one\n<!-- therapy -->\ntwo\n<!-- /therapy -->\nthree')
+  })
+
+  it('renames the matching close when a rendered opening chip changes', () => {
+    const before = '<!-- therapy -->\nnote\n<!-- /therapy -->'
+    const after = '<!-- wellness -->\nnote\n<!-- /therapy -->'
+    expect(findMarkerTagRename(before, after)).toEqual({ line: 0, oldTag: 'therapy', newTag: 'wellness' })
+    expect(renameMatchingTag(after, 0, 'therapy', 'wellness')).toBe('<!-- wellness -->\nnote\n<!-- /wellness -->')
   })
 })

@@ -3,7 +3,7 @@ import { EditorState } from '@codemirror/state'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, type DecorationSet } from '@codemirror/view'
-import { parseMarkdown, type ParsedMarkdown } from './markerEngine'
+import { findMarkerTagRename, parseMarkdown, renameMatchingTag, type ParsedMarkdown } from './markerEngine'
 
 function lineStyle(parsed: ParsedMarkdown, lineIndex: number) {
   if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
@@ -72,10 +72,13 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSelectionRef = useRef(onSelection)
+  const sourceModeRef = useRef(sourceMode)
+  const syncingRenameRef = useRef(false)
   const [initialValue] = useState(value)
 
   useEffect(() => { onChangeRef.current = onChange }, [onChange])
   useEffect(() => { onSelectionRef.current = onSelection }, [onSelection])
+  useEffect(() => { sourceModeRef.current = sourceMode }, [sourceMode])
 
   useEffect(() => {
     if (!host.current) return
@@ -89,7 +92,22 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
           rangeDecorations,
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) onChangeRef.current(update.state.doc.toString())
+            if (update.docChanged) {
+              let next = update.state.doc.toString()
+              if (!sourceModeRef.current && !syncingRenameRef.current) {
+                const rename = findMarkerTagRename(update.startState.doc.toString(), next)
+                if (rename) {
+                  const renamed = renameMatchingTag(next, rename.line, rename.oldTag, rename.newTag)
+                  if (renamed !== next) {
+                    syncingRenameRef.current = true
+                    update.view.dispatch({ changes: { from: 0, to: next.length, insert: renamed } })
+                    syncingRenameRef.current = false
+                    next = renamed
+                  }
+                }
+              }
+              onChangeRef.current(next)
+            }
             if (update.selectionSet || update.docChanged) {
               const selection = update.state.selection.main
               onSelectionRef.current?.(selection.from, selection.to)

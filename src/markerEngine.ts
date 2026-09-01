@@ -195,6 +195,87 @@ export function normalizeRepeatedOpens(source: string) {
   return { source: output.join('\n'), changed }
 }
 
+interface MarkerTagSpan {
+  tag: string
+  kind: MarkerKind
+  start: number
+  end: number
+}
+
+function markerTagSpans(line: string): MarkerTagSpan[] {
+  const match = line.match(MARKER_PATTERN)
+  if (!match) return []
+  const markerStart = line.indexOf('<!--')
+  const body = match[1]
+  const tokens = /\/?(?:"(?:\\.|[^"])*"|\S+)/gu
+  const spans: MarkerTagSpan[] = []
+  let token: RegExpExecArray | null
+  while ((token = tokens.exec(body))) {
+    const raw = token[0]
+    const kind: MarkerKind = raw.startsWith('/') ? 'close' : 'open'
+    const value = raw.replace(/^\//u, '')
+    const tag = value.startsWith('"') ? value.slice(1, -1).replaceAll('\\"', '"') : value
+    spans.push({ tag: normalizeTag(tag), kind, start: markerStart + 4 + token.index, end: markerStart + 4 + token.index + raw.length })
+  }
+  return spans
+}
+
+function formatTagName(tag: string) {
+  return tag.includes(' ') ? `"${tag.replaceAll('"', '\\"')}"` : tag
+}
+
+function replaceMarkerTag(line: string, span: MarkerTagSpan, newTag: string) {
+  const replacement = `${span.kind === 'close' ? '/' : ''}${formatTagName(normalizeTag(newTag))}`
+  return `${line.slice(0, span.start)}${replacement}${line.slice(span.end)}`
+}
+
+export function findMarkerTagRename(before: string, after: string) {
+  const beforeLines = before.split('\n')
+  const afterLines = after.split('\n')
+  const lineCount = Math.min(beforeLines.length, afterLines.length)
+  for (let line = 0; line < lineCount; line += 1) {
+    const previous = markerTagSpans(beforeLines[line])
+    const current = markerTagSpans(afterLines[line])
+    if (!previous.length || previous.length !== current.length) continue
+    const changed = current.map((span, index) => span.kind === previous[index].kind && span.tag !== previous[index].tag ? index : -1).filter((index) => index >= 0)
+    if (changed.length === 1 && current.every((span, index) => index === changed[0] || span.tag === previous[index].tag)) {
+      return { line, oldTag: previous[changed[0]].tag, newTag: current[changed[0]].tag }
+    }
+  }
+  return undefined
+}
+
+export function renameMatchingTag(source: string, markerLine: number, oldTag: string, newTag: string) {
+  const lines = source.split('\n')
+  const marker = lines[markerLine]
+  const changedSpan = markerTagSpans(marker).find((span) => span.tag === normalizeTag(newTag))
+  if (!changedSpan) return source
+  const targetKind: MarkerKind = changedSpan.kind === 'open' ? 'close' : 'open'
+  let targetLine = -1
+
+  if (changedSpan.kind === 'open') {
+    for (let index = markerLine + 1; index < lines.length; index += 1) {
+      if (markerTagSpans(lines[index]).some((span) => span.kind === 'close' && span.tag === normalizeTag(oldTag))) {
+        targetLine = index
+        break
+      }
+    }
+  } else {
+    for (let index = markerLine - 1; index >= 0; index -= 1) {
+      if (markerTagSpans(lines[index]).some((span) => span.kind === 'open' && span.tag === normalizeTag(oldTag))) {
+        targetLine = index
+        break
+      }
+    }
+  }
+
+  if (targetLine < 0) return source
+  const target = markerTagSpans(lines[targetLine]).find((span) => span.kind === targetKind && span.tag === normalizeTag(oldTag))
+  if (!target) return source
+  lines[targetLine] = replaceMarkerTag(lines[targetLine], target, newTag)
+  return lines.join('\n')
+}
+
 export function lineRangeForSelection(source: string, from: number, to: number) {
   const before = source.slice(0, from)
   const selected = source.slice(from, to)
