@@ -1,0 +1,26 @@
+{
+  "name": "Notes",
+  "short_name": "Notes",
+  "description": "A calm, source-first daily notes app.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f1ed",
+  "theme_color": "#29262d",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Capture a thought",
+      "short_name": "Capture",
+      "url": "/?mode=capture",
+      "description": "Open today’s notes at the end"
+    }
+  ]
+}
