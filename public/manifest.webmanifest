@@ -14,13 +14,5 @@
       "type": "image/svg+xml",
       "purpose": "any maskable"
     }
-  ],
-  "shortcuts": [
-    {
-      "name": "Capture a thought",
-      "short_name": "Capture",
-      "url": "/?mode=capture",
-      "description": "Open today’s notes at the end"
-    }
   ]
 }

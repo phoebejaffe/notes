@@ -34,8 +34,23 @@ const rangeDecorations = ViewPlugin.fromClass(class {
       let position = from
       while (position <= to) {
         const line = view.state.doc.lineAt(position)
-        const className = lineStyle(parsed, line.number - 1)
+        const lineIndex = line.number - 1
+        const className = lineStyle(parsed, lineIndex)
         if (className) ranges.push(Decoration.line({ attributes: { class: className } }).range(line.from))
+        if (className === 'cm-marker-line') {
+          const markerStart = line.text.indexOf('<!--')
+          const markerEnd = line.text.lastIndexOf('-->')
+          if (markerStart >= 0 && markerEnd > markerStart) {
+            ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerStart, line.from + markerStart + 4))
+            ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerEnd, line.from + markerEnd + 3))
+            const body = line.text.slice(markerStart + 4, markerEnd)
+            const tokens = /\/?(?:"(?:\\.|[^"])*"|\S+)/gu
+            let token: RegExpExecArray | null
+            while ((token = tokens.exec(body))) {
+              ranges.push(Decoration.mark({ class: 'cm-tag-chip' }).range(line.from + markerStart + 4 + token.index, line.from + markerStart + 4 + token.index + token[0].length))
+            }
+          }
+        }
         if (line.to >= to) break
         position = line.to + 1
       }
