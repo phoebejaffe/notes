@@ -30,24 +30,39 @@ const rangeDecorations = ViewPlugin.fromClass(class {
   build(view: EditorView) {
     const parsed = parseMarkdown(view.state.doc.toString())
     const ranges = []
+    const seenLines = new Set<number>()
     for (const { from, to } of view.visibleRanges) {
       let position = from
       while (position <= to) {
         const line = view.state.doc.lineAt(position)
         const lineIndex = line.number - 1
+        if (seenLines.has(lineIndex)) {
+          if (line.to >= to) break
+          position = line.to + 1
+          continue
+        }
+        seenLines.add(lineIndex)
         const className = lineStyle(parsed, lineIndex)
         if (className) ranges.push(Decoration.line({ attributes: { class: className } }).range(line.from))
         if (className === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
           const markerEnd = line.text.lastIndexOf('-->')
           if (markerStart >= 0 && markerEnd > markerStart) {
-            ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerStart, line.from + markerStart + 4))
-            ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerEnd, line.from + markerEnd + 3))
             const body = line.text.slice(markerStart + 4, markerEnd)
             const tokens = /\/?(?:"(?:\\.|[^"])*"|\S+)/gu
+            const tokenRanges: Array<{ index: number; value: string }> = []
             let token: RegExpExecArray | null
-            while ((token = tokens.exec(body))) {
-              ranges.push(Decoration.mark({ class: 'cm-tag-chip' }).range(line.from + markerStart + 4 + token.index, line.from + markerStart + 4 + token.index + token[0].length))
+            while ((token = tokens.exec(body))) tokenRanges.push({ index: token.index, value: token[0] })
+            if (tokenRanges.length) {
+              const first = tokenRanges[0]
+              const last = tokenRanges[tokenRanges.length - 1]
+              ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerStart, line.from + markerStart + 4 + first.index))
+              ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerStart + 4 + last.index + last.value.length, line.from + markerEnd + 3))
+              tokenRanges.forEach(({ index, value }) => {
+                const tag = value.replace(/^\//u, '').replace(/^"|"$/gu, '')
+                const tagHash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
+                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}` }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
+              })
             }
           }
         }
@@ -55,7 +70,7 @@ const rangeDecorations = ViewPlugin.fromClass(class {
         position = line.to + 1
       }
     }
-    return Decoration.set(ranges)
+    return Decoration.set(ranges, true)
   }
 }, { decorations: (value) => value.decorations })
 
@@ -113,7 +128,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
               onSelectionRef.current?.(selection.from, selection.to)
             }
           }),
-          EditorView.theme({ '&': { minHeight: '330px' }, '.cm-scroller': { overflow: 'auto' } }),
+          EditorView.theme({ '&': { minHeight: '100px' }, '.cm-scroller': { overflow: 'visible' } }),
         ],
       }),
       parent: host.current,
