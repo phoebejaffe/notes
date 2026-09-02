@@ -6,16 +6,18 @@ import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, type DecorationSet } from '@codemirror/view'
 import { findMarkerTagRename, parseMarkdown, renameMatchingTag, type ParsedMarkdown } from './markerEngine'
 
-function lineStyle(parsed: ParsedMarkdown, lineIndex: number) {
+function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<string, string>) {
   if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
   const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
   if (!activeTags.length) return ''
   const colorHash = (tag: string) => [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
   const outerHash = colorHash(activeTags[0].tag)
   const innerHash = colorHash(activeTags[1]?.tag ?? activeTags[0].tag)
+  const outerColor = tagColors[activeTags[0].tag]
+  const innerColor = tagColors[activeTags[1]?.tag ?? activeTags[0].tag]
   const adjacent = activeTags.some((item) => parsed.ranges.some((other) => other !== item && (other.endLine === item.startLine || item.endLine === other.startLine)))
   const overlap = activeTags.length > 1
-  return `cm-tagged-line cm-tag-color-${outerHash}${overlap ? ` cm-tagged-overlap cm-tag-inner-color-${innerHash}` : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
+  return `cm-tagged-line cm-tag-color-${outerHash}${outerColor ? ' cm-tag-custom-outer' : ''}${overlap ? ` cm-tagged-overlap cm-tag-inner-color-${innerHash}${innerColor ? ' cm-tag-custom-inner' : ''}` : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
 }
 
 function markdownLineStyle(line: string) {
@@ -45,7 +47,8 @@ function toggleMarkdownMark(view: EditorView, opening: string, closing: string) 
   return true
 }
 
-const rangeDecorations = ViewPlugin.fromClass(class {
+function createRangeDecorations(tagColors: Record<string, string>) {
+  return ViewPlugin.fromClass(class {
   decorations: DecorationSet
 
   constructor(view: EditorView) {
@@ -71,9 +74,12 @@ const rangeDecorations = ViewPlugin.fromClass(class {
           continue
         }
         seenLines.add(lineIndex)
-        const className = [lineStyle(parsed, lineIndex), markdownLineStyle(line.text)].filter(Boolean).join(' ')
-        if (className) ranges.push(Decoration.line({ attributes: { class: className } }).range(line.from))
-        if (className === 'cm-marker-line') {
+        const rangeClass = lineStyle(parsed, lineIndex, tagColors)
+        const className = [rangeClass, markdownLineStyle(line.text)].filter(Boolean).join(' ')
+        const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
+        const customColors = [tagColors[activeTags[0]?.tag], tagColors[activeTags[1]?.tag]].filter(Boolean).map((color, index) => `--tag-${index === 0 ? 'outer' : 'inner'}:${color}`).join(';')
+        if (className) ranges.push(Decoration.line({ attributes: { class: className, ...(customColors ? { style: customColors } : {}) } }).range(line.from))
+        if (rangeClass === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
           const markerEnd = line.text.lastIndexOf('-->')
           if (markerStart >= 0 && markerEnd > markerStart) {
@@ -88,9 +94,10 @@ const rangeDecorations = ViewPlugin.fromClass(class {
               ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerStart, line.from + markerStart + 4 + first.index))
               ranges.push(Decoration.mark({ class: 'cm-marker-syntax' }).range(line.from + markerStart + 4 + last.index + last.value.length, line.from + markerEnd + 3))
               tokenRanges.forEach(({ index, value }) => {
-                const tag = value.replace(/^\//u, '').replace(/^"|"$/gu, '')
+                const tag = value.replace(/^\//u, '').replace(/^"|"$/gu, '').normalize('NFC')
                 const tagHash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
-                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}` }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
+                const customColor = tagColors[tag]
+                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}`, ...(customColor ? { attributes: { style: `--tag-color:${customColor}` } } : {}) }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
               })
             }
           }
@@ -118,7 +125,8 @@ const rangeDecorations = ViewPlugin.fromClass(class {
     }
     return Decoration.set(ranges, true)
   }
-}, { decorations: (value) => value.decorations })
+  }, { decorations: (value) => value.decorations })
+}
 
 interface CodeMirrorEditorProps {
   value: string
@@ -126,9 +134,10 @@ interface CodeMirrorEditorProps {
   onSelection?: (from: number, to: number) => void
   focusAtEnd?: boolean
   sourceMode?: boolean
+  tagColors?: Record<string, string>
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {} }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -159,7 +168,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           ]),
           EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
-          rangeDecorations,
+          createRangeDecorations(tagColors),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               let next = update.state.doc.toString()
@@ -193,7 +202,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       view.focus()
     }
     return () => { viewRef.current = null; view.destroy() }
-  }, [focusAtEnd, initialValue])
+  }, [focusAtEnd, initialValue, tagColors])
 
   useEffect(() => {
     const view = viewRef.current

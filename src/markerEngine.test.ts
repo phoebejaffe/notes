@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, renameMatchingTag } from './markerEngine'
+import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, removeTagAtPosition, renameMatchingTag } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -43,5 +43,10 @@ describe('marker engine', () => {
     const after = '<!-- wellness -->\nnote\n<!-- /therapy -->'
     expect(findMarkerTagRename(before, after)).toEqual({ line: 0, oldTag: 'therapy', newTag: 'wellness' })
     expect(renameMatchingTag(after, 0, 'therapy', 'wellness')).toBe('<!-- wellness -->\nnote\n<!-- /wellness -->')
+  })
+
+  it('removes an active tag and both marker lines without deleting note text', () => {
+    const source = '<!-- therapy -->\nprivate note\n<!-- /therapy -->'
+    expect(removeTagAtPosition(source, 1, 'therapy').source).toBe('private note')
   })
 })

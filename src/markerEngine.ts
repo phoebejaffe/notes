@@ -160,6 +160,26 @@ export function addTagToRange(source: string, startLine: number, endLine: number
   return { source: lines.join('\n') }
 }
 
+function removeTagFromMarkerLine(line: string, kind: MarkerKind, tag: string) {
+  const target = markerTagSpans(line).find((span) => span.kind === kind && span.tag === normalizeTag(tag))
+  if (!target) return line
+  const remaining = `${line.slice(0, target.start)}${line.slice(target.end)}`
+  if (/^\s*<!--\s*-->\s*$/u.test(remaining)) return ''
+  return remaining.replace(/<!--\s+/u, '<!-- ').replace(/\s+-->\s*$/u, ' -->')
+}
+
+export function removeTagAtPosition(source: string, lineIndex: number, tag: string) {
+  const parsed = parseMarkdown(source)
+  const range = parsed.ranges.filter((item) => item.tag === normalizeTag(tag) && item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => right.startLine - left.startLine)[0]
+  if (!range) return { source, error: `No active “${tag}” tag at this position.` }
+  const lines = [...parsed.lines]
+  lines[range.endLine] = removeTagFromMarkerLine(lines[range.endLine], 'close', tag)
+  lines[range.startLine] = removeTagFromMarkerLine(lines[range.startLine], 'open', tag)
+  if (!lines[range.endLine]) lines.splice(range.endLine, 1)
+  if (!lines[range.startLine]) lines.splice(range.startLine, 1)
+  return { source: lines.join('\n') }
+}
+
 export function normalizeRepeatedOpens(source: string) {
   const lines = source.split('\n')
   const active = new Set<string>()

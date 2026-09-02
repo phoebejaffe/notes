@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
-import { addTagToRange, lineRangeForSelection, parseMarkdown } from './markerEngine'
+import { addTagToRange, lineRangeForSelection, parseMarkdown, removeTagAtPosition } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
 import './App.css'
@@ -21,6 +21,21 @@ Draft the onboarding flow and ask Sam for feedback.
 A follow-up thought from later in the day.
 <!-- /therapy -->`
 
+const DEFAULT_TAG_COLORS = ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55']
+
+function defaultTagColor(tag: string) {
+  const hash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % DEFAULT_TAG_COLORS.length
+  return DEFAULT_TAG_COLORS[hash]
+}
+
+function loadTagColors() {
+  try {
+    return JSON.parse(localStorage.getItem('notes-tag-colors') ?? '{}') as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
 interface Selection { day: string; from: number; to: number }
 
 function App() {
@@ -29,8 +44,11 @@ function App() {
   const [documents, setDocuments] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [tagsOpen, setTagsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
+  const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
   const [tagInput, setTagInput] = useState('')
   const [selection, setSelection] = useState<Selection>({ day: '', from: 0, to: 0 })
@@ -50,6 +68,12 @@ function App() {
   }, [today])
 
   useEffect(() => {
+    localStorage.setItem('notes-tag-colors', JSON.stringify(tagColors))
+  }, [tagColors])
+
+  const allTags = useMemo(() => [...new Set(Object.values(documents).flatMap((markdown) => parseMarkdown(markdown).ranges.map((range) => range.tag)))].sort((left, right) => left.localeCompare(right)), [documents])
+
+  useEffect(() => {
     if (!loaded) return
     const observer = new IntersectionObserver((entries) => {
       if (!entries[0].isIntersecting) return
@@ -61,14 +85,16 @@ function App() {
 
   useEffect(() => {
     function focusTagInput(event: KeyboardEvent) {
-      if (event.metaKey && event.key.toLowerCase() === 't' && selection.day && selection.from !== selection.to) {
+      const activeDocument = selection.day ? documents[selection.day] ?? '' : ''
+      const insideTag = selection.day && parseMarkdown(activeDocument).ranges.some((range) => range.start < selection.from && selection.from < range.end)
+      if (event.metaKey && event.key.toLowerCase() === 't' && selection.day && (selection.from !== selection.to || insideTag)) {
         event.preventDefault()
         tagInputRef.current?.focus()
       }
     }
     window.addEventListener('keydown', focusTagInput)
     return () => window.removeEventListener('keydown', focusTagInput)
-  }, [selection])
+  }, [documents, selection])
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
@@ -115,6 +141,7 @@ function App() {
     const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
     return selectedParsed.ranges.some((range) => range.tag === tagInput.trim().normalize('NFC') && range.startLine <= startLine && range.endLine >= endLine)
   }, [selectedParsed, selectedSource, selection, tagInput])
+  const currentTags = useMemo(() => [...new Set(selectedParsed.ranges.filter((range) => selection.from === selection.to ? range.start < selection.from && selection.from < range.end : range.start < selection.to && range.end > selection.from).map((range) => range.tag))], [selectedParsed, selection])
   const searchResults = useMemo(() => {
     if (!query.trim()) return []
     const needle = query.toLocaleLowerCase()
@@ -135,6 +162,13 @@ function App() {
       setTagInput('')
       setSelection({ day: '', from: 0, to: 0 })
     }
+  }
+
+  function removeSelectedTag(tag: string) {
+    if (!selection.day) return
+    const { startLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
+    const result = removeTagAtPosition(selectedSource, startLine, tag)
+    if (!result.error) updateSource(selection.day, result.source)
   }
 
   function submitTag() {
@@ -172,7 +206,12 @@ function App() {
         </div>
         {menuOpen && <nav className="menu-panel" aria-label="Notes menu">
           <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Edit source'}</button>
+          <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
+          <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
+          <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
+          <button type="button" disabled>Export all</button>
+          <button type="button" disabled>Jump to today</button>
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
         </nav>}
       </header>}
@@ -194,7 +233,7 @@ function App() {
           return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -203,12 +242,68 @@ function App() {
         <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
       </section>
 
-      {!sourceMode && selection.day && selection.from !== selection.to && <div className="tag-bar" role="dialog" aria-label="Add tag to selection">
+      {!sourceMode && selection.day && (selection.from !== selection.to || currentTags.length > 0) && <div className="tag-bar" role="dialog" aria-label="Tags at cursor or selection">
+        <div className="active-tag-chips">{currentTags.map((tag) => <span className="active-tag-chip" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeSelectedTag(tag)}>×</button></span>)}</div>
         <span className="popover-label">Tag lines</span>
         <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="therapy, 🧠, or project" aria-label="New tag" />
         <button type="button" onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
         {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
         <span className="tag-shortcut">⌘T</span>
+      </div>}
+
+      {!captureMode && settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
+        <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" aria-describedby="settings-modal-description">
+          <div className="modal-heading"><div><span className="eyebrow">Preferences</span><h2 id="settings-modal-title">Settings</h2></div><button className="modal-close" type="button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button></div>
+          <p className="settings-description" id="settings-modal-description"><span className="settings-asterisk">*</span> These settings are planned and are not active yet.</p>
+
+          <fieldset className="settings-group"><legend>Editor</legend>
+            <label className="settings-row"><span className="settings-label">Editor mode <span className="settings-asterisk">*</span></span><select value="Normal editor" onChange={(event) => event.preventDefault()}><option>Normal editor</option><option>Edit source</option></select></label>
+            <label className="settings-row"><span className="settings-label">Zoom <span className="settings-asterisk">*</span></span><select value="100%" onChange={(event) => event.preventDefault()}><option>90%</option><option>100%</option><option>110%</option><option>125%</option></select></label>
+            <label className="settings-row"><span className="settings-label">Font choice <span className="settings-asterisk">*</span></span><select value="System sans-serif" onChange={(event) => event.preventDefault()}><option>System sans-serif</option><option>Serif</option><option>Monospace</option></select></label>
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Daily notes</legend>
+            <label className="settings-row"><span className="settings-label">Day rollover time <span className="settings-asterisk">*</span></span><input type="time" value="04:00" onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Show empty days <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Date display format <span className="settings-asterisk">*</span></span><select value="Monday, September 2, 2026" onChange={(event) => event.preventDefault()}><option>Monday, September 2, 2026</option><option>Sep 2, 2026</option><option>2026-09-02</option></select></label>
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Appearance</legend>
+            <label className="settings-row"><span className="settings-label">Dark/light mode <span className="settings-asterisk">*</span></span><select value="Light" onChange={(event) => event.preventDefault()}><option>Light</option><option>Dark</option><option>System</option></select></label>
+            <label className="settings-row"><span className="settings-label">Compact spacing <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Data &amp; backups</legend>
+            <label className="settings-row"><span className="settings-label">Automatic backup <span className="settings-asterisk">*</span></span><select value="Off" onChange={(event) => event.preventDefault()}><option>Off</option><option>Daily</option><option>Weekly</option></select></label>
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Capture mode</legend>
+            <label className="settings-row"><span className="settings-label">Global capture shortcut <span className="settings-asterisk">*</span></span><input className="shortcut-input" value="Ctrl⌥N" readOnly /></label>
+            <label className="settings-row"><span className="settings-label">Capture window always on top <span className="settings-asterisk">*</span></span><input type="checkbox" checked onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Launch at login <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Show in menu bar <span className="settings-asterisk">*</span></span><input type="checkbox" checked onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Show dock icon <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+            <p className="settings-help">At least one of “Show in menu bar” and “Show dock icon” must be selected.</p>
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Keyboard shortcuts</legend>
+            <label className="settings-row"><span className="settings-label">Customize shortcuts <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Configure</button></label>
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Tags</legend>
+            <label className="settings-row"><span className="settings-label">Manage known tags <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Manage</button></label>
+            <label className="settings-row"><span className="settings-label">Rename a tag everywhere <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Rename</button></label>
+            <label className="settings-row"><span className="settings-label">Choose tag colors <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Choose</button></label>
+            <label className="settings-row"><span className="settings-label">Hide tag syntax <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+          </fieldset>
+        </section>
+      </div>}
+
+      {!captureMode && tagsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setTagsOpen(false) }}>
+        <section className="tag-modal" role="dialog" aria-modal="true" aria-labelledby="tag-modal-title">
+          <div className="modal-heading"><div><span className="eyebrow">Organization</span><h2 id="tag-modal-title">Tag colors</h2></div><button className="modal-close" type="button" aria-label="Close tag colors" onClick={() => setTagsOpen(false)}>×</button></div>
+          {allTags.length ? allTags.map((tag) => <label className="color-row" key={tag}><span>{tag}</span><input type="color" value={tagColors[tag] ?? defaultTagColor(tag)} onChange={(event) => setTagColors((current) => ({ ...current, [tag]: event.target.value }))} /></label>) : <p className="empty-modal">Add a tag to see it here.</p>}
+        </section>
       </div>}
     </main>
   )
