@@ -27,8 +27,8 @@ function maxTagDepth(parsed: ParsedMarkdown) {
 }
 
 function markdownLineStyle(line: string) {
-  if (/^\\s*#{1,6}\\s/u.test(line)) return 'cm-heading-line'
-  if (/^\\s*(?:[-*+]\\s|\\d+[.)]\\s)/u.test(line)) return 'cm-list-line'
+  if (/^\s*#{1,6}\s/u.test(line)) return 'cm-heading-line'
+  if (/^\s*(?:[-*+]\s|\d+[.)]\s)/u.test(line)) return 'cm-list-line'
   return ''
 }
 
@@ -142,7 +142,7 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         }
         const strikethroughPattern = /(?<!~)~~(\S(?:.*?\S)?)~~(?!~)/gu
         for (const match of line.text.matchAll(strikethroughPattern)) {
-          ranges.push(Decoration.mark({ class: 'cm-strikethrough-text' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
+          ranges.push(Decoration.mark({ class: 'cm-strikethrough-text' }).range(line.from + match.index! + 2, line.from + match.index! + match[0].length - 2))
         }
         if (line.to >= to) break
         position = line.to + 1

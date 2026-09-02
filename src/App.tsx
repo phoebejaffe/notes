@@ -201,6 +201,7 @@ function App() {
         downloadMarkdown(documents[today] ?? '', `${today}.md`)
         return
       }
+      if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) return
       const direction = matchesShortcut(event, preferences.shortcuts.dayPrevious) ? -1 : matchesShortcut(event, preferences.shortcuts.dayNext) ? 1 : 0
       if (!direction) return
       const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
