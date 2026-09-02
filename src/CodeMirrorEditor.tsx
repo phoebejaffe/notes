@@ -190,7 +190,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       state: EditorState.create({
         doc: initialValue,
         extensions: [
-          lineNumbers(),
+          lineNumbers({ formatNumber: (lineNumber, state) => lineMatchesFilter(parseMarkdown(state.doc.toString()), lineNumber - 1, filterTags) ? String(lineNumber) : '' }),
           markdown(),
           syntaxHighlighting(defaultHighlightStyle),
           history(),
