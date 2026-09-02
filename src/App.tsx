@@ -33,6 +33,7 @@ function App() {
   const [tagInput, setTagInput] = useState('')
   const [selection, setSelection] = useState<Selection>({ day: '', from: 0, to: 0 })
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
+  const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const streamEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -105,8 +106,8 @@ function App() {
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
+    <main className={captureMode ? 'capture-shell' : 'app-shell'}>
+      {!captureMode && <header className="topbar">
         <div className="topbar-left">
           <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         </div>
@@ -119,9 +120,9 @@ function App() {
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
         </nav>}
-      </header>
+      </header>}
 
-      {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
+      {!captureMode && searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
 
       <section className="day-stream" aria-label="Daily notes">
         {days.map((documentDay) => {
@@ -131,8 +132,8 @@ function App() {
           return <article className="day-card" key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} sourceMode={sourceMode} />
-              {!sourceMode && isSelectedDay && <div className="tag-popover" role="dialog" aria-label="Add tag to selection">
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} />
+              {!captureMode && !sourceMode && isSelectedDay && <div className="tag-popover" role="dialog" aria-label="Add tag to selection">
                 <span className="popover-label">Tag lines</span>
                 <input autoFocus value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyTag() }} placeholder="therapy, 🧠, or project" aria-label="New tag" />
                 <button type="button" onClick={applyTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
