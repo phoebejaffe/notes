@@ -13,9 +13,14 @@
     "windows": [
       {
         "title": "Notes",
-        "width": 800,
-        "height": 600,
+        "url": "index.html?mode=capture",
+        "width": 520,
+        "height": 180,
+        "minWidth": 360,
+        "minHeight": 120,
         "resizable": true,
+        "decorations": false,
+        "alwaysOnTop": true,
         "fullscreen": false
       }
     ],

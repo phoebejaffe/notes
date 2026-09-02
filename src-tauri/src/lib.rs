@@ -1,5 +1,18 @@
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+fn toggle_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,20 +26,21 @@ pub fn run() {
                 )?;
             }
 
-            let capture_window = WebviewWindowBuilder::new(
-                app,
-                "capture",
-                WebviewUrl::App("index.html?mode=capture".into()),
-            )
-            .title("Capture")
-            .inner_size(520.0, 180.0)
-            .min_inner_size(360.0, 120.0)
-            .decorations(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .visible(false)
-            .build()?;
-            let _ = capture_window;
+            let app_handle = app.handle().clone();
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().unwrap())
+                .tooltip("Notes")
+                .on_tray_icon_event(move |_tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        toggle_main_window(&app_handle);
+                    }
+                })
+                .build(app)?;
 
             let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
             let handler_shortcut = shortcut.clone();
@@ -36,15 +50,7 @@ pub fn run() {
                         if registered_shortcut == &handler_shortcut
                             && event.state() == ShortcutState::Pressed
                         {
-                            if let Some(window) = app.get_webview_window("capture") {
-                                if window.is_visible().unwrap_or(false) {
-                                    let _ = window.hide();
-                                } else {
-                                    let _ = window.show();
-                                    let _ = window.unminimize();
-                                    let _ = window.set_focus();
-                                }
-                            }
+                            toggle_main_window(app);
                         }
                     })
                     .build(),

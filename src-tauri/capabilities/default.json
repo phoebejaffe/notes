@@ -3,8 +3,7 @@
   "identifier": "default",
   "description": "Permissions for the main and capture windows",
   "windows": [
-    "main",
-    "capture"
+    "main"
   ],
   "permissions": [
     "core:default",
