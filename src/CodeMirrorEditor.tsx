@@ -111,7 +111,9 @@ function createRangeDecorations(tagColors: Record<string, string>) {
                 const outerColors = outerTags.slice(0, 4).map((range) => tagColors[range.tag] ?? ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55'][[...range.tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5])
                 const outerClass = outerColors.length ? ` cm-has-outer-border${outerColors.length > 3 ? ' cm-has-quadruple-outer-border' : outerColors.length > 2 ? ' cm-has-triple-outer-border' : outerColors.length > 1 ? ' cm-has-double-outer-border' : ''}` : ''
                 const outerStyle = outerColors.map((color, colorIndex) => `--marker-outer-${colorIndex + 1}:${color}`).join(';')
-                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}${outerClass}`, ...(customColor || outerStyle ? { attributes: { style: [customColor ? `--tag-color:${customColor}` : '', outerStyle].filter(Boolean).join(';') } } : {}) }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
+                const labelInset = outerTags.length * 3
+                const chipStyle = [customColor ? `--tag-color:${customColor}` : '', outerStyle, `--tag-label-inset:${labelInset}px`].filter(Boolean).join(';')
+                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}${outerClass}`, attributes: { style: chipStyle } }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
               })
             }
           }
