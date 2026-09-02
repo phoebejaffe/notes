@@ -9,6 +9,8 @@ const SAMPLE = `<!-- therapy 🧠 -->
 ## Therapy session
 
 I noticed I am more comfortable setting boundaries.
+
+- Practice **bold**, *italic*, and <u>underlined</u> text.
 <!-- /therapy -->
 <!-- project "spring launch" -->
 ## Project notes

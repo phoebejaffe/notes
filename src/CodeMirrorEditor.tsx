@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
+import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, type DecorationSet } from '@codemirror/view'
 import { findMarkerTagRename, parseMarkdown, renameMatchingTag, type ParsedMarkdown } from './markerEngine'
 
@@ -14,6 +15,12 @@ function lineStyle(parsed: ParsedMarkdown, lineIndex: number) {
   const adjacent = activeTags.some((item) => parsed.ranges.some((other) => other !== item && (other.endLine === item.startLine || item.endLine === other.startLine)))
   const overlap = activeTags.length > 1
   return `cm-tagged-line cm-tag-color-${tagHash}${overlap ? ' cm-tagged-overlap' : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
+}
+
+function markdownLineStyle(line: string) {
+  if (/^\\s*#{1,6}\\s/u.test(line)) return 'cm-heading-line'
+  if (/^\\s*(?:[-*+]\\s|\\d+[.)]\\s)/u.test(line)) return 'cm-list-line'
+  return ''
 }
 
 const rangeDecorations = ViewPlugin.fromClass(class {
@@ -42,7 +49,7 @@ const rangeDecorations = ViewPlugin.fromClass(class {
           continue
         }
         seenLines.add(lineIndex)
-        const className = lineStyle(parsed, lineIndex)
+        const className = [lineStyle(parsed, lineIndex), markdownLineStyle(line.text)].filter(Boolean).join(' ')
         if (className) ranges.push(Decoration.line({ attributes: { class: className } }).range(line.from))
         if (className === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
@@ -65,6 +72,19 @@ const rangeDecorations = ViewPlugin.fromClass(class {
               })
             }
           }
+        }
+        const strongPattern = /(\*\*|__)(\S(?:.*?\S)?)\1/gu
+        for (const match of line.text.matchAll(strongPattern)) {
+          ranges.push(Decoration.mark({ class: 'cm-strong-text' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
+        }
+        const italicPattern = /(^|[^*_])([*_])(\S(?:.*?\S)?)\2(?![*_])/gu
+        for (const match of line.text.matchAll(italicPattern)) {
+          const start = line.from + match.index! + match[1].length
+          ranges.push(Decoration.mark({ class: 'cm-emphasis-text' }).range(start, start + match[0].length - match[1].length))
+        }
+        const underlinePattern = /<u>(\S(?:.*?\S)?)<\/u>/giu
+        for (const match of line.text.matchAll(underlinePattern)) {
+          ranges.push(Decoration.mark({ class: 'cm-underline-text' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
         }
         if (line.to >= to) break
         position = line.to + 1
@@ -103,6 +123,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
         extensions: [
           lineNumbers(),
           markdown(),
+          syntaxHighlighting(defaultHighlightStyle),
           keymap.of([...defaultKeymap, indentWithTab]),
           EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
