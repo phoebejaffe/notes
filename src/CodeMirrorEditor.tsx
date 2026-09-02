@@ -221,5 +221,8 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
   }, [depthClass, value])
 
-  return <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''}`} ref={host} aria-label="Markdown editor" />
+  return <div className="editor-container">
+    <div className="indent-debug" aria-live="polite">Editor nesting inset: {depthClass * 3}px</div>
+    <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''}`} ref={host} aria-label="Markdown editor" />
+  </div>
 }
