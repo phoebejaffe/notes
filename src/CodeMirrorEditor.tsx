@@ -20,6 +20,14 @@ function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<
   return `cm-tagged-line cm-tag-color-${outerHash}${outerColor ? ' cm-tag-custom-outer' : ''}${overlap ? ` cm-tagged-overlap cm-tag-inner-color-${innerHash}${innerColor ? ' cm-tag-custom-inner' : ''}` : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
 }
 
+function tagDepthAtLine(parsed: ParsedMarkdown, lineIndex: number) {
+  return parsed.ranges.filter((range) => range.startLine < lineIndex && lineIndex < range.endLine).length
+}
+
+function maxTagDepth(parsed: ParsedMarkdown) {
+  return parsed.lines.reduce((maximum, _line, index) => Math.max(maximum, tagDepthAtLine(parsed, index)), 0)
+}
+
 function markdownLineStyle(line: string) {
   if (/^\\s*#{1,6}\\s/u.test(line)) return 'cm-heading-line'
   if (/^\\s*(?:[-*+]\\s|\\d+[.)]\\s)/u.test(line)) return 'cm-list-line'
@@ -97,7 +105,8 @@ function createRangeDecorations(tagColors: Record<string, string>) {
                 const tag = value.replace(/^\//u, '').replace(/^"|"$/gu, '').normalize('NFC')
                 const tagHash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
                 const customColor = tagColors[tag]
-                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}`, ...(customColor ? { attributes: { style: `--tag-color:${customColor}` } } : {}) }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
+                const depth = Math.min(tagDepthAtLine(parsed, lineIndex), 3)
+                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash} cm-tag-depth-${depth}`, ...(customColor ? { attributes: { style: `--tag-color:${customColor}` } } : {}) }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
               })
             }
           }
@@ -211,5 +220,6 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
   }, [value])
 
-  return <div className={`codemirror-host ${sourceMode ? 'source-mode' : ''}`} ref={host} aria-label="Markdown editor" />
+  const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 3)
+  return <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''}`} ref={host} aria-label="Markdown editor" />
 }
