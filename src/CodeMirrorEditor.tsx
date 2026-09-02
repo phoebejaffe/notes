@@ -25,7 +25,7 @@ function tagDepthAtLine(parsed: ParsedMarkdown, lineIndex: number) {
 }
 
 function maxTagDepth(parsed: ParsedMarkdown) {
-  return parsed.lines.reduce((maximum, _line, index) => Math.max(maximum, tagDepthAtLine(parsed, index)), 0)
+  return parsed.lines.reduce((maximum, _line, index) => Math.max(maximum, Math.max(0, tagDepthAtLine(parsed, index) - 1)), 0)
 }
 
 function markdownLineStyle(line: string) {
@@ -105,8 +105,7 @@ function createRangeDecorations(tagColors: Record<string, string>) {
                 const tag = value.replace(/^\//u, '').replace(/^"|"$/gu, '').normalize('NFC')
                 const tagHash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
                 const customColor = tagColors[tag]
-                const depth = Math.min(tagDepthAtLine(parsed, lineIndex), 3)
-                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash} cm-tag-depth-${depth}`, ...(customColor ? { attributes: { style: `--tag-color:${customColor}` } } : {}) }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
+                ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}`, ...(customColor ? { attributes: { style: `--tag-color:${customColor}` } } : {}) }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
               })
             }
           }
@@ -213,13 +212,14 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     return () => { viewRef.current = null; view.destroy() }
   }, [focusAtEnd, initialValue, tagColors])
 
+  const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 3)
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
+    view.contentDOM.style.paddingLeft = `${depthClass * 3}px`
     const current = view.state.doc.toString()
     if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
-  }, [value])
+  }, [depthClass, value])
 
-  const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 3)
   return <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''}`} ref={host} aria-label="Markdown editor" />
 }

@@ -106,7 +106,7 @@ function App() {
       }
       if (event.key === '-') {
         event.preventDefault()
-        setZoomLevel((current) => Math.max(70, current - 10))
+        setZoomLevel((current) => Math.max(60, current - 10))
         return
       }
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
@@ -197,15 +197,14 @@ function App() {
   return (
     <main className={captureMode ? 'capture-shell' : 'app-shell'} style={{ zoom: zoomLevel / 100 }}>
       {!captureMode && <header className="topbar">
-        <div className="topbar-left">
-          <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
-        </div>
+        <div className="topbar-left" />
         <div className="topbar-right">
           <button className="search-button" type="button" aria-label="Search" aria-expanded={searchOpen} onClick={() => setSearchOpen((open) => !open)}>⌕</button>
+          <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
           {saveState === 'saving' && <span className="save-spinner" role="status" aria-label="Saving" />}
         </div>
         {menuOpen && <nav className="menu-panel" aria-label="Notes menu">
-          <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Edit source'}</button>
+          <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
@@ -219,7 +218,7 @@ function App() {
         <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
           <button type="button" onClick={() => { setSearchOpen((open) => !open); setMenuOpen(false) }}>Search</button>
-          <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Edit source'}</button>
+          <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <span className="shortcut-hint">Ctrl⌥N to show or hide</span>
         </nav>}
       </div>}
@@ -257,15 +256,15 @@ function App() {
           <p className="settings-description" id="settings-modal-description"><span className="settings-asterisk">*</span> These settings are planned and are not active yet.</p>
 
           <fieldset className="settings-group"><legend>Editor</legend>
-            <label className="settings-row"><span className="settings-label">Editor mode <span className="settings-asterisk">*</span></span><select value="Normal editor" onChange={(event) => event.preventDefault()}><option>Normal editor</option><option>Edit source</option></select></label>
-            <label className="settings-row"><span className="settings-label">Zoom <span className="settings-asterisk">*</span></span><select value="100%" onChange={(event) => event.preventDefault()}><option>90%</option><option>100%</option><option>110%</option><option>125%</option></select></label>
+            <label className="settings-row"><span className="settings-label">Editor mode <span className="settings-asterisk">*</span></span><select value="Normal editor" onChange={(event) => event.preventDefault()}><option>Normal editor</option><option>Raw Editor</option></select></label>
+            <label className="settings-row settings-range-row"><span className="settings-label">Zoom <span className="settings-asterisk">*</span></span><span className="settings-range-control"><input type="range" min="60" max="150" step="10" value="100" onChange={(event) => event.preventDefault()} /><output>100%</output></span></label>
             <label className="settings-row"><span className="settings-label">Font choice <span className="settings-asterisk">*</span></span><select value="System sans-serif" onChange={(event) => event.preventDefault()}><option>System sans-serif</option><option>Serif</option><option>Monospace</option></select></label>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Daily notes</legend>
-            <label className="settings-row"><span className="settings-label">Day rollover time <span className="settings-asterisk">*</span></span><input type="time" value="04:00" onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Day rollover time <span className="settings-asterisk">*</span></span><select value="04:00" onChange={(event) => event.preventDefault()}><option value="00:00">Midnight (12:00 AM)</option><option value="01:00">1:00 AM</option><option value="02:00">2:00 AM</option><option value="03:00">3:00 AM</option><option value="04:00">4:00 AM</option><option value="05:00">5:00 AM</option></select></label>
             <label className="settings-row"><span className="settings-label">Show empty days <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
-            <label className="settings-row"><span className="settings-label">Date display format <span className="settings-asterisk">*</span></span><select value="Monday, September 2, 2026" onChange={(event) => event.preventDefault()}><option>Monday, September 2, 2026</option><option>Sep 2, 2026</option><option>2026-09-02</option></select></label>
+            <label className="settings-row"><span className="settings-label">Date display format <span className="settings-asterisk">*</span></span><select value="Monday, September 2, 2026" onChange={(event) => event.preventDefault()}><option>Monday, September 2, 2026</option><option>Monday, Sep 2</option><option>Mon, September 2</option><option>Sep 2, 2026</option><option>September 2</option><option>2026-09-02</option><option>09/02/2026</option></select></label>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Appearance</legend>
@@ -274,7 +273,9 @@ function App() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Data &amp; backups</legend>
-            <label className="settings-row"><span className="settings-label">Automatic backup <span className="settings-asterisk">*</span></span><select value="Off" onChange={(event) => event.preventDefault()}><option>Off</option><option>Daily</option><option>Weekly</option></select></label>
+            <label className="settings-row"><span className="settings-label">Automatic backup <span className="settings-asterisk">*</span></span><select value="Off" onChange={(event) => event.preventDefault()}><option>Off</option><option>Hourly</option><option>Daily</option><option>Weekly</option></select></label>
+            <label className="settings-row"><span className="settings-label">Backup folder</span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Choose folder</button></label>
+            <p className="settings-help">Backups run only after changes and will be saved in date-named folders.</p>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Capture mode</legend>
@@ -292,8 +293,7 @@ function App() {
 
           <fieldset className="settings-group"><legend>Tags</legend>
             <label className="settings-row"><span className="settings-label">Manage known tags <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Manage</button></label>
-            <label className="settings-row"><span className="settings-label">Rename a tag everywhere <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Rename</button></label>
-            <label className="settings-row"><span className="settings-label">Choose tag colors <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Choose</button></label>
+            <p className="settings-help">Rename tags and choose their colors from the known-tags manager.</p>
             <label className="settings-row"><span className="settings-label">Hide tag syntax <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
           </fieldset>
         </section>
