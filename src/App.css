@@ -43,12 +43,7 @@ button { cursor: pointer; font: inherit; }
 .cm-scroller { overflow: visible !important; overflow-x: hidden !important; }
 .cm-heading-line { font-size: 1.2em; font-weight: 650; }
 .cm-list-line { padding-left: 5px; }
-.codemirror-host.render-bullets .cm-bullet-marker { display: inline-block; width: 1.5em; font-size: 0; }
-.codemirror-host.render-bullets .cm-bullet-marker::after { content: '•'; display: inline-block; width: 1em; color: currentColor; font-size: 14px; line-height: inherit; text-align: center; }
 .cm-strikethrough-text { text-decoration: line-through !important; text-decoration-thickness: 1px; text-decoration-color: currentColor; }
-.codemirror-host.render-bullets .cm-list-line { padding-left: calc(var(--tag-text-inset, 0px) + 1.5em) !important; text-indent: -1.5em; }
-.codemirror-host.source-mode .cm-bullet-marker { width: auto; font-size: inherit; }
-.codemirror-host.source-mode .cm-bullet-marker::after { content: none; }
 .codemirror-host.source-mode .cm-list-line { padding-left: var(--tag-text-inset, 0px) !important; text-indent: 0; }
 .cm-strong-text { font-weight: 700; }
 .cm-emphasis-text { font-style: italic; }
@@ -157,7 +152,10 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .menu-panel button:hover, .theme-dark .settings-action:hover { background: #383338; }
 .theme-dark .icon-button:hover, .theme-dark .icon-button[aria-expanded="true"], .theme-dark .search-button:hover, .theme-dark .search-button[aria-expanded="true"] { background: #141215; }
 .theme-dark .search-panel, .theme-dark .settings-row select, .theme-dark .settings-row input[type="time"], .theme-dark .shortcut-input, .theme-dark .settings-action { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
-.theme-dark .search-panel input, .theme-dark .tag-bar input { color: #e8e2dc; }
+.theme-dark .search-panel input, .theme-dark .tag-bar input { color: #f5f1ed; }
+.theme-dark .tag-bar { color: #f5f1ed; border-top-color: #5a5358; background: #383538; }
+.theme-dark .tag-bar .popover-label, .theme-dark .tag-bar .tag-shortcut { color: #d9d1d5; }
+.theme-dark .active-tag-chip { border-color: #625965; background: #48434a; }
 .theme-dark .settings-group legend, .theme-dark .settings-help, .theme-dark .settings-description, .theme-dark .day-title { color: #b8aeb0; }
 .theme-dark .settings-row, .theme-dark .color-row, .theme-dark .tag-rename-form { border-color: #403b3f; }
 .theme-dark .tag-rename-form select, .theme-dark .tag-rename-form input { border-color: #4d4649; color: #e8e2dc; background: #332f33; }

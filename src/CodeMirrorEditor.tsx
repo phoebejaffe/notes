@@ -89,11 +89,6 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         const lineInset = rangeClass.includes('cm-marker-line') ? 0 : dayInset + (borderCount ? borderCount * 3 + 12 : 0)
         const lineStyles = [`--tag-border-start:0px`, `--tag-text-inset:${lineInset}px`, `padding-left:${lineInset}px`, customColors].filter(Boolean).join(';')
         if (className) ranges.push(Decoration.line({ attributes: { class: className, style: lineStyles } }).range(line.from))
-        const bulletMatch = line.text.match(/^(\s*)([-*])(?=\s)/u)
-        if (bulletMatch) {
-          const markerStart = line.from + bulletMatch[1].length
-          ranges.push(Decoration.mark({ class: 'cm-bullet-marker' }).range(markerStart, markerStart + 1))
-        }
         if (rangeClass === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
           const markerEnd = line.text.lastIndexOf('-->')
@@ -162,10 +157,9 @@ interface CodeMirrorEditorProps {
   tagColors?: Record<string, string>
   restoreSelection?: { from: number; to: number }
   hideTagSyntax?: boolean
-  renderBullets?: boolean
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, renderBullets = true }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -251,6 +245,6 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
   }, [restoreSelection, value])
 
   return <div className="editor-container">
-    <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''} ${hideTagSyntax ? 'hide-tag-syntax' : ''} ${renderBullets ? 'render-bullets' : ''}`} ref={host} aria-label="Markdown editor" />
+    <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''} ${hideTagSyntax ? 'hide-tag-syntax' : ''}`} ref={host} aria-label="Markdown editor" />
   </div>
 }
