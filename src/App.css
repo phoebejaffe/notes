@@ -55,7 +55,8 @@ button { cursor: pointer; font: inherit; }
 .cm-scroller { overflow: visible !important; overflow-x: hidden !important; }
 .cm-heading-line { font-size: 1.2em; font-weight: 650; }
 .cm-list-line { padding-left: 5px; }
-.cm-filter-hidden { visibility: hidden; }
+.cm-filter-hidden { display: none !important; }
+.cm-gutters .cm-gutterElement:empty { display: none !important; }
 .cm-strikethrough-dim { opacity: .55; }
 .cm-strikethrough-text { text-decoration: line-through !important; text-decoration-thickness: 1px; text-decoration-color: currentColor; }
 .codemirror-host.source-mode .cm-list-line { padding-left: var(--tag-text-inset, 0px) !important; text-indent: 0; }
