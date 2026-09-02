@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, deleteCharBackwardStrict, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, type DecorationSet } from '@codemirror/view'
@@ -184,6 +184,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           syntaxHighlighting(defaultHighlightStyle),
           history(),
           keymap.of([
+            { key: 'Backspace', run: deleteCharBackwardStrict },
             { key: 'Mod-b', run: (view) => toggleMarkdownMark(view, '**', '**') },
             { key: 'Mod-i', run: (view) => toggleMarkdownMark(view, '*', '*') },
             { key: 'Mod-u', run: (view) => toggleMarkdownMark(view, '<u>', '</u>') },
