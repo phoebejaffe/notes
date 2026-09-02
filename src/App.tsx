@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
-import { addTagToRange, lineRangeForSelection, parseMarkdown, removeTagAtPosition } from './markerEngine'
+import { addTagToRange, formatMarker, lineRangeForSelection, parseMarkdown, removeTagAtPosition } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
+import { loadPreferences, savePreferences, type Preferences } from './preferences'
 import './App.css'
 
 const SAMPLE = `<!-- therapy 🧠 -->
@@ -39,7 +40,8 @@ function loadTagColors() {
 interface Selection { day: string; from: number; to: number }
 
 function App() {
-  const today = useMemo(() => logicalDayKey(new Date()), [])
+  const [preferences, setPreferences] = useState<Preferences>(loadPreferences)
+  const today = useMemo(() => logicalDayKey(new Date(), preferences.rolloverHour), [preferences.rolloverHour])
   const [days, setDays] = useState(() => [today, shiftLogicalDay(today, -1)])
   const [documents, setDocuments] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
@@ -47,13 +49,12 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [sourceMode, setSourceMode] = useState(false)
+  const sourceMode = preferences.editorMode === 'raw'
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
   const [tagInput, setTagInput] = useState('')
   const [selection, setSelection] = useState<Selection>({ day: '', from: 0, to: 0 })
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
-  const [zoomLevel, setZoomLevel] = useState(100)
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const streamEndRef = useRef<HTMLDivElement>(null)
@@ -68,8 +69,12 @@ function App() {
   }, [today])
 
   useEffect(() => {
-    localStorage.setItem('notes-tag-colors', JSON.stringify(tagColors))
-  }, [tagColors])
+    savePreferences(preferences)
+  }, [preferences])
+
+  useEffect(() => {
+    setDays([today, shiftLogicalDay(today, -1)])
+  }, [today])
 
   const allTags = useMemo(() => [...new Set(Object.values(documents).flatMap((markdown) => parseMarkdown(markdown).ranges.map((range) => range.tag)))].sort((left, right) => left.localeCompare(right)), [documents])
 
@@ -101,17 +106,17 @@ function App() {
       if (!event.metaKey) return
       if (event.key === '=' || event.key === '+') {
         event.preventDefault()
-        setZoomLevel((current) => Math.min(150, current + 10))
+        setPreferences((current) => ({ ...current, zoomLevel: Math.min(150, current.zoomLevel + 10) }))
         return
       }
       if (event.key === '-') {
         event.preventDefault()
-        setZoomLevel((current) => Math.max(60, current - 10))
+        setPreferences((current) => ({ ...current, zoomLevel: Math.max(60, current.zoomLevel - 10) }))
         return
       }
       if (event.key.toLowerCase() === 'e') {
         event.preventDefault()
-        setSourceMode((visible) => !visible)
+        setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' }))
         return
       }
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
@@ -146,7 +151,7 @@ function App() {
     const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
     return selectedParsed.ranges.some((range) => range.tag === tagInput.trim().normalize('NFC') && range.startLine <= startLine && range.endLine >= endLine)
   }, [selectedParsed, selectedSource, selection, tagInput])
-  const currentTags = useMemo(() => [...new Set(selectedParsed.ranges.filter((range) => selection.from === selection.to ? range.start < selection.from && selection.from < range.end : range.start < selection.to && range.end > selection.from).map((range) => range.tag))], [selectedParsed, selection])
+  const currentTags = useMemo(() => [...new Set(selectedParsed.ranges.filter((range) => selection.from === selection.to ? range.start < selection.from && selection.from < range.end : range.start < selection.to && range.end > selection.from).sort((left, right) => left.startLine - right.startLine || right.endLine - left.endLine).map((range) => range.tag))], [selectedParsed, selection])
   const searchResults = useMemo(() => {
     if (!query.trim()) return []
     const needle = query.toLocaleLowerCase()
@@ -163,9 +168,10 @@ function App() {
     const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
     const result = addTagToRange(selectedSource, startLine, endLine, tag)
     if (!result.error) {
+      const markerShift = formatMarker('open', [tag]).length + 1
       updateSource(selection.day, result.source)
       setTagInput('')
-      setSelection({ day: '', from: 0, to: 0 })
+      setSelection({ day: selection.day, from: selection.from + markerShift, to: selection.to + markerShift })
     }
   }
 
@@ -200,7 +206,7 @@ function App() {
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
 
   return (
-    <main className={captureMode ? 'capture-shell' : 'app-shell'} style={{ zoom: zoomLevel / 100 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}`} style={{ zoom: preferences.zoomLevel / 100 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -209,7 +215,7 @@ function App() {
           {saveState === 'saving' && <span className="save-spinner" role="status" aria-label="Saving" />}
         </div>
         {menuOpen && <nav className="menu-panel" aria-label="Notes menu">
-          <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
+          <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
@@ -223,7 +229,7 @@ function App() {
         <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
           <button type="button" onClick={() => { setSearchOpen((open) => !open); setMenuOpen(false) }}>Search</button>
-          <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
+          <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <span className="shortcut-hint">Ctrl⌥N to show or hide</span>
         </nav>}
       </div>}
@@ -231,13 +237,13 @@ function App() {
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
 
       <section className="day-stream" aria-label="Daily notes">
-        {days.map((documentDay) => {
+        {days.filter((documentDay) => preferences.showEmptyDays || documents[documentDay]).map((documentDay) => {
           const source = documents[documentDay] ?? ''
           const parsed = parseMarkdown(source)
           return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
-              <h1 className="day-title">{formatLogicalDay(documentDay)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} />
+              <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -258,23 +264,23 @@ function App() {
       {!captureMode && settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" aria-describedby="settings-modal-description">
           <div className="modal-heading"><div><span className="eyebrow">Preferences</span><h2 id="settings-modal-title">Settings</h2></div><button className="modal-close" type="button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button></div>
-          <p className="settings-description" id="settings-modal-description"><span className="settings-asterisk">*</span> These settings are planned and are not active yet.</p>
+          <p className="settings-description" id="settings-modal-description"><span className="settings-asterisk">*</span> A red asterisk marks settings that are planned for a later phase.</p>
 
           <fieldset className="settings-group"><legend>Editor</legend>
-            <label className="settings-row"><span className="settings-label">Editor mode <span className="settings-asterisk">*</span></span><select value="Normal editor" onChange={(event) => event.preventDefault()}><option>Normal editor</option><option>Raw Editor</option></select></label>
-            <label className="settings-row settings-range-row"><span className="settings-label">Zoom <span className="settings-asterisk">*</span></span><span className="settings-range-control"><input type="range" min="60" max="150" step="10" value="100" onChange={(event) => event.preventDefault()} /><output>100%</output></span></label>
-            <label className="settings-row"><span className="settings-label">Font choice <span className="settings-asterisk">*</span></span><select value="System sans-serif" onChange={(event) => event.preventDefault()}><option>System sans-serif</option><option>Serif</option><option>Monospace</option></select></label>
+            <label className="settings-row"><span className="settings-label">Editor mode</span><select value={preferences.editorMode} onChange={(event) => setPreferences((current) => ({ ...current, editorMode: event.target.value === 'raw' ? 'raw' : 'normal' }))}><option value="normal">Normal editor</option><option value="raw">Raw Editor</option></select></label>
+            <label className="settings-row settings-range-row"><span className="settings-label">Zoom</span><span className="settings-range-control"><input type="range" min="60" max="150" step="10" value={preferences.zoomLevel} onChange={(event) => setPreferences((current) => ({ ...current, zoomLevel: Number(event.target.value) }))} /><output>{preferences.zoomLevel}%</output></span></label>
+            <label className="settings-row"><span className="settings-label">Font choice</span><select value={preferences.fontChoice} onChange={(event) => setPreferences((current) => ({ ...current, fontChoice: event.target.value as Preferences['fontChoice'] }))}><option value="system">System sans-serif</option><option value="serif">Serif</option><option value="monospace">Monospace</option></select></label>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Daily notes</legend>
-            <label className="settings-row"><span className="settings-label">Day rollover time <span className="settings-asterisk">*</span></span><select value="04:00" onChange={(event) => event.preventDefault()}><option value="00:00">Midnight (12:00 AM)</option><option value="01:00">1:00 AM</option><option value="02:00">2:00 AM</option><option value="03:00">3:00 AM</option><option value="04:00">4:00 AM</option><option value="05:00">5:00 AM</option></select></label>
-            <label className="settings-row"><span className="settings-label">Show empty days <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
-            <label className="settings-row"><span className="settings-label">Date display format <span className="settings-asterisk">*</span></span><select value="Monday, September 2, 2026" onChange={(event) => event.preventDefault()}><option>Monday, September 2, 2026</option><option>Monday, Sep 2</option><option>Mon, September 2</option><option>Sep 2, 2026</option><option>September 2</option><option>2026-09-02</option><option>09/02/2026</option></select></label>
+            <label className="settings-row"><span className="settings-label">Day rollover time</span><select value={preferences.rolloverHour} onChange={(event) => setPreferences((current) => ({ ...current, rolloverHour: Number(event.target.value) }))}><option value={0}>Midnight (12:00 AM)</option><option value={1}>1:00 AM</option><option value={2}>2:00 AM</option><option value={3}>3:00 AM</option><option value={4}>4:00 AM</option><option value={5}>5:00 AM</option></select></label>
+            <label className="settings-row"><span className="settings-label">Show empty days</span><input type="checkbox" checked={preferences.showEmptyDays} onChange={(event) => setPreferences((current) => ({ ...current, showEmptyDays: event.target.checked }))} /></label>
+            <label className="settings-row"><span className="settings-label">Date display format</span><select value={preferences.dateFormat} onChange={(event) => setPreferences((current) => ({ ...current, dateFormat: event.target.value as Preferences['dateFormat'] }))}><option value="long">Monday, September 2, 2026</option><option value="long-short">Monday, Sep 2</option><option value="weekday-month">Mon, September 2</option><option value="short">Sep 2, 2026</option><option value="month-day">September 2</option><option value="iso">2026-09-02</option><option value="numeric">09/02/2026</option></select></label>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Appearance</legend>
-            <label className="settings-row"><span className="settings-label">Dark/light mode <span className="settings-asterisk">*</span></span><select value="Light" onChange={(event) => event.preventDefault()}><option>Light</option><option>Dark</option><option>System</option></select></label>
-            <label className="settings-row"><span className="settings-label">Compact spacing <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Dark/light mode</span><select value={preferences.theme} onChange={(event) => setPreferences((current) => ({ ...current, theme: event.target.value === 'dark' ? 'dark' : 'light' }))}><option value="light">Light</option><option value="dark">Dark</option></select></label>
+            <label className="settings-row"><span className="settings-label">Compact spacing</span><input type="checkbox" checked={preferences.compactSpacing} onChange={(event) => setPreferences((current) => ({ ...current, compactSpacing: event.target.checked }))} /></label>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Data &amp; backups</legend>

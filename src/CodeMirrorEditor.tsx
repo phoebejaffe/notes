@@ -151,9 +151,10 @@ interface CodeMirrorEditorProps {
   focusAtEnd?: boolean
   sourceMode?: boolean
   tagColors?: Record<string, string>
+  restoreSelection?: { from: number; to: number }
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {} }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -225,8 +226,12 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     const view = viewRef.current
     if (!view) return
     const current = view.state.doc.toString()
-    if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
-  }, [value])
+    if (current !== value) {
+      const from = Math.min(restoreSelection?.from ?? view.state.selection.main.from, value.length)
+      const to = Math.min(restoreSelection?.to ?? view.state.selection.main.to, value.length)
+      view.dispatch({ changes: { from: 0, to: current.length, insert: value }, selection: { anchor: from, head: to } })
+    }
+  }, [restoreSelection, value])
 
   return <div className="editor-container">
     <div className="indent-debug" aria-live="polite">Editor nesting inset: {depthClass * 3}px</div>

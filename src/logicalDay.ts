@@ -13,7 +13,19 @@ export function shiftLogicalDay(dayKey: string, amount: number) {
   return logicalDayKey(day, 0)
 }
 
-export function formatLogicalDay(dayKey: string) {
+import type { DateFormat } from './preferences'
+
+export function formatLogicalDay(dayKey: string, dateFormat: DateFormat = 'long') {
   const day = new Date(`${dayKey}T12:00:00`)
-  return new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(day)
+  const formats: Record<DateFormat, Intl.DateTimeFormatOptions> = {
+    long: { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' },
+    'long-short': { weekday: 'long', month: 'short', day: 'numeric' },
+    'weekday-month': { weekday: 'short', month: 'long', day: 'numeric' },
+    short: { month: 'short', day: 'numeric', year: 'numeric' },
+    'month-day': { month: 'long', day: 'numeric' },
+    iso: { year: 'numeric', month: '2-digit', day: '2-digit' },
+    numeric: { year: 'numeric', month: 'numeric', day: 'numeric' },
+  }
+  if (dateFormat === 'iso') return dayKey
+  return new Intl.DateTimeFormat(undefined, formats[dateFormat]).format(day)
 }
