@@ -47,8 +47,8 @@ function sourceMatchesFilter(source: string, filterTags: string[]) {
   return parsed.lines.some((line, index) => line.trim() && parsed.ranges.some((range) => filterTags.includes(range.tag) && range.startLine < index && index < range.endLine))
 }
 
-function FilterIcon() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 4.6C3 4.03995 3 3.75992 3.10899 3.54601C3.20487 3.35785 3.35785 3.20487 3.54601 3.10899C3.75992 3 4.03995 3 4.6 3H19.4C19.9601 3 20.2401 3 20.454 3.10899C20.6422 3.20487 20.7951 3.35785 20.891 3.54601C21 3.75992 21 4.03995 21 4.6V6.33726C21 6.58185 21 6.70414 20.9724 6.81923C20.9479 6.92127 20.9075 7.01881 20.8526 7.10828C20.7908 7.2092 20.7043 7.29568 20.5314 7.46863L14.4686 13.5314C14.2957 13.7043 14.2092 13.7908 14.1474 13.8917C14.0925 13.9812 14.0521 14.0787 14.0276 14.1808C14 14.2959 14 14.4182 14 14.6627V17L10 21V14.6627C10 14.4182 10 14.2959 9.97237 14.1808C9.94787 14.0787 9.90747 13.9812 9.85264 13.8917C9.7908 13.7908 9.70432 13.7043 9.53137 13.5314L3.46863 7.46863C3.29568 7.29568 3.2092 7.2092 3.14736 7.10828C3.09253 7.01881 3.05213 6.92127 3.02763 6.81923C3 6.70414 3 6.58185 3 6.33726V4.6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+function FilterIcon({ active }: { active: boolean }) {
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} aria-hidden="true"><path d="M3 4.6C3 4.03995 3 3.75992 3.10899 3.54601C3.20487 3.35785 3.35785 3.20487 3.54601 3.10899C3.75992 3 4.03995 3 4.6 3H19.4C19.9601 3 20.2401 3 20.454 3.10899C20.6422 3.20487 20.7951 3.35785 20.891 3.54601C21 3.75992 21 4.03995 21 4.6V6.33726C21 6.58185 21 6.70414 20.9724 6.81923C20.9479 6.92127 20.9075 7.01881 20.8526 7.10828C20.7908 7.2092 20.7043 7.29568 20.5314 7.46863L14.4686 13.5314C14.2957 13.7043 14.2092 13.7908 14.1474 13.8917C14.0925 13.9812 14.0521 14.0787 14.0276 14.1808C14 14.2959 14 14.4182 14 14.6627V17L10 21V14.6627C10 14.4182 10 14.2959 9.97237 14.1808C9.94787 14.0787 9.90747 13.9812 9.85264 13.8917C9.7908 13.7908 9.70432 13.7043 9.53137 13.5314L3.46863 7.46863C3.29568 7.29568 3.2092 7.2092 3.14736 7.10828C3.09253 7.01881 3.05213 6.92127 3.02763 6.81923C3 6.70414 3 6.58185 3 6.33726V4.6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 
 function downloadMarkdown(markdown: string, filename: string) {
@@ -463,7 +463,7 @@ function App() {
         <div className="topbar-left" />
         <div className="topbar-right">
           <button className="search-button" type="button" aria-label="Search" aria-expanded={searchOpen} onClick={() => setSearchOpen((open) => !open)}>⌕</button>
-          <button className={`filter-button icon-button${filterTags.length ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon /></button>
+          <button className={`filter-button icon-button${filterTags.length ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0} /></button>
           <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
           {saveState === 'saving' && <span className="save-spinner" role="status" aria-label="Saving" />}
         </div>
@@ -480,7 +480,7 @@ function App() {
         {filterOpen && <div className="filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => setFilterTags([])} disabled={!filterTags.length}>Clear filters</button>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </header>}
       {captureMode && <div className="capture-menu">
-        <button className={`filter-button icon-button${filterTags.length ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon /></button>
+        <button className={`filter-button icon-button${filterTags.length ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0} /></button>
         <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>

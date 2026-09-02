@@ -69,8 +69,8 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
     this.decorations = this.build(view)
   }
 
-  update(update: { view: EditorView; docChanged: boolean }) {
-    if (update.docChanged) this.decorations = this.build(update.view)
+  update(update: { view: EditorView; docChanged: boolean; viewportChanged: boolean }) {
+    if (update.docChanged || update.viewportChanged) this.decorations = this.build(update.view)
   }
 
   build(view: EditorView) {
