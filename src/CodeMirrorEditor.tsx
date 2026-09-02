@@ -10,14 +10,12 @@ function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<
   if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
   const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
   if (!activeTags.length) return ''
-  const colorHash = (tag: string) => [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
-  const outerHash = colorHash(activeTags[0].tag)
-  const innerHash = colorHash(activeTags[1]?.tag ?? activeTags[0].tag)
   const outerColor = tagColors[activeTags[0].tag]
   const innerColor = tagColors[activeTags[1]?.tag ?? activeTags[0].tag]
   const adjacent = activeTags.some((item) => parsed.ranges.some((other) => other !== item && (other.endLine === item.startLine || item.endLine === other.startLine)))
   const overlap = activeTags.length > 1
-  return `cm-tagged-line cm-tag-color-${outerHash}${outerColor ? ' cm-tag-custom-outer' : ''}${overlap ? ` cm-tagged-overlap cm-tag-inner-color-${innerHash}${innerColor ? ' cm-tag-custom-inner' : ''}` : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
+  const layerClasses = activeTags.slice(0, 4).map((tag, index) => `${index === 0 ? 'cm-tag-color' : ['cm-tag-inner-color', 'cm-tag-third-color', 'cm-tag-fourth-color'][index - 1]}-${[...tag.tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5}`).join(' ')
+  return `cm-tagged-line cm-tagged-${Math.min(activeTags.length, 4)} ${layerClasses}${outerColor ? ' cm-tag-custom-outer' : ''}${overlap ? ` cm-tagged-overlap${innerColor ? ' cm-tag-custom-inner' : ''}` : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
 }
 
 function tagDepthAtLine(parsed: ParsedMarkdown, lineIndex: number) {
@@ -85,10 +83,11 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         const rangeClass = lineStyle(parsed, lineIndex, tagColors)
         const className = [rangeClass, markdownLineStyle(line.text)].filter(Boolean).join(' ')
         const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
-        const customColors = [tagColors[activeTags[0]?.tag], tagColors[activeTags[1]?.tag]].filter(Boolean).map((color, index) => `--tag-${index === 0 ? 'outer' : 'inner'}:${color}`).join(';')
-        const dayInset = Math.min(maxTagDepth(parsed), 3) * 3
-        const lineInset = dayInset + (rangeClass.includes('cm-tagged-line') ? 12 : 0)
-        const lineStyles = [`padding-left:${lineInset}px`, customColors].filter(Boolean).join(';')
+        const customColors = activeTags.slice(0, 4).map((range, index) => tagColors[range.tag] ? `--tag-${['outer', 'inner', 'third', 'fourth'][index]}:${tagColors[range.tag]}` : '').filter(Boolean).join(';')
+        const dayInset = Math.min(maxTagDepth(parsed), 4) * 3
+        const borderCount = rangeClass.includes('cm-tagged-line') ? Math.min(activeTags.length, 4) : 0
+        const lineInset = rangeClass.includes('cm-marker-line') ? 0 : dayInset + (borderCount ? borderCount * 3 + 12 : 0)
+        const lineStyles = [`--tag-border-start:0px`, `--tag-text-inset:${lineInset}px`, `padding-left:${lineInset}px`, customColors].filter(Boolean).join(';')
         if (className) ranges.push(Decoration.line({ attributes: { class: className, style: lineStyles } }).range(line.from))
         if (rangeClass === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
@@ -109,8 +108,8 @@ function createRangeDecorations(tagColors: Record<string, string>) {
                 const tagHash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
                 const customColor = tagColors[tag]
                 const outerTags = parsed.ranges.filter((range) => range.startLine < lineIndex && lineIndex < range.endLine).sort((left, right) => left.startLine - right.startLine)
-                const outerColors = outerTags.slice(0, 3).map((range) => tagColors[range.tag] ?? ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55'][[...range.tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5])
-                const outerClass = outerColors.length ? ` cm-has-outer-border${outerColors.length > 2 ? ' cm-has-triple-outer-border' : outerColors.length > 1 ? ' cm-has-double-outer-border' : ''}` : ''
+                const outerColors = outerTags.slice(0, 4).map((range) => tagColors[range.tag] ?? ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55'][[...range.tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5])
+                const outerClass = outerColors.length ? ` cm-has-outer-border${outerColors.length > 3 ? ' cm-has-quadruple-outer-border' : outerColors.length > 2 ? ' cm-has-triple-outer-border' : outerColors.length > 1 ? ' cm-has-double-outer-border' : ''}` : ''
                 const outerStyle = outerColors.map((color, colorIndex) => `--marker-outer-${colorIndex + 1}:${color}`).join(';')
                 ranges.push(Decoration.mark({ class: `cm-tag-chip cm-tag-color-${tagHash}${outerClass}`, ...(customColor || outerStyle ? { attributes: { style: [customColor ? `--tag-color:${customColor}` : '', outerStyle].filter(Boolean).join(';') } } : {}) }).range(line.from + markerStart + 4 + index, line.from + markerStart + 4 + index + value.length))
               })
@@ -219,7 +218,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     return () => { viewRef.current = null; view.destroy() }
   }, [focusAtEnd, initialValue, tagColors])
 
-  const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 3)
+  const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 4)
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
