@@ -63,13 +63,22 @@ interface Selection { day: string; from: number; to: number }
 
 function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const parts = shortcut.toLowerCase().split('-')
-  const key = parts.pop() ?? ''
+  let key = parts.pop() ?? ''
+  if (!key && shortcut.endsWith('--')) key = '-'
   const wantsMod = parts.includes('mod')
   const wantsCtrl = parts.includes('ctrl')
   const wantsAlt = parts.includes('alt') || parts.includes('option')
   const wantsShift = parts.includes('shift')
   const modifierMatches = wantsMod ? (/mac/i.test(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) : wantsCtrl ? event.ctrlKey && !event.metaKey : !event.ctrlKey && !event.metaKey
   return event.key.toLowerCase() === key && modifierMatches && (wantsAlt ? event.altKey : !event.altKey) && (wantsShift ? event.shiftKey : !event.shiftKey)
+}
+
+function formatShortcut(shortcut: string) {
+  return shortcut.replaceAll('Mod-', '⌘').replaceAll('Ctrl-', '⌃').replaceAll('Alt-', '⌥').replaceAll('Option-', '⌥').replaceAll('Shift-', '⇧').replace('ArrowUp', '↑').replace('ArrowDown', '↓').replace('ArrowLeft', '←').replace('ArrowRight', '→').replace('Escape', 'Esc')
+}
+
+function parseDisplayedShortcut(shortcut: string) {
+  return shortcut.replaceAll('⌘', 'Mod-').replaceAll('⌃', 'Ctrl-').replaceAll('⌥', 'Alt-').replaceAll('⇧', 'Shift-').replace('↑', 'ArrowUp').replace('↓', 'ArrowDown').replace('←', 'ArrowLeft').replace('→', 'ArrowRight').replace('Esc', 'Escape').replaceAll(' ', '')
 }
 
 function App() {
@@ -149,6 +158,12 @@ function App() {
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
+      if (matchesShortcut(event, preferences.shortcuts.settings)) {
+        event.preventDefault()
+        setSettingsOpen(true)
+        setMenuOpen(false)
+        return
+      }
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
       if (matchesShortcut(event, preferences.shortcuts.search)) {
         event.preventDefault()
@@ -180,12 +195,15 @@ function App() {
         downloadMarkdown(documents[today] ?? '', `${today}.md`)
         return
       }
-      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-      const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
+      const direction = matchesShortcut(event, preferences.shortcuts.dayPrevious) ? -1 : matchesShortcut(event, preferences.shortcuts.dayNext) ? 1 : 0
+      if (!direction) return
       const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
-      const currentIndex = activeCard ? cards.indexOf(activeCard) : 0
-      const nextIndex = currentIndex + (event.key === 'ArrowDown' ? 1 : -1)
-      const nextEditor = cards[nextIndex]?.querySelector<HTMLElement>('.cm-content')
+      const activeDay = activeCard?.dataset.day
+      const activeSource = activeDay ? documents[activeDay] ?? '' : ''
+      if (!activeCard || !activeDay || selection.day !== activeDay || (direction < 0 ? selection.from !== 0 || selection.to !== 0 : selection.to !== activeSource.length)) return
+      const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
+      const currentIndex = cards.indexOf(activeCard)
+      const nextEditor = cards[currentIndex + direction]?.querySelector<HTMLElement>('.cm-content')
       if (nextEditor) {
         event.preventDefault()
         nextEditor.focus()
@@ -194,13 +212,15 @@ function App() {
     }
     window.addEventListener('keydown', handleInterfaceShortcuts)
     return () => window.removeEventListener('keydown', handleInterfaceShortcuts)
-  }, [documents, preferences.shortcuts, today])
+  }, [documents, preferences.shortcuts, selection, today])
 
   useEffect(() => {
     function closeTransientPanels(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setMenuOpen(false)
         setSearchOpen(false)
+        setSettingsOpen(false)
+        setTagsOpen(false)
       }
     }
     function closeOnOutsideClick(event: MouseEvent) {
@@ -392,7 +412,7 @@ function App() {
           return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} renderBullets={preferences.renderBullets} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -417,6 +437,7 @@ function App() {
             <label className="settings-row"><span className="settings-label">Editor mode</span><select value={preferences.editorMode} onChange={(event) => setPreferences((current) => ({ ...current, editorMode: event.target.value === 'raw' ? 'raw' : 'normal' }))}><option value="normal">Normal editor</option><option value="raw">Raw Editor</option></select></label>
             <label className="settings-row settings-range-row"><span className="settings-label">Zoom</span><span className="settings-range-control"><input type="range" min="60" max="150" step="10" value={preferences.zoomLevel} onChange={(event) => setPreferences((current) => ({ ...current, zoomLevel: Number(event.target.value) }))} /><output>{preferences.zoomLevel}%</output></span></label>
             <label className="settings-row"><span className="settings-label">Font choice</span><select value={preferences.fontChoice} onChange={(event) => setPreferences((current) => ({ ...current, fontChoice: event.target.value as Preferences['fontChoice'] }))}><option value="system">System sans-serif</option><option value="serif">Serif</option><option value="monospace">Monospace</option></select></label>
+            <label className="settings-row"><span className="settings-label">Render Markdown bullets</span><input type="checkbox" checked={preferences.renderBullets} onChange={(event) => setPreferences((current) => ({ ...current, renderBullets: event.target.checked }))} /></label>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Daily notes</legend>
@@ -446,7 +467,7 @@ function App() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Keyboard shortcuts</legend>
-            {Object.entries({ search: 'Search', rawEditor: 'Raw Editor', zoomIn: 'Zoom in', zoomOut: 'Zoom out', jumpToToday: 'Jump to today', exportToday: 'Export today', tagSelection: 'Tag selection' }).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={preferences.shortcuts[name] ?? ''} onChange={(event) => updateShortcut(name, event.target.value)} aria-label={`${label} shortcut`} /></label>)}
+            {Object.entries({ search: 'Search', settings: 'Settings', rawEditor: 'Raw Editor', zoomIn: 'Zoom in', zoomOut: 'Zoom out', jumpToToday: 'Jump to today', exportToday: 'Export today', tagSelection: 'Tag selection', dayPrevious: 'Previous day', dayNext: 'Next day' }).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={formatShortcut(preferences.shortcuts[name] ?? '')} onChange={(event) => updateShortcut(name, parseDisplayedShortcut(event.target.value))} aria-label={`${label} shortcut`} /></label>)}
             {shortcutConflicts.size > 0 && <p className="settings-help shortcut-error">Each shortcut must be unique.</p>}
           </fieldset>
 

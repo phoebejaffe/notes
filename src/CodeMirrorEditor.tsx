@@ -89,6 +89,11 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         const lineInset = rangeClass.includes('cm-marker-line') ? 0 : dayInset + (borderCount ? borderCount * 3 + 12 : 0)
         const lineStyles = [`--tag-border-start:0px`, `--tag-text-inset:${lineInset}px`, `padding-left:${lineInset}px`, customColors].filter(Boolean).join(';')
         if (className) ranges.push(Decoration.line({ attributes: { class: className, style: lineStyles } }).range(line.from))
+        const bulletMatch = line.text.match(/^(\s*)([-*])(?=\s)/u)
+        if (bulletMatch) {
+          const markerStart = line.from + bulletMatch[1].length
+          ranges.push(Decoration.mark({ class: 'cm-bullet-marker' }).range(markerStart, markerStart + 1))
+        }
         if (rangeClass === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
           const markerEnd = line.text.lastIndexOf('-->')
@@ -153,14 +158,16 @@ interface CodeMirrorEditorProps {
   tagColors?: Record<string, string>
   restoreSelection?: { from: number; to: number }
   hideTagSyntax?: boolean
+  renderBullets?: boolean
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, renderBullets = true }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSelectionRef = useRef(onSelection)
   const sourceModeRef = useRef(sourceMode)
+  const selectionRef = useRef({ from: 0, to: 0 })
   const syncingRenameRef = useRef(false)
   const [initialValue] = useState(value)
 
@@ -208,6 +215,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
             }
             if (update.selectionSet || update.docChanged) {
               const selection = update.state.selection.main
+              selectionRef.current = { from: selection.from, to: selection.to }
               onSelectionRef.current?.(selection.from, selection.to)
             }
           }),
@@ -219,6 +227,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     viewRef.current = view
     if (focusAtEnd) {
       view.dispatch({ selection: { anchor: view.state.doc.length } })
+      selectionRef.current = { from: view.state.doc.length, to: view.state.doc.length }
       view.focus()
     }
     return () => { viewRef.current = null; view.destroy() }
@@ -230,13 +239,14 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     if (!view) return
     const current = view.state.doc.toString()
     if (current !== value) {
-      const from = Math.min(restoreSelection?.from ?? view.state.selection.main.from, value.length)
-      const to = Math.min(restoreSelection?.to ?? view.state.selection.main.to, value.length)
+      const from = Math.min(restoreSelection?.from ?? selectionRef.current.from, value.length)
+      const to = Math.min(restoreSelection?.to ?? selectionRef.current.to, value.length)
       view.dispatch({ changes: { from: 0, to: current.length, insert: value }, selection: { anchor: from, head: to } })
+      selectionRef.current = { from, to }
     }
   }, [restoreSelection, value])
 
   return <div className="editor-container">
-    <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''} ${hideTagSyntax ? 'hide-tag-syntax' : ''}`} ref={host} aria-label="Markdown editor" />
+    <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''} ${hideTagSyntax ? 'hide-tag-syntax' : ''} ${renderBullets ? 'render-bullets' : ''}`} ref={host} aria-label="Markdown editor" />
   </div>
 }

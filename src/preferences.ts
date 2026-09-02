@@ -22,6 +22,7 @@ export interface Preferences {
   showDockIcon: boolean
   shortcuts: Record<string, string>
   hideTagSyntax: boolean
+  renderBullets: boolean
 }
 
 export const defaultPreferences: Preferences = {
@@ -48,8 +49,12 @@ export const defaultPreferences: Preferences = {
     jumpToToday: 'Mod-j',
     exportToday: 'Mod-s',
     tagSelection: 'Mod-t',
+    settings: 'Mod-,',
+    dayPrevious: 'Mod-Alt-ArrowUp',
+    dayNext: 'Mod-Alt-ArrowDown',
   },
   hideTagSyntax: true,
+  renderBullets: true,
 }
 
 const storageKey = 'notes-preferences'
@@ -91,6 +96,7 @@ export function loadPreferences(): Preferences {
       showDockIcon: parsed.showDockIcon === true,
       shortcuts: Object.fromEntries(Object.entries(defaultPreferences.shortcuts).map(([key, value]) => [key, typeof parsedShortcuts[key] === 'string' && parsedShortcuts[key].trim() ? parsedShortcuts[key] : value])),
       hideTagSyntax: parsed.hideTagSyntax !== false,
+      renderBullets: parsed.renderBullets !== false,
     }
   } catch {
     return defaultPreferences
