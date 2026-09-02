@@ -4,23 +4,36 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, PhysicalPosition, WindowEvent};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[derive(Deserialize, Serialize)]
-struct SavedPosition {
+struct SavedGeometry {
     x: i32,
     y: i32,
+    width: u32,
+    height: u32,
 }
 
-fn position_path(app: &AppHandle) -> Option<PathBuf> {
+fn geometry_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
         .ok()
-        .map(|path| path.join("window-position.json"))
+        .map(|path| path.join("window-geometry.json"))
 }
 
-fn is_position_visible(app: &AppHandle, position: &SavedPosition) -> bool {
+fn default_window_size(app: &AppHandle) -> PhysicalSize<u32> {
+    let height = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| (monitor.size().height as f64 * 0.75) as u32)
+        .unwrap_or(600)
+        .max(120);
+    PhysicalSize::new(520, height)
+}
+
+fn is_geometry_visible(app: &AppHandle, geometry: &SavedGeometry) -> bool {
     app.available_monitors()
         .map(|monitors| {
             monitors.into_iter().any(|monitor| {
@@ -28,50 +41,62 @@ fn is_position_visible(app: &AppHandle, position: &SavedPosition) -> bool {
                 let monitor_size = monitor.size();
                 let monitor_right = monitor_position.x + monitor_size.width as i32;
                 let monitor_bottom = monitor_position.y + monitor_size.height as i32;
-                position.x < monitor_right
-                    && position.x + 100 > monitor_position.x
-                    && position.y < monitor_bottom
-                    && position.y + 48 > monitor_position.y
+                geometry.x < monitor_right
+                    && geometry.x + geometry.width.min(100) as i32 > monitor_position.x
+                    && geometry.y < monitor_bottom
+                    && geometry.y + geometry.height.min(48) as i32 > monitor_position.y
             })
         })
         .unwrap_or(false)
 }
 
-fn restore_window_position(app: &AppHandle) {
+fn restore_window_geometry(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let Some(path) = position_path(app) else {
+    let fallback_size = default_window_size(app);
+    let Some(path) = geometry_path(app) else {
+        let _ = window.set_size(fallback_size);
         return;
     };
-    let Ok(bytes) = fs::read(path) else { return };
-    let Ok(position) = serde_json::from_slice::<SavedPosition>(&bytes) else {
-        return;
-    };
-    if is_position_visible(app, &position) {
-        let _ = window.set_position(PhysicalPosition::new(position.x, position.y));
+    let restored = fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SavedGeometry>(&bytes).ok())
+        .filter(|geometry| geometry.width >= 360 && geometry.height >= 120)
+        .filter(|geometry| is_geometry_visible(app, geometry));
+
+    if let Some(geometry) = restored {
+        let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
+        let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
+    } else {
+        let _ = window.set_size(fallback_size);
     }
 }
 
-fn save_window_position(app: &AppHandle) {
+fn save_window_geometry(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let Some(path) = position_path(app) else {
+    let Some(path) = geometry_path(app) else {
         return;
     };
     let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.inner_size() else {
         return;
     };
     let Some(directory) = path.parent() else {
         return;
     };
     if fs::create_dir_all(directory).is_ok() {
-        let saved = SavedPosition {
+        let geometry = SavedGeometry {
             x: position.x,
             y: position.y,
+            width: size.width,
+            height: size.height,
         };
-        if let Ok(bytes) = serde_json::to_vec(&saved) {
+        if let Ok(bytes) = serde_json::to_vec(&geometry) {
             let _ = fs::write(path, bytes);
         }
     }
@@ -88,7 +113,7 @@ fn focus_main_window(app: &AppHandle) {
 fn toggle_shortcut_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_focused().unwrap_or(false) {
-            save_window_position(app);
+            save_window_geometry(app);
             let _ = window.hide();
         } else {
             focus_main_window(app);
@@ -99,7 +124,7 @@ fn toggle_shortcut_window(app: &AppHandle) {
 fn toggle_tray_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) {
-            save_window_position(app);
+            save_window_geometry(app);
             let _ = window.hide();
         } else {
             focus_main_window(app);
@@ -119,7 +144,7 @@ pub fn run() {
                 )?;
             }
 
-            restore_window_position(app.handle());
+            restore_window_geometry(app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
             }
@@ -166,10 +191,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" {
-                if let WindowEvent::Moved(_) = event {
-                    save_window_position(&window.app_handle());
-                }
+            if window.label() == "main"
+                && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))
+            {
+                save_window_geometry(&window.app_handle());
             }
         })
         .run(tauri::generate_context!())
