@@ -140,6 +140,10 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         for (const match of line.text.matchAll(underlinePattern)) {
           ranges.push(Decoration.mark({ class: 'cm-underline-text' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
         }
+        const strikethroughPattern = /(?<!~)~~(\S(?:.*?\S)?)~~(?!~)/gu
+        for (const match of line.text.matchAll(strikethroughPattern)) {
+          ranges.push(Decoration.mark({ class: 'cm-strikethrough-text' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
+        }
         if (line.to >= to) break
         position = line.to + 1
       }

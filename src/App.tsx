@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { addTagToRange, formatMarker, lineRangeForSelection, parseMarkdown, removeTagAtPosition, renameTagEverywhere } from './markerEngine'
@@ -93,6 +94,7 @@ function App() {
   const [tagToRename, setTagToRename] = useState('')
   const [renamedTag, setRenamedTag] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [tagBarOpen, setTagBarOpen] = useState(false)
   const sourceMode = preferences.editorMode === 'raw'
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
@@ -104,6 +106,7 @@ function App() {
   const lastBackupSignatureRef = useRef('')
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
+  const [captureFocused, setCaptureFocused] = useState(() => document.hasFocus())
   const streamEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -144,17 +147,20 @@ function App() {
   }, [loaded, oldestDocumentDay, preferences.showEmptyDays])
 
   useEffect(() => {
+    if (tagBarOpen) tagInputRef.current?.focus()
+  }, [tagBarOpen])
+
+  useEffect(() => {
     function focusTagInput(event: KeyboardEvent) {
-      const activeDocument = selection.day ? documents[selection.day] ?? '' : ''
-      const insideTag = selection.day && parseMarkdown(activeDocument).ranges.some((range) => range.start < selection.from && selection.from < range.end)
-      if (matchesShortcut(event, preferences.shortcuts.tagSelection) && selection.day && (selection.from !== selection.to || insideTag)) {
+      if (matchesShortcut(event, preferences.shortcuts.tagSelection) && selection.day) {
         event.preventDefault()
+        setTagBarOpen(true)
         tagInputRef.current?.focus()
       }
     }
     window.addEventListener('keydown', focusTagInput)
     return () => window.removeEventListener('keydown', focusTagInput)
-  }, [documents, preferences.shortcuts.tagSelection, selection])
+  }, [preferences.shortcuts.tagSelection, selection])
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
@@ -238,6 +244,51 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!captureMode || !loaded) return
+    function focusTodayIfIdle() {
+      if (settingsOpen || tagsOpen) return
+      const activeElement = document.activeElement
+      if (activeElement && activeElement !== document.body && activeElement !== document.documentElement) return
+      window.setTimeout(() => {
+        if (settingsOpen || tagsOpen) return
+        const editor = document.querySelector(`[data-day="${today}"] .cm-content`) as HTMLElement | null
+        editor?.focus()
+      }, 0)
+    }
+    function handleWindowFocus() {
+      setCaptureFocused(true)
+      focusTodayIfIdle()
+    }
+    function handleWindowBlur() {
+      setCaptureFocused(false)
+    }
+    function focusTodayEditor() {
+      if (settingsOpen || tagsOpen) return
+      window.setTimeout(() => {
+        if (settingsOpen || tagsOpen) return
+        const editor = document.querySelector(`[data-day="${today}"] .cm-content`) as HTMLElement | null
+        editor?.focus()
+      }, 0)
+    }
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('blur', handleWindowBlur)
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    if (isTauriEnvironment()) {
+      void listen('quick-entry-focus', focusTodayEditor).then((cleanup) => {
+        if (disposed) cleanup()
+        else unlisten = cleanup
+      })
+    }
+    return () => {
+      disposed = true
+      window.removeEventListener('focus', handleWindowFocus)
+      window.removeEventListener('blur', handleWindowBlur)
+      unlisten?.()
+    }
+  }, [captureMode, loaded, settingsOpen, tagsOpen, today])
+
+  useEffect(() => {
     if (!loaded) return
     const timer = window.setTimeout(() => {
       setSaveState('saving')
@@ -311,7 +362,18 @@ function App() {
 
   function applyTag() {
     const tag = tagInput.trim()
-    if (!tag || selection.from === selection.to || tagAlreadyActive) return
+    if (!tag || tagAlreadyActive) return
+    if (selection.from === selection.to) {
+      const openLine = formatMarker('open', [tag])
+      const closeLine = formatMarker('close', [tag])
+      const insertion = `${openLine}\n\n${closeLine}`
+      const source = `${selectedSource.slice(0, selection.from)}${insertion}${selectedSource.slice(selection.from)}`
+      const cursor = selection.from + openLine.length + 1
+      updateSource(selection.day, source)
+      setTagInput('')
+      setSelection({ day: selection.day, from: cursor, to: cursor })
+      return
+    }
     const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
     const result = addTagToRange(selectedSource, startLine, endLine, tag)
     if (!result.error) {
@@ -369,7 +431,7 @@ function App() {
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}`} style={{ zoom: preferences.zoomLevel / 100 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: preferences.zoomLevel / 100 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -421,7 +483,7 @@ function App() {
         <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
       </section>
 
-      {!sourceMode && selection.day && (selection.from !== selection.to || currentTags.length > 0) && <div className="tag-bar" role="dialog" aria-label="Tags at cursor or selection">
+      {!sourceMode && selection.day && (tagBarOpen || selection.from !== selection.to || currentTags.length > 0) && <div className="tag-bar" role="dialog" aria-label="Tags at cursor or selection">
         <div className="active-tag-chips">{currentTags.map((tag) => <span className="active-tag-chip" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeSelectedTag(tag)}>×</button></span>)}</div>
         <span className="popover-label">Tag lines</span>
         <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="therapy, 🧠, or project" aria-label="New tag" />

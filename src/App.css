@@ -1,6 +1,7 @@
 #root { min-height: 100vh; }
 .capture-shell, .app-shell { --tag-chip-base: #fff; }
 .capture-shell { min-height: 100vh; padding: 14px 16px; color: #403a42; background: #fff; }
+.capture-shell.capture-unfocused { opacity: .9; }
 .capture-shell .editor-card { padding-top: 0; }
 .capture-shell .codemirror-host { border: 0; }
 .capture-shell .cm-editor { min-height: 50px; }
@@ -51,6 +52,7 @@ button { cursor: pointer; font: inherit; }
 .cm-strong-text { font-weight: 700; }
 .cm-emphasis-text { font-style: italic; }
 .cm-underline-text { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.cm-strikethrough-text { text-decoration: line-through; text-decoration-thickness: 1px; }
 .cm-marker-line { color: #8c8794 !important; font-style: italic; }
 .cm-marker-syntax { font-size: 0; letter-spacing: 0; }
 .cm-tag-chip { display: inline-block; max-width: calc(100% - 10px); margin: 0 3px 0 var(--tag-label-inset, 0px); padding: 1px 7px; border: 1px solid #ded9e2; border-left-width: 3px; border-radius: 0 999px 999px 0; color: #77727b; background: #f7f5f8; font-size: 10px; font-style: normal; line-height: 1.45; overflow-wrap: anywhere; white-space: normal; vertical-align: top; }
