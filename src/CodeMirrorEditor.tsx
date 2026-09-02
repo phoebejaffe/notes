@@ -86,7 +86,10 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         const className = [rangeClass, markdownLineStyle(line.text)].filter(Boolean).join(' ')
         const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
         const customColors = [tagColors[activeTags[0]?.tag], tagColors[activeTags[1]?.tag]].filter(Boolean).map((color, index) => `--tag-${index === 0 ? 'outer' : 'inner'}:${color}`).join(';')
-        if (className) ranges.push(Decoration.line({ attributes: { class: className, ...(customColors ? { style: customColors } : {}) } }).range(line.from))
+        const dayInset = Math.min(maxTagDepth(parsed), 3) * 3
+        const lineInset = dayInset + (rangeClass.includes('cm-tagged-line') ? 12 : 0)
+        const lineStyles = [`padding-left:${lineInset}px`, customColors].filter(Boolean).join(';')
+        if (className) ranges.push(Decoration.line({ attributes: { class: className, style: lineStyles } }).range(line.from))
         if (rangeClass === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
           const markerEnd = line.text.lastIndexOf('-->')
@@ -216,10 +219,9 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    view.contentDOM.style.paddingLeft = `${depthClass * 3}px`
     const current = view.state.doc.toString()
     if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
-  }, [depthClass, value])
+  }, [value])
 
   return <div className="editor-container">
     <div className="indent-debug" aria-live="polite">Editor nesting inset: {depthClass * 3}px</div>

@@ -54,9 +54,6 @@ button { cursor: pointer; font: inherit; }
 .cm-tag-chip.cm-tag-color-3 { border-color: #cbd9e6; border-left-color: #7190b0; color: #77727b; background: #f1f6fa; }
 .cm-tag-chip.cm-tag-color-4 { border-color: #e2d5bc; border-left-color: #b28a55; color: #77727b; background: #faf5eb; }
 .cm-tag-chip { border-color: var(--tag-color, #ded9e2); border-left-color: var(--tag-color, #ded9e2); background: color-mix(in srgb, var(--tag-color, #ded9e2) 12%, #fff); }
-.codemirror-host.tag-depth-1 .cm-content { padding-left: 3px !important; }
-.codemirror-host.tag-depth-2 .cm-content { padding-left: 6px !important; }
-.codemirror-host.tag-depth-3 .cm-content { padding-left: 9px !important; }
 .cm-tagged-line { padding-left: 12px; border-left-width: 3px; border-left-style: solid; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .cm-tag-color-0 { --tag-outer: #6d9b91; border-left-color: #6d9b91; }
 .cm-tag-color-1 { --tag-outer: #8975aa; border-left-color: #8975aa; }
