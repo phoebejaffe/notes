@@ -252,17 +252,20 @@ function replaceMarkerTag(line: string, span: MarkerTagSpan, newTag: string) {
 export function findMarkerTagRename(before: string, after: string) {
   const beforeLines = before.split('\n')
   const afterLines = after.split('\n')
-  const lineCount = Math.min(beforeLines.length, afterLines.length)
-  for (let line = 0; line < lineCount; line += 1) {
+  if (beforeLines.length !== afterLines.length) return undefined
+  let candidate: { line: number; oldTag: string; newTag: string } | undefined
+
+  for (let line = 0; line < beforeLines.length; line += 1) {
+    if (beforeLines[line] === afterLines[line]) continue
     const previous = markerTagSpans(beforeLines[line])
     const current = markerTagSpans(afterLines[line])
-    if (!previous.length || previous.length !== current.length) continue
+    if (!previous.length || previous.length !== current.length) return undefined
     const changed = current.map((span, index) => span.kind === previous[index].kind && span.tag !== previous[index].tag ? index : -1).filter((index) => index >= 0)
-    if (changed.length === 1 && current.every((span, index) => index === changed[0] || span.tag === previous[index].tag)) {
-      return { line, oldTag: previous[changed[0]].tag, newTag: current[changed[0]].tag }
-    }
+    if (changed.length !== 1 || !current.every((span, index) => index === changed[0] || span.tag === previous[index].tag)) return undefined
+    candidate = { line, oldTag: previous[changed[0]].tag, newTag: current[changed[0]].tag }
   }
-  return undefined
+
+  return candidate
 }
 
 export function renameMatchingTag(source: string, markerLine: number, oldTag: string, newTag: string) {

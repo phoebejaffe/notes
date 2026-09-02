@@ -49,4 +49,12 @@ describe('marker engine', () => {
     const source = '<!-- therapy -->\nprivate note\n<!-- /therapy -->'
     expect(removeTagAtPosition(source, 1, 'therapy').source).toBe('private note')
   })
+
+  it('does not interpret inserted nested markers as a tag rename', () => {
+    const before = '<!-- therapy -->\nprivate note\n<!-- /therapy -->'
+    const after = addTagToRange(before, 1, 1, 'meeting').source
+    expect(findMarkerTagRename(before, after)).toBeUndefined()
+    expect(after).toContain('<!-- therapy -->')
+    expect(after).toContain('<!-- meeting -->')
+  })
 })

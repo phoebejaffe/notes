@@ -109,6 +109,11 @@ function App() {
         setZoomLevel((current) => Math.max(60, current - 10))
         return
       }
+      if (event.key.toLowerCase() === 'e') {
+        event.preventDefault()
+        setSourceMode((visible) => !visible)
+        return
+      }
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
       const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
       const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
