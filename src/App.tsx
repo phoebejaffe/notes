@@ -365,6 +365,18 @@ function App() {
     const tag = tagInput.trim()
     if (!tag || tagAlreadyActive) return
     if (selection.from === selection.to) {
+      const { startLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
+      const currentLine = selectedParsed.lines[startLine] ?? ''
+      if (currentLine.trim()) {
+        const result = addTagToRange(selectedSource, startLine, startLine, tag)
+        if (!result.error) {
+          const markerShift = formatMarker('open', [tag]).length + 1
+          updateSource(selection.day, result.source)
+          setTagInput('')
+          setSelection({ day: selection.day, from: selection.from + markerShift, to: selection.to + markerShift })
+        }
+        return
+      }
       const openLine = formatMarker('open', [tag])
       const closeLine = formatMarker('close', [tag])
       const insertion = `${openLine}\n\n${closeLine}`
