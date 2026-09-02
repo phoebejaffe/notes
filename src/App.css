@@ -6,6 +6,9 @@
 .app-shell { width: min(980px, 100%); margin: 0 auto; padding: 88px 16px 30px; background: #fff; }
 .topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 0; background: #fff; backdrop-filter: blur(12px); }
 .topbar-left, .topbar-right { display: flex; align-items: center; gap: 8px; }
+.capture-menu { position: fixed; z-index: 14; top: 10px; right: 10px; }
+.capture-menu .menu-panel { top: 42px; right: 0; left: auto; }
+.shortcut-hint { display: block; padding: 8px 11px; color: #9b9185; font-size: 10px; white-space: nowrap; }
 .icon-button { width: 34px; height: 34px; padding: 0; color: #625b54; background: transparent; border: 1px solid transparent; border-radius: 8px; font-size: 19px; line-height: 1; }
 .search-button { width: 48px; height: 48px; padding: 0; color: #514a44; background: transparent; border: 1px solid transparent; border-radius: 10px; font-size: 31px; line-height: 1; }
 .icon-button:hover, .icon-button[aria-expanded="true"], .search-button:hover, .search-button[aria-expanded="true"] { background: #f8f6fa; }

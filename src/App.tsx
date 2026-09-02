@@ -176,8 +176,16 @@ function App() {
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
         </nav>}
       </header>}
+      {captureMode && <div className="capture-menu">
+        <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
+        {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
+          <button type="button" onClick={() => { setSearchOpen((open) => !open); setMenuOpen(false) }}>Search</button>
+          <button type="button" onClick={() => { setSourceMode((visible) => !visible); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Edit source'}</button>
+          <span className="shortcut-hint">Ctrl⌥N to show or hide</span>
+        </nav>}
+      </div>}
 
-      {!captureMode && searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
+      {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
 
       <section className="day-stream" aria-label="Daily notes">
         {days.map((documentDay) => {
