@@ -1,17 +1,108 @@
+use std::fs;
 use std::io::Cursor;
+use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, PhysicalPosition, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
-fn toggle_main_window(app: &AppHandle) {
+#[derive(Deserialize, Serialize)]
+struct SavedPosition {
+    x: i32,
+    y: i32,
+}
+
+fn position_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|path| path.join("window-position.json"))
+}
+
+fn is_position_visible(app: &AppHandle, position: &SavedPosition) -> bool {
+    app.available_monitors()
+        .map(|monitors| {
+            monitors.into_iter().any(|monitor| {
+                let monitor_position = monitor.position();
+                let monitor_size = monitor.size();
+                let monitor_right = monitor_position.x + monitor_size.width as i32;
+                let monitor_bottom = monitor_position.y + monitor_size.height as i32;
+                position.x < monitor_right
+                    && position.x + 100 > monitor_position.x
+                    && position.y < monitor_bottom
+                    && position.y + 48 > monitor_position.y
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn restore_window_position(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some(path) = position_path(app) else {
+        return;
+    };
+    let Ok(bytes) = fs::read(path) else { return };
+    let Ok(position) = serde_json::from_slice::<SavedPosition>(&bytes) else {
+        return;
+    };
+    if is_position_visible(app, &position) {
+        let _ = window.set_position(PhysicalPosition::new(position.x, position.y));
+    }
+}
+
+fn save_window_position(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some(path) = position_path(app) else {
+        return;
+    };
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let Some(directory) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(directory).is_ok() {
+        let saved = SavedPosition {
+            x: position.x,
+            y: position.y,
+        };
+        if let Ok(bytes) = serde_json::to_vec(&saved) {
+            let _ = fs::write(path, bytes);
+        }
+    }
+}
+
+fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        if window.is_visible().unwrap_or(false) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn toggle_shortcut_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_focused().unwrap_or(false) {
+            save_window_position(app);
             let _ = window.hide();
         } else {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
+            focus_main_window(app);
+        }
+    }
+}
+
+fn toggle_tray_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            save_window_position(app);
+            let _ = window.hide();
+        } else {
+            focus_main_window(app);
         }
     }
 }
@@ -26,6 +117,11 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            restore_window_position(app.handle());
+            if let Some(window) = app.get_webview_window("main") {
+                window.show()?;
             }
 
             let app_handle = app.handle().clone();
@@ -48,7 +144,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        toggle_main_window(&app_handle);
+                        toggle_tray_window(&app_handle);
                     }
                 })
                 .build(app)?;
@@ -61,13 +157,20 @@ pub fn run() {
                         if registered_shortcut == &handler_shortcut
                             && event.state() == ShortcutState::Pressed
                         {
-                            toggle_main_window(app);
+                            toggle_shortcut_window(app);
                         }
                     })
                     .build(),
             )?;
             app.global_shortcut().register(shortcut)?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let WindowEvent::Moved(_) = event {
+                    save_window_position(&window.app_handle());
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
