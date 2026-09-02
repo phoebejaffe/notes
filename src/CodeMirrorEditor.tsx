@@ -8,13 +8,14 @@ import { findMarkerTagRename, parseMarkdown, renameMatchingTag, type ParsedMarkd
 
 function lineStyle(parsed: ParsedMarkdown, lineIndex: number) {
   if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
-  const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine)
+  const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
   if (!activeTags.length) return ''
-  const firstTag = activeTags[0].tag
-  const tagHash = [...firstTag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
+  const colorHash = (tag: string) => [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 5
+  const outerHash = colorHash(activeTags[0].tag)
+  const innerHash = colorHash(activeTags[1]?.tag ?? activeTags[0].tag)
   const adjacent = activeTags.some((item) => parsed.ranges.some((other) => other !== item && (other.endLine === item.startLine || item.endLine === other.startLine)))
   const overlap = activeTags.length > 1
-  return `cm-tagged-line cm-tag-color-${tagHash}${overlap ? ' cm-tagged-overlap' : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
+  return `cm-tagged-line cm-tag-color-${outerHash}${overlap ? ` cm-tagged-overlap cm-tag-inner-color-${innerHash}` : ''}${adjacent ? ' cm-tagged-adjacent' : ''}`
 }
 
 function markdownLineStyle(line: string) {

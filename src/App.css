@@ -42,19 +42,24 @@ button { cursor: pointer; font: inherit; }
 .cm-underline-text { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .cm-marker-line { color: #8c8794 !important; font-style: italic; }
 .cm-marker-syntax { font-size: 0; letter-spacing: 0; }
-.cm-tag-chip { display: inline-block; margin: 0 3px 0 -6px; padding: 1px 7px; border: 1px solid #ded9e2; border-left-width: 3px; border-radius: 0 999px 999px 0; color: #77727b; background: #f7f5f8; font-size: 10px; font-style: normal; line-height: 1.45; }
+.cm-tag-chip { display: inline-block; max-width: calc(100% - 10px); margin: 0 3px 0 -6px; padding: 1px 7px; border: 1px solid #ded9e2; border-left-width: 3px; border-radius: 0 999px 999px 0; color: #77727b; background: #f7f5f8; font-size: 10px; font-style: normal; line-height: 1.45; overflow-wrap: anywhere; white-space: normal; vertical-align: top; }
 .cm-tag-chip.cm-tag-color-0 { border-color: #c9ddda; border-left-color: #6d9b91; color: #77727b; background: #f0f7f5; }
 .cm-tag-chip.cm-tag-color-1 { border-color: #d8d0e3; border-left-color: #8975aa; color: #77727b; background: #f4f1f8; }
 .cm-tag-chip.cm-tag-color-2 { border-color: #ead2c7; border-left-color: #c88968; color: #77727b; background: #fbf2ee; }
 .cm-tag-chip.cm-tag-color-3 { border-color: #cbd9e6; border-left-color: #7190b0; color: #77727b; background: #f1f6fa; }
 .cm-tag-chip.cm-tag-color-4 { border-color: #e2d5bc; border-left-color: #b28a55; color: #77727b; background: #faf5eb; }
-.cm-tagged-line { padding-left: 12px; border-left-width: 3px; border-left-style: solid; }
-.cm-tag-color-0 { border-left-color: #6d9b91; }
-.cm-tag-color-1 { border-left-color: #8975aa; }
-.cm-tag-color-2 { border-left-color: #c88968; }
-.cm-tag-color-3 { border-left-color: #7190b0; }
-.cm-tag-color-4 { border-left-color: #b28a55; }
-.cm-tagged-overlap { border-left-style: double; border-left-width: 5px; }
+.cm-tagged-line { padding-left: 12px; border-left-width: 3px; border-left-style: solid; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.cm-tag-color-0 { --tag-outer: #6d9b91; border-left-color: #6d9b91; }
+.cm-tag-color-1 { --tag-outer: #8975aa; border-left-color: #8975aa; }
+.cm-tag-color-2 { --tag-outer: #c88968; border-left-color: #c88968; }
+.cm-tag-color-3 { --tag-outer: #7190b0; border-left-color: #7190b0; }
+.cm-tag-color-4 { --tag-outer: #b28a55; border-left-color: #b28a55; }
+.cm-tag-inner-color-0 { --tag-inner: #6d9b91; }
+.cm-tag-inner-color-1 { --tag-inner: #8975aa; }
+.cm-tag-inner-color-2 { --tag-inner: #c88968; }
+.cm-tag-inner-color-3 { --tag-inner: #7190b0; }
+.cm-tag-inner-color-4 { --tag-inner: #b28a55; }
+.cm-tagged-overlap { border-left: 0; background-image: linear-gradient(to right, var(--tag-outer) 0 3px, var(--tag-inner) 3px 6px, transparent 6px); background-repeat: no-repeat; background-size: 6px 100%; }
 .cm-tagged-adjacent { border-left-style: dashed; }
 .codemirror-host.source-mode .cm-marker-line { color: inherit !important; font-style: normal; }
 .codemirror-host.source-mode .cm-marker-syntax { font-size: inherit; letter-spacing: normal; }
