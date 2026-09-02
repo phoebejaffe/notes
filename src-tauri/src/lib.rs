@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -27,8 +29,17 @@ pub fn run() {
             }
 
             let app_handle = app.handle().clone();
+            let decoder = png::Decoder::new(Cursor::new(include_bytes!("../icons/tray-note.png")));
+            let mut reader = decoder.read_info()?;
+            let mut pixels = vec![0; reader.output_buffer_size().unwrap_or_default()];
+            let frame = reader.next_frame(&mut pixels)?;
+            let tray_icon = tauri::image::Image::new_owned(
+                pixels[..frame.buffer_size()].to_vec(),
+                frame.width,
+                frame.height,
+            );
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().cloned().unwrap())
+                .icon(tray_icon)
                 .tooltip("Notes")
                 .on_tray_icon_event(move |_tray, event| {
                     if let TrayIconEvent::Click {
