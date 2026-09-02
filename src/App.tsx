@@ -197,6 +197,27 @@ function App() {
   }, [documents, preferences.shortcuts, today])
 
   useEffect(() => {
+    function closeTransientPanels(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setMenuOpen(false)
+        setSearchOpen(false)
+      }
+    }
+    function closeOnOutsideClick(event: MouseEvent) {
+      const target = event.target as HTMLElement
+      if (target.closest('.menu-panel, .icon-button, .search-button, .search-panel')) return
+      setMenuOpen(false)
+      setSearchOpen(false)
+    }
+    window.addEventListener('keydown', closeTransientPanels)
+    window.addEventListener('mousedown', closeOnOutsideClick)
+    return () => {
+      window.removeEventListener('keydown', closeTransientPanels)
+      window.removeEventListener('mousedown', closeOnOutsideClick)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!loaded) return
     const timer = window.setTimeout(() => {
       setSaveState('saving')
@@ -350,8 +371,14 @@ function App() {
       {captureMode && <div className="capture-menu">
         <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
-          <button type="button" onClick={() => { setSearchOpen((open) => !open); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
+          <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
+          <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
+          <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
+          <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
+          <button type="button" onClick={() => { exportAllMarkdown(); setMenuOpen(false) }}>Export all</button>
+          <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
+          <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
           <span className="shortcut-hint">Ctrl⌥N to show or hide</span>
         </nav>}
       </div>}
@@ -383,7 +410,7 @@ function App() {
         <span className="tag-shortcut">⌘T</span>
       </div>}
 
-      {!captureMode && settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
+      {settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
           <div className="modal-heading"><div><span className="eyebrow">Preferences</span><h2 id="settings-modal-title">Settings</h2></div><button className="modal-close" type="button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button></div>
           <fieldset className="settings-group"><legend>Editor</legend>
@@ -431,7 +458,7 @@ function App() {
         </section>
       </div>}
 
-      {!captureMode && tagsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setTagsOpen(false) }}>
+      {tagsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setTagsOpen(false) }}>
         <section className="tag-modal" role="dialog" aria-modal="true" aria-labelledby="tag-modal-title">
           <div className="modal-heading"><div><span className="eyebrow">Organization</span><h2 id="tag-modal-title">Manage known tags</h2></div><button className="modal-close" type="button" aria-label="Close tag manager" onClick={() => setTagsOpen(false)}>×</button></div>
           {allTags.length ? allTags.map((tag) => <label className="color-row" key={tag}><span>{tag}</span><input type="color" aria-label={`Color for ${tag}`} value={tagColors[tag] ?? defaultTagColor(tag)} onChange={(event) => setTagColors((current) => ({ ...current, [tag]: event.target.value }))} /></label>) : <p className="empty-modal">Add a tag to see it here.</p>}
