@@ -44,8 +44,10 @@ button { cursor: pointer; font: inherit; }
 .cm-list-line { padding-left: 5px; }
 .codemirror-host.render-bullets .cm-bullet-marker { font-size: 0; }
 .codemirror-host.render-bullets .cm-bullet-marker::after { content: '•'; display: inline-block; width: 1em; color: currentColor; font-size: 14px; text-align: center; }
+.codemirror-host.render-bullets .cm-list-line { padding-left: calc(var(--tag-text-inset, 0px) + 1.5em) !important; text-indent: -1.5em; }
 .codemirror-host.source-mode .cm-bullet-marker { font-size: inherit; }
 .codemirror-host.source-mode .cm-bullet-marker::after { content: none; }
+.codemirror-host.source-mode .cm-list-line { padding-left: var(--tag-text-inset, 0px) !important; text-indent: 0; }
 .cm-strong-text { font-weight: 700; }
 .cm-emphasis-text { font-style: italic; }
 .cm-underline-text { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
