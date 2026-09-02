@@ -104,6 +104,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           lineNumbers(),
           markdown(),
           keymap.of([...defaultKeymap, indentWithTab]),
+          EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
           rangeDecorations,
           EditorView.updateListener.of((update) => {
@@ -128,7 +129,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
               onSelectionRef.current?.(selection.from, selection.to)
             }
           }),
-          EditorView.theme({ '&': { minHeight: '100px' }, '.cm-scroller': { overflow: 'visible' } }),
+          EditorView.theme({ '&': { minHeight: '100px' }, '.cm-scroller': { overflow: 'visible', overflowX: 'hidden' }, '.cm-content': { overflowWrap: 'anywhere' } }),
         ],
       }),
       parent: host.current,
