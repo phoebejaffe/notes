@@ -133,9 +133,9 @@ function App() {
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay)}</h1>
               <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} />
-              {!captureMode && !sourceMode && isSelectedDay && <div className="tag-popover" role="dialog" aria-label="Add tag to selection">
+              {!sourceMode && isSelectedDay && <div className="tag-popover" role="dialog" aria-label="Add tag to selection">
                 <span className="popover-label">Tag lines</span>
-                <input autoFocus value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyTag() }} placeholder="therapy, 🧠, or project" aria-label="New tag" />
+                <input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyTag() }} placeholder="therapy, 🧠, or project" aria-label="New tag" />
                 <button type="button" onClick={applyTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
                 {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
               </div>}
