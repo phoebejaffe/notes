@@ -1,4 +1,5 @@
 #root { min-height: 100vh; }
+.capture-shell, .app-shell { --tag-chip-base: #fff; }
 .capture-shell { min-height: 100vh; padding: 14px 16px; color: #403a42; background: #fff; }
 .capture-shell .editor-card { padding-top: 0; }
 .capture-shell .codemirror-host { border: 0; }
@@ -53,7 +54,7 @@ button { cursor: pointer; font: inherit; }
 .cm-tag-chip.cm-tag-color-2 { border-color: #ead2c7; border-left-color: #c88968; color: #77727b; background: #fbf2ee; }
 .cm-tag-chip.cm-tag-color-3 { border-color: #cbd9e6; border-left-color: #7190b0; color: #77727b; background: #f1f6fa; }
 .cm-tag-chip.cm-tag-color-4 { border-color: #e2d5bc; border-left-color: #b28a55; color: #77727b; background: #faf5eb; }
-.cm-tag-chip { border-color: var(--tag-color, #ded9e2); border-left-color: var(--tag-color, #ded9e2); background: color-mix(in srgb, var(--tag-color, #ded9e2) 12%, #fff); }
+.cm-tag-chip { border-color: var(--tag-color, #ded9e2); border-left-color: var(--tag-color, #ded9e2); background: color-mix(in srgb, var(--tag-color, #ded9e2) 12%, var(--tag-chip-base, #fff)); }
 .cm-tag-chip.cm-has-outer-border { box-shadow: -3px 0 0 var(--marker-outer-1); }
 .cm-tag-chip.cm-has-double-outer-border { box-shadow: -3px 0 0 var(--marker-outer-1), -6px 0 0 var(--marker-outer-2); }
 .cm-tag-chip.cm-has-triple-outer-border { box-shadow: -3px 0 0 var(--marker-outer-1), -6px 0 0 var(--marker-outer-2), -9px 0 0 var(--marker-outer-3); }
@@ -87,7 +88,7 @@ button { cursor: pointer; font: inherit; }
 .cm-tagged-overlap { border-left: 0; }
 .cm-tagged-adjacent { border-left-style: dashed; }
 .codemirror-host.source-mode .cm-marker-line { color: inherit !important; font-style: normal; }
-.codemirror-host.source-mode .cm-marker-syntax { font-size: inherit; letter-spacing: normal; }
+.codemirror-host.source-mode .cm-marker-syntax, .codemirror-host:not(.hide-tag-syntax) .cm-marker-syntax { font-size: inherit; letter-spacing: normal; }
 .codemirror-host.source-mode .cm-tag-chip { display: inline; margin: 0; padding: 0; border: 0; border-radius: 0; color: inherit; background: transparent; font-size: inherit; }
 .tag-bar { position: fixed; z-index: 12; right: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border-top: 1px solid #d1c4d8; background: #fff; box-shadow: 0 -8px 24px #392c1f12; }
 .active-tag-chips { display: flex; gap: 5px; flex-wrap: wrap; }
@@ -123,8 +124,37 @@ button { cursor: pointer; font: inherit; }
 .settings-action { padding: 5px 9px; border: 1px solid #d9d4cb; border-radius: 6px; color: #625b54; background: #faf8f5; font-size: 12px; }
 .settings-action:hover { background: #f1ede8; }
 .settings-help { margin: 4px 0 0; color: #9b9185; font-size: 11px; }
+.shortcut-conflict { border-color: #b84f43 !important; color: #a14c38 !important; }
+.shortcut-error { color: #a14c38; }
+.tag-rename-form { display: grid; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #eeeae5; color: #504941; font-size: 12px; }
+.tag-rename-form select, .tag-rename-form input { min-width: 0; padding: 7px; border: 1px solid #d9d4cb; border-radius: 6px; color: #504941; background: #faf8f5; font: inherit; }
+.tag-rename-form button { justify-self: start; padding: 6px 10px; border: 0; border-radius: 6px; color: #fff; background: #806790; font-size: 12px; }
+.tag-rename-form button:disabled { opacity: .45; cursor: not-allowed; }
 .menu-panel button:disabled { color: #aaa19a; cursor: not-allowed; }
-.diagnostics { margin-top: 12px; color: #a14c38; font-size: 12px; }
+.font-serif .codemirror-host, .font-serif .cm-editor { font-family: Georgia, 'Times New Roman', serif; }
+.font-monospace .codemirror-host, .font-monospace .cm-editor { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.compact-spacing.app-shell { padding-top: 76px; padding-bottom: 20px; }
+.compact-spacing .editor-card { padding-bottom: 2px; }
+.theme-dark.app-shell, .theme-dark.capture-shell { --tag-chip-base: #000; color: #e8e2dc; background: #201e21; }
+.theme-dark .topbar, .theme-dark .search-panel, .theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: #201e21; }
+.theme-dark .cm-editor, .theme-dark .cm-scroller, .theme-dark .cm-gutters { color: #e8e2dc; background: #201e21; }
+.theme-dark .cm-gutters { border-right-color: #4d4649; color: #9f9699; }
+.theme-dark .cm-activeLine, .theme-dark .cm-activeLineGutter { background: #2a272b; }
+.theme-dark .cm-marker-line { color: #e9e1e3 !important; }
+.theme-dark .cm-tag-chip, .theme-dark .cm-tag-chip.cm-tag-color-0, .theme-dark .cm-tag-chip.cm-tag-color-1, .theme-dark .cm-tag-chip.cm-tag-color-2, .theme-dark .cm-tag-chip.cm-tag-color-3, .theme-dark .cm-tag-chip.cm-tag-color-4, .theme-dark .active-tag-chip { color: #fffaf5 !important; -webkit-text-fill-color: #fffaf5; background: color-mix(in srgb, var(--tag-color, #ded9e2) 42%, #000) !important; }
+.theme-dark .active-tag-chip button { color: #fffaf5; -webkit-text-fill-color: #fffaf5; }
+.theme-dark .menu-panel, .theme-dark .settings-modal, .theme-dark .tag-modal { border-color: #4d4649; color: #e8e2dc; background: #2a272b; }
+.theme-dark .menu-panel button, .theme-dark .settings-row, .theme-dark .color-row, .theme-dark .icon-button, .theme-dark .search-button { color: #e8e2dc; }
+.theme-dark .menu-panel button:hover, .theme-dark .settings-action:hover { background: #383338; }
+.theme-dark .icon-button:hover, .theme-dark .icon-button[aria-expanded="true"], .theme-dark .search-button:hover, .theme-dark .search-button[aria-expanded="true"] { background: #141215; }
+.theme-dark .search-panel, .theme-dark .settings-row select, .theme-dark .settings-row input[type="time"], .theme-dark .shortcut-input, .theme-dark .settings-action { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
+.theme-dark .search-panel input, .theme-dark .tag-bar input { color: #e8e2dc; }
+.theme-dark .settings-group legend, .theme-dark .settings-help, .theme-dark .settings-description, .theme-dark .day-title { color: #b8aeb0; }
+.theme-dark .settings-row, .theme-dark .color-row, .theme-dark .tag-rename-form { border-color: #403b3f; }
+.theme-dark .tag-rename-form select, .theme-dark .tag-rename-form input { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
+.theme-dark .codemirror-host { border-color: #4d4649; }
+.theme-dark .modal-backdrop { background: #00000088; }
+.diagnostics {  margin-top: 12px; color: #a14c38; font-size: 12px; }
 .app-footer { display: flex; justify-content: space-between; padding-top: 18px; color: #988f86; font-size: 11px; }
 .loading-screen { display: grid; min-height: 100vh; place-items: center; color: #817970; font: 14px Georgia, serif; }
 @media (max-width: 700px) { .app-shell { padding: 78px 12px 24px; } .topbar { padding-inline: 12px; } .app-footer { gap: 8px; flex-direction: column; } .tag-bar { justify-content: stretch; } .tag-bar input { min-width: 0; flex: 1; } }

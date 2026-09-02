@@ -15,4 +15,13 @@ describe('logical day', () => {
   it('formats a daily document for the current locale', () => {
     expect(formatLogicalDay('2026-09-01')).toContain('September')
   })
+
+  it('supports configurable rollover hours', () => {
+    expect(logicalDayKey(new Date(2026, 8, 1, 0, 30), 0)).toBe('2026-09-01')
+    expect(logicalDayKey(new Date(2026, 8, 1, 4, 30), 5)).toBe('2026-08-31')
+  })
+
+  it('supports ISO date display', () => {
+    expect(formatLogicalDay('2026-09-01', 'iso')).toBe('2026-09-01')
+  })
 })

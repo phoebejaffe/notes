@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
-import { addTagToRange, formatMarker, lineRangeForSelection, parseMarkdown, removeTagAtPosition } from './markerEngine'
+import { addTagToRange, formatMarker, lineRangeForSelection, parseMarkdown, removeTagAtPosition, renameTagEverywhere } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
+import { backupSignature, pickBackupDirectory, writeBackup } from './backup'
 import './App.css'
 
 const SAMPLE = `<!-- therapy 🧠 -->
@@ -37,7 +40,37 @@ function loadTagColors() {
   }
 }
 
+function downloadMarkdown(markdown: string, filename: string) {
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function isTauriEnvironment() {
+  return '__TAURI_INTERNALS__' in window
+}
+
+async function invokeNative(command: string, args?: Record<string, unknown>) {
+  if (!isTauriEnvironment()) return
+  await invoke(command, args)
+}
+
 interface Selection { day: string; from: number; to: number }
+
+function matchesShortcut(event: KeyboardEvent, shortcut: string) {
+  const parts = shortcut.toLowerCase().split('-')
+  const key = parts.pop() ?? ''
+  const wantsMod = parts.includes('mod')
+  const wantsCtrl = parts.includes('ctrl')
+  const wantsAlt = parts.includes('alt') || parts.includes('option')
+  const wantsShift = parts.includes('shift')
+  const modifierMatches = wantsMod ? (/mac/i.test(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) : wantsCtrl ? event.ctrlKey && !event.metaKey : !event.ctrlKey && !event.metaKey
+  return event.key.toLowerCase() === key && modifierMatches && (wantsAlt ? event.altKey : !event.altKey) && (wantsShift ? event.shiftKey : !event.shiftKey)
+}
 
 function App() {
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences)
@@ -48,6 +81,8 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
+  const [tagToRename, setTagToRename] = useState('')
+  const [renamedTag, setRenamedTag] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const sourceMode = preferences.editorMode === 'raw'
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
@@ -55,6 +90,9 @@ function App() {
   const [tagInput, setTagInput] = useState('')
   const [selection, setSelection] = useState<Selection>({ day: '', from: 0, to: 0 })
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
+  const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const backupDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null)
+  const lastBackupSignatureRef = useRef('')
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const streamEndRef = useRef<HTMLDivElement>(null)
@@ -70,53 +108,76 @@ function App() {
 
   useEffect(() => {
     savePreferences(preferences)
+    void invokeNative('set_capture_window_always_on_top', { alwaysOnTop: preferences.captureAlwaysOnTop })
+    void invokeNative('set_capture_shortcut', { shortcut: preferences.captureShortcut })
+    void invokeNative('set_launch_at_login', { enabled: preferences.launchAtLogin })
+    void invokeNative('set_app_visibility', { showMenuBar: preferences.showMenuBar, showDockIcon: preferences.showDockIcon })
   }, [preferences])
 
-  useEffect(() => {
-    setDays([today, shiftLogicalDay(today, -1)])
-  }, [today])
-
   const allTags = useMemo(() => [...new Set(Object.values(documents).flatMap((markdown) => parseMarkdown(markdown).ranges.map((range) => range.tag)))].sort((left, right) => left.localeCompare(right)), [documents])
+  const shortcutConflicts = useMemo(() => {
+    const values = Object.values(preferences.shortcuts).filter(Boolean)
+    return new Set(values.filter((shortcut, index) => values.indexOf(shortcut) !== index))
+  }, [preferences.shortcuts])
+  const oldestDocumentDay = Object.keys(documents).sort()[0] ?? today
 
   useEffect(() => {
     if (!loaded) return
     const observer = new IntersectionObserver((entries) => {
       if (!entries[0].isIntersecting) return
-      setDays((current) => [...current, shiftLogicalDay(current[current.length - 1], -1)])
+      setDays((current) => {
+        if (!preferences.showEmptyDays && current[current.length - 1] <= oldestDocumentDay) return current
+        return [...current, shiftLogicalDay(current[current.length - 1], -1)]
+      })
     }, { rootMargin: '0px 0px 800px 0px' })
     if (streamEndRef.current) observer.observe(streamEndRef.current)
     return () => observer.disconnect()
-  }, [loaded])
+  }, [loaded, oldestDocumentDay, preferences.showEmptyDays])
 
   useEffect(() => {
     function focusTagInput(event: KeyboardEvent) {
       const activeDocument = selection.day ? documents[selection.day] ?? '' : ''
       const insideTag = selection.day && parseMarkdown(activeDocument).ranges.some((range) => range.start < selection.from && selection.from < range.end)
-      if (event.metaKey && event.key.toLowerCase() === 't' && selection.day && (selection.from !== selection.to || insideTag)) {
+      if (matchesShortcut(event, preferences.shortcuts.tagSelection) && selection.day && (selection.from !== selection.to || insideTag)) {
         event.preventDefault()
         tagInputRef.current?.focus()
       }
     }
     window.addEventListener('keydown', focusTagInput)
     return () => window.removeEventListener('keydown', focusTagInput)
-  }, [documents, selection])
+  }, [documents, preferences.shortcuts.tagSelection, selection])
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
-      if (!event.metaKey) return
-      if (event.key === '=' || event.key === '+') {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      if (matchesShortcut(event, preferences.shortcuts.search)) {
+        event.preventDefault()
+        setSearchOpen((open) => !open)
+        return
+      }
+      if (matchesShortcut(event, preferences.shortcuts.zoomIn)) {
         event.preventDefault()
         setPreferences((current) => ({ ...current, zoomLevel: Math.min(150, current.zoomLevel + 10) }))
         return
       }
-      if (event.key === '-') {
+      if (matchesShortcut(event, preferences.shortcuts.zoomOut)) {
         event.preventDefault()
         setPreferences((current) => ({ ...current, zoomLevel: Math.max(60, current.zoomLevel - 10) }))
         return
       }
-      if (event.key.toLowerCase() === 'e') {
+      if (matchesShortcut(event, preferences.shortcuts.rawEditor)) {
         event.preventDefault()
         setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' }))
+        return
+      }
+      if (matchesShortcut(event, preferences.shortcuts.jumpToToday)) {
+        event.preventDefault()
+        document.querySelector(`[data-day="${today}"]`)?.scrollIntoView({ block: 'start' })
+        return
+      }
+      if (matchesShortcut(event, preferences.shortcuts.exportToday)) {
+        event.preventDefault()
+        downloadMarkdown(documents[today] ?? '', `${today}.md`)
         return
       }
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
@@ -133,7 +194,7 @@ function App() {
     }
     window.addEventListener('keydown', handleInterfaceShortcuts)
     return () => window.removeEventListener('keydown', handleInterfaceShortcuts)
-  }, [])
+  }, [documents, preferences.shortcuts, today])
 
   useEffect(() => {
     if (!loaded) return
@@ -143,6 +204,51 @@ function App() {
     }, 350)
     return () => window.clearTimeout(timer)
   }, [documents, loaded])
+
+  const performBackup = useCallback(async () => {
+    const directory = backupDirectoryRef.current
+    if (!loaded || (!directory && !preferences.backupFolder) || preferences.backupFrequency === 'off') return
+    const dailyDocuments = Object.entries(documents).map(([day, markdown]) => ({ day, markdown, updatedAt: Date.now() }))
+    const signature = backupSignature(dailyDocuments)
+    if (!dailyDocuments.some((document) => document.markdown) || signature === lastBackupSignatureRef.current) return
+    setBackupState('saving')
+    try {
+      if (isTauriEnvironment()) {
+        await invoke('write_backup', { root: preferences.backupFolder, folderName: new Date().toISOString().slice(0, 10), documents: dailyDocuments.map(({ day, markdown }) => ({ day, markdown })) })
+      } else if (directory) {
+        await writeBackup(directory, dailyDocuments)
+      }
+      lastBackupSignatureRef.current = signature
+      setBackupState('saved')
+    } catch {
+      setBackupState('error')
+    }
+  }, [documents, loaded, preferences.backupFolder, preferences.backupFrequency])
+
+  useEffect(() => {
+    const intervals = { hourly: 60 * 60 * 1000, daily: 24 * 60 * 60 * 1000, weekly: 7 * 24 * 60 * 60 * 1000 }
+    const interval = preferences.backupFrequency === 'off' ? undefined : intervals[preferences.backupFrequency]
+    if (!interval) return
+    const timer = window.setInterval(() => { void performBackup() }, interval)
+    return () => window.clearInterval(timer)
+  }, [performBackup, preferences.backupFrequency])
+
+  async function chooseBackupFolder() {
+    try {
+      const selected = isTauriEnvironment() ? await openDirectoryDialog({ directory: true, multiple: false }) : await pickBackupDirectory()
+      if (typeof selected === 'string') {
+        setPreferences((current) => ({ ...current, backupFolder: selected }))
+      } else if (selected) {
+        backupDirectoryRef.current = selected
+        setPreferences((current) => ({ ...current, backupFolder: 'Selected folder' }))
+      } else {
+        return
+      }
+      setBackupState('idle')
+    } catch {
+      setBackupState('error')
+    }
+  }
 
   const selectedSource = selection.day ? documents[selection.day] ?? '' : ''
   const selectedParsed = useMemo(() => parseMarkdown(selectedSource), [selectedSource])
@@ -182,6 +288,19 @@ function App() {
     if (!result.error) updateSource(selection.day, result.source)
   }
 
+  function updateShortcut(name: string, value: string) {
+    setPreferences((current) => ({ ...current, shortcuts: { ...current.shortcuts, [name]: value } }))
+  }
+
+  function renameTag() {
+    const oldTag = tagToRename.trim().normalize('NFC')
+    const newTag = renamedTag.trim().normalize('NFC')
+    if (!oldTag || !newTag || oldTag === newTag) return
+    setDocuments((current) => Object.fromEntries(Object.entries(current).map(([day, markdown]) => [day, renameTagEverywhere(markdown, oldTag, newTag)])))
+    setTagToRename('')
+    setRenamedTag('')
+  }
+
   function submitTag() {
     const previousDay = selection.day
     applyTag()
@@ -194,13 +313,16 @@ function App() {
   }
 
   function exportMarkdown(day: string) {
-    const blob = new Blob([documents[day] ?? ''], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${day}.md`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadMarkdown(documents[day] ?? '', `${day}.md`)
+  }
+
+  function exportAllMarkdown() {
+    const content = Object.entries(documents).filter(([, markdown]) => markdown).sort(([left], [right]) => left.localeCompare(right)).map(([day, markdown]) => `# ${formatLogicalDay(day, preferences.dateFormat)}\n\n${markdown}`).join('\n\n---\n\n')
+    downloadMarkdown(content, 'notes.md')
+  }
+
+  function jumpToToday() {
+    document.querySelector(`[data-day="${today}"]`)?.scrollIntoView({ block: 'start' })
   }
 
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
@@ -220,8 +342,8 @@ function App() {
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
-          <button type="button" disabled>Export all</button>
-          <button type="button" disabled>Jump to today</button>
+          <button type="button" onClick={() => { exportAllMarkdown(); setMenuOpen(false) }}>Export all</button>
+          <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
         </nav>}
       </header>}
@@ -243,7 +365,7 @@ function App() {
           return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -262,10 +384,8 @@ function App() {
       </div>}
 
       {!captureMode && settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
-        <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" aria-describedby="settings-modal-description">
+        <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
           <div className="modal-heading"><div><span className="eyebrow">Preferences</span><h2 id="settings-modal-title">Settings</h2></div><button className="modal-close" type="button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button></div>
-          <p className="settings-description" id="settings-modal-description"><span className="settings-asterisk">*</span> A red asterisk marks settings that are planned for a later phase.</p>
-
           <fieldset className="settings-group"><legend>Editor</legend>
             <label className="settings-row"><span className="settings-label">Editor mode</span><select value={preferences.editorMode} onChange={(event) => setPreferences((current) => ({ ...current, editorMode: event.target.value === 'raw' ? 'raw' : 'normal' }))}><option value="normal">Normal editor</option><option value="raw">Raw Editor</option></select></label>
             <label className="settings-row settings-range-row"><span className="settings-label">Zoom</span><span className="settings-range-control"><input type="range" min="60" max="150" step="10" value={preferences.zoomLevel} onChange={(event) => setPreferences((current) => ({ ...current, zoomLevel: Number(event.target.value) }))} /><output>{preferences.zoomLevel}%</output></span></label>
@@ -273,7 +393,7 @@ function App() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Daily notes</legend>
-            <label className="settings-row"><span className="settings-label">Day rollover time</span><select value={preferences.rolloverHour} onChange={(event) => setPreferences((current) => ({ ...current, rolloverHour: Number(event.target.value) }))}><option value={0}>Midnight (12:00 AM)</option><option value={1}>1:00 AM</option><option value={2}>2:00 AM</option><option value={3}>3:00 AM</option><option value={4}>4:00 AM</option><option value={5}>5:00 AM</option></select></label>
+            <label className="settings-row"><span className="settings-label">Day rollover time</span><select value={preferences.rolloverHour} onChange={(event) => { const rolloverHour = Number(event.target.value); setPreferences((current) => ({ ...current, rolloverHour })); const nextToday = logicalDayKey(new Date(), rolloverHour); setDays([nextToday, shiftLogicalDay(nextToday, -1)]) }}><option value={0}>Midnight (12:00 AM)</option><option value={1}>1:00 AM</option><option value={2}>2:00 AM</option><option value={3}>3:00 AM</option><option value={4}>4:00 AM</option><option value={5}>5:00 AM</option></select></label>
             <label className="settings-row"><span className="settings-label">Show empty days</span><input type="checkbox" checked={preferences.showEmptyDays} onChange={(event) => setPreferences((current) => ({ ...current, showEmptyDays: event.target.checked }))} /></label>
             <label className="settings-row"><span className="settings-label">Date display format</span><select value={preferences.dateFormat} onChange={(event) => setPreferences((current) => ({ ...current, dateFormat: event.target.value as Preferences['dateFormat'] }))}><option value="long">Monday, September 2, 2026</option><option value="long-short">Monday, Sep 2</option><option value="weekday-month">Mon, September 2</option><option value="short">Sep 2, 2026</option><option value="month-day">September 2</option><option value="iso">2026-09-02</option><option value="numeric">09/02/2026</option></select></label>
           </fieldset>
@@ -284,36 +404,38 @@ function App() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Data &amp; backups</legend>
-            <label className="settings-row"><span className="settings-label">Automatic backup <span className="settings-asterisk">*</span></span><select value="Off" onChange={(event) => event.preventDefault()}><option>Off</option><option>Hourly</option><option>Daily</option><option>Weekly</option></select></label>
-            <label className="settings-row"><span className="settings-label">Backup folder</span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Choose folder</button></label>
-            <p className="settings-help">Backups run only after changes and will be saved in date-named folders.</p>
+            <label className="settings-row"><span className="settings-label">Automatic backup</span><select value={preferences.backupFrequency} onChange={(event) => setPreferences((current) => ({ ...current, backupFrequency: event.target.value as Preferences['backupFrequency'] }))}><option value="off">Off</option><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+            {preferences.backupFrequency !== 'off' && <label className="settings-row"><span className="settings-label">Backup folder</span><button className="settings-action" type="button" onClick={() => { void chooseBackupFolder() }}>{preferences.backupFolder || 'Choose folder'}</button></label>}
+            {preferences.backupFrequency !== 'off' && <p className="settings-help">Backups run only after changes, in date-named folders, with empty notes omitted.{backupState === 'saved' ? ' Last backup saved.' : backupState === 'error' ? ' Backup failed.' : ''}</p>}
           </fieldset>
 
           <fieldset className="settings-group"><legend>Capture mode</legend>
-            <label className="settings-row"><span className="settings-label">Global capture shortcut <span className="settings-asterisk">*</span></span><input className="shortcut-input" value="Ctrl⌥N" readOnly /></label>
-            <label className="settings-row"><span className="settings-label">Capture window always on top <span className="settings-asterisk">*</span></span><input type="checkbox" checked onChange={(event) => event.preventDefault()} /></label>
-            <label className="settings-row"><span className="settings-label">Launch at login <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
-            <label className="settings-row"><span className="settings-label">Show in menu bar <span className="settings-asterisk">*</span></span><input type="checkbox" checked onChange={(event) => event.preventDefault()} /></label>
-            <label className="settings-row"><span className="settings-label">Show dock icon <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Global capture shortcut</span><input className="shortcut-input" value={preferences.captureShortcut} onChange={(event) => setPreferences((current) => ({ ...current, captureShortcut: event.target.value }))} onBlur={() => { void invokeNative('set_capture_shortcut', { shortcut: preferences.captureShortcut }) }} /></label>
+            <label className="settings-row"><span className="settings-label">Capture window always on top</span><input type="checkbox" checked={preferences.captureAlwaysOnTop} onChange={(event) => { const alwaysOnTop = event.target.checked; setPreferences((current) => ({ ...current, captureAlwaysOnTop: alwaysOnTop })); void invokeNative('set_capture_window_always_on_top', { alwaysOnTop }) }} /></label>
+            <label className="settings-row"><span className="settings-label">Launch at login</span><input type="checkbox" checked={preferences.launchAtLogin} onChange={(event) => { const launchAtLogin = event.target.checked; setPreferences((current) => ({ ...current, launchAtLogin })); void invokeNative('set_launch_at_login', { enabled: launchAtLogin }) }} /></label>
+            <label className="settings-row"><span className="settings-label">Show in menu bar</span><input type="checkbox" checked={preferences.showMenuBar} onChange={(event) => { const showMenuBar = event.target.checked; if (!showMenuBar && !preferences.showDockIcon) return; setPreferences((current) => ({ ...current, showMenuBar })); void invokeNative('set_app_visibility', { showMenuBar, showDockIcon: preferences.showDockIcon }) }} /></label>
+            <label className="settings-row"><span className="settings-label">Show dock icon</span><input type="checkbox" checked={preferences.showDockIcon} onChange={(event) => { const showDockIcon = event.target.checked; if (!showDockIcon && !preferences.showMenuBar) return; setPreferences((current) => ({ ...current, showDockIcon })); void invokeNative('set_app_visibility', { showMenuBar: preferences.showMenuBar, showDockIcon }) }} /></label>
             <p className="settings-help">At least one of “Show in menu bar” and “Show dock icon” must be selected.</p>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Keyboard shortcuts</legend>
-            <label className="settings-row"><span className="settings-label">Customize shortcuts <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Configure</button></label>
+            {Object.entries({ search: 'Search', rawEditor: 'Raw Editor', zoomIn: 'Zoom in', zoomOut: 'Zoom out', jumpToToday: 'Jump to today', exportToday: 'Export today', tagSelection: 'Tag selection' }).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={preferences.shortcuts[name] ?? ''} onChange={(event) => updateShortcut(name, event.target.value)} aria-label={`${label} shortcut`} /></label>)}
+            {shortcutConflicts.size > 0 && <p className="settings-help shortcut-error">Each shortcut must be unique.</p>}
           </fieldset>
 
           <fieldset className="settings-group"><legend>Tags</legend>
-            <label className="settings-row"><span className="settings-label">Manage known tags <span className="settings-asterisk">*</span></span><button className="settings-action" type="button" onClick={(event) => event.preventDefault()}>Manage</button></label>
+            <label className="settings-row"><span className="settings-label">Manage known tags</span><button className="settings-action" type="button" onClick={() => { setTagsOpen(true); setSettingsOpen(false) }}>Manage</button></label>
             <p className="settings-help">Rename tags and choose their colors from the known-tags manager.</p>
-            <label className="settings-row"><span className="settings-label">Hide tag syntax <span className="settings-asterisk">*</span></span><input type="checkbox" checked={false} onChange={(event) => event.preventDefault()} /></label>
+            <label className="settings-row"><span className="settings-label">Hide tag syntax</span><input type="checkbox" checked={preferences.hideTagSyntax} onChange={(event) => setPreferences((current) => ({ ...current, hideTagSyntax: event.target.checked }))} /></label>
           </fieldset>
         </section>
       </div>}
 
       {!captureMode && tagsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setTagsOpen(false) }}>
         <section className="tag-modal" role="dialog" aria-modal="true" aria-labelledby="tag-modal-title">
-          <div className="modal-heading"><div><span className="eyebrow">Organization</span><h2 id="tag-modal-title">Tag colors</h2></div><button className="modal-close" type="button" aria-label="Close tag colors" onClick={() => setTagsOpen(false)}>×</button></div>
-          {allTags.length ? allTags.map((tag) => <label className="color-row" key={tag}><span>{tag}</span><input type="color" value={tagColors[tag] ?? defaultTagColor(tag)} onChange={(event) => setTagColors((current) => ({ ...current, [tag]: event.target.value }))} /></label>) : <p className="empty-modal">Add a tag to see it here.</p>}
+          <div className="modal-heading"><div><span className="eyebrow">Organization</span><h2 id="tag-modal-title">Manage known tags</h2></div><button className="modal-close" type="button" aria-label="Close tag manager" onClick={() => setTagsOpen(false)}>×</button></div>
+          {allTags.length ? allTags.map((tag) => <label className="color-row" key={tag}><span>{tag}</span><input type="color" aria-label={`Color for ${tag}`} value={tagColors[tag] ?? defaultTagColor(tag)} onChange={(event) => setTagColors((current) => ({ ...current, [tag]: event.target.value }))} /></label>) : <p className="empty-modal">Add a tag to see it here.</p>}
+          <div className="tag-rename-form"><label htmlFor="tag-to-rename">Rename a tag everywhere</label><select id="tag-to-rename" value={tagToRename} onChange={(event) => setTagToRename(event.target.value)}><option value="">Choose a tag</option>{allTags.map((tag) => <option key={tag}>{tag}</option>)}</select><input value={renamedTag} onChange={(event) => setRenamedTag(event.target.value)} placeholder="New name" aria-label="New tag name" /><button type="button" onClick={renameTag} disabled={!tagToRename || !renamedTag.trim() || tagToRename === renamedTag.trim()}>Rename</button></div>
         </section>
       </div>}
     </main>

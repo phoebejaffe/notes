@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
-import { defaultKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, type DecorationSet } from '@codemirror/view'
@@ -152,9 +152,10 @@ interface CodeMirrorEditorProps {
   sourceMode?: boolean
   tagColors?: Record<string, string>
   restoreSelection?: { from: number; to: number }
+  hideTagSyntax?: boolean
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -176,11 +177,13 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           lineNumbers(),
           markdown(),
           syntaxHighlighting(defaultHighlightStyle),
+          history(),
           keymap.of([
             { key: 'Mod-b', run: (view) => toggleMarkdownMark(view, '**', '**') },
             { key: 'Mod-i', run: (view) => toggleMarkdownMark(view, '*', '*') },
             { key: 'Mod-u', run: (view) => toggleMarkdownMark(view, '<u>', '</u>') },
             ...defaultKeymap,
+            ...historyKeymap,
             indentWithTab,
           ]),
           EditorView.lineWrapping,
@@ -219,7 +222,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       view.focus()
     }
     return () => { viewRef.current = null; view.destroy() }
-  }, [focusAtEnd, initialValue, tagColors])
+  }, [focusAtEnd, hideTagSyntax, initialValue, tagColors])
 
   const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 4)
   useEffect(() => {
@@ -234,7 +237,6 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
   }, [restoreSelection, value])
 
   return <div className="editor-container">
-    <div className="indent-debug" aria-live="polite">Editor nesting inset: {depthClass * 3}px</div>
-    <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''}`} ref={host} aria-label="Markdown editor" />
+    <div className={`codemirror-host tag-depth-${depthClass} ${sourceMode ? 'source-mode' : ''} ${hideTagSyntax ? 'hide-tag-syntax' : ''}`} ref={host} aria-label="Markdown editor" />
   </div>
 }

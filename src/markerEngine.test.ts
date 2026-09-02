@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, removeTagAtPosition, renameMatchingTag } from './markerEngine'
+import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, removeTagAtPosition, renameMatchingTag, renameTagEverywhere } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -56,5 +56,10 @@ describe('marker engine', () => {
     expect(findMarkerTagRename(before, after)).toBeUndefined()
     expect(after).toContain('<!-- therapy -->')
     expect(after).toContain('<!-- meeting -->')
+  })
+
+  it('renames every matching marker while preserving quoted names', () => {
+    const source = '<!-- therapy -->\none\n<!-- /therapy -->\n<!-- "therapy notes" therapy -->\ntwo\n<!-- /therapy /"therapy notes" -->'
+    expect(renameTagEverywhere(source, 'therapy', 'wellness')).toBe('<!-- wellness -->\none\n<!-- /wellness -->\n<!-- "therapy notes" wellness -->\ntwo\n<!-- /wellness /"therapy notes" -->')
   })
 })

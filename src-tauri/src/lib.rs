@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -13,6 +15,14 @@ struct SavedGeometry {
     y: i32,
     width: u32,
     height: u32,
+}
+
+struct CaptureShortcut(Arc<Mutex<Shortcut>>);
+
+#[derive(Deserialize)]
+struct BackupDocument {
+    day: String,
+    markdown: String,
 }
 
 fn geometry_path(app: &AppHandle) -> Option<PathBuf> {
@@ -132,9 +142,87 @@ fn toggle_tray_window(app: &AppHandle) {
     }
 }
 
+#[tauri::command]
+fn set_capture_window_always_on_top(app: AppHandle, always_on_top: bool) -> Result<(), String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "Main window is unavailable".to_string())?
+        .set_always_on_top(always_on_top)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_capture_shortcut(app: AppHandle, state: tauri::State<'_, CaptureShortcut>, shortcut: String) -> Result<(), String> {
+    let parsed = Shortcut::from_str(&shortcut).map_err(|error| error.to_string())?;
+    let mut current = state.0.lock().map_err(|_| "Shortcut state is unavailable".to_string())?;
+    if *current == parsed {
+        return Ok(())
+    }
+    app.global_shortcut().unregister(current.clone()).map_err(|error| error.to_string())?;
+    if let Err(error) = app.global_shortcut().register(parsed.clone()) {
+        let _ = app.global_shortcut().register(current.clone());
+        return Err(error.to_string())
+    }
+    *current = parsed;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_app_visibility(app: AppHandle, show_menu_bar: bool, show_dock_icon: bool) -> Result<(), String> {
+    if !show_menu_bar && !show_dock_icon {
+        return Err("At least one app entry point must remain visible".to_string())
+    }
+    if let Some(tray) = app.tray_by_id("notes-tray") {
+        tray.set_visible(show_menu_bar).map_err(|error| error.to_string())?;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_skip_taskbar(!show_dock_icon).map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(if show_dock_icon { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory }).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_launch_at_login(_app: AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").ok_or_else(|| "Home directory is unavailable".to_string())?;
+        let directory = PathBuf::from(home).join("Library/LaunchAgents");
+        let path = directory.join("com.notes.desktop.plist");
+        if enabled {
+            fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+            let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+            let plist = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>com.notes.desktop</string><key>ProgramArguments</key><array><string>{}</string></array><key>RunAtLoad</key><true/></dict></plist>", executable.display());
+            fs::write(path, plist).map_err(|error| error.to_string())?;
+        } else if path.exists() {
+            fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+        return Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (_app, enabled);
+        Err("Launch at login is currently supported on macOS only".to_string())
+    }
+}
+
+#[tauri::command]
+fn write_backup(root: String, folder_name: String, documents: Vec<BackupDocument>) -> Result<Vec<String>, String> {
+    let backup_folder = PathBuf::from(root).join(folder_name);
+    fs::create_dir_all(&backup_folder).map_err(|error| error.to_string())?;
+    let mut written = Vec::new();
+    for document in documents.into_iter().filter(|document| !document.markdown.is_empty()) {
+        fs::write(backup_folder.join(format!("{}.md", document.day)), document.markdown).map_err(|error| error.to_string())?;
+        written.push(document.day);
+    }
+    Ok(written)
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -159,7 +247,7 @@ pub fn run() {
                 frame.width,
                 frame.height,
             );
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("notes-tray")
                 .icon(tray_icon)
                 .tooltip("Notes")
                 .on_tray_icon_event(move |_tray, event| {
@@ -175,13 +263,13 @@ pub fn run() {
                 .build(app)?;
 
             let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
-            let handler_shortcut = shortcut.clone();
+            let active_shortcut = Arc::new(Mutex::new(shortcut.clone()));
+            app.manage(CaptureShortcut(Arc::clone(&active_shortcut)));
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, registered_shortcut, event| {
-                        if registered_shortcut == &handler_shortcut
-                            && event.state() == ShortcutState::Pressed
-                        {
+                        let is_active = active_shortcut.lock().map(|shortcut| *shortcut == *registered_shortcut).unwrap_or(false);
+                        if is_active && event.state() == ShortcutState::Pressed {
                             toggle_shortcut_window(app);
                         }
                     })
@@ -190,6 +278,7 @@ pub fn run() {
             app.global_shortcut().register(shortcut)?;
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup])
         .on_window_event(|window, event| {
             if window.label() == "main"
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))

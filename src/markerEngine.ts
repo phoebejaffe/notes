@@ -299,6 +299,16 @@ export function renameMatchingTag(source: string, markerLine: number, oldTag: st
   return lines.join('\n')
 }
 
+export function renameTagEverywhere(source: string, oldTag: string, newTag: string) {
+  const normalizedOldTag = normalizeTag(oldTag)
+  const lines = source.split('\n')
+  lines.forEach((line, lineIndex) => {
+    const matches = markerTagSpans(line).filter((span) => span.tag === normalizedOldTag).sort((left, right) => right.start - left.start)
+    matches.forEach((span) => { lines[lineIndex] = replaceMarkerTag(lines[lineIndex], span, newTag) })
+  })
+  return lines.join('\n')
+}
+
 export function lineRangeForSelection(source: string, from: number, to: number) {
   const before = source.slice(0, from)
   const selected = source.slice(from, to)

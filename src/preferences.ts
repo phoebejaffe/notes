@@ -2,6 +2,7 @@ export type EditorMode = 'normal' | 'raw'
 export type FontChoice = 'system' | 'serif' | 'monospace'
 export type Theme = 'light' | 'dark'
 export type DateFormat = 'long' | 'long-short' | 'weekday-month' | 'short' | 'month-day' | 'iso' | 'numeric'
+export type BackupFrequency = 'off' | 'hourly' | 'daily' | 'weekly'
 
 export interface Preferences {
   editorMode: EditorMode
@@ -12,6 +13,15 @@ export interface Preferences {
   dateFormat: DateFormat
   theme: Theme
   compactSpacing: boolean
+  backupFrequency: BackupFrequency
+  backupFolder: string
+  captureShortcut: string
+  captureAlwaysOnTop: boolean
+  launchAtLogin: boolean
+  showMenuBar: boolean
+  showDockIcon: boolean
+  shortcuts: Record<string, string>
+  hideTagSyntax: boolean
 }
 
 export const defaultPreferences: Preferences = {
@@ -23,6 +33,23 @@ export const defaultPreferences: Preferences = {
   dateFormat: 'long',
   theme: 'light',
   compactSpacing: false,
+  backupFrequency: 'off',
+  backupFolder: '',
+  captureShortcut: 'Ctrl+Alt+N',
+  captureAlwaysOnTop: true,
+  launchAtLogin: false,
+  showMenuBar: true,
+  showDockIcon: false,
+  shortcuts: {
+    search: 'Mod-f',
+    rawEditor: 'Mod-e',
+    zoomIn: 'Mod-=',
+    zoomOut: 'Mod--',
+    jumpToToday: 'Mod-j',
+    exportToday: 'Mod-s',
+    tagSelection: 'Mod-t',
+  },
+  hideTagSyntax: true,
 }
 
 const storageKey = 'notes-preferences'
@@ -45,6 +72,7 @@ export function loadPreferences(): Preferences {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(storageKey) ?? '{}')
     if (!isRecord(parsed)) return defaultPreferences
+    const parsedShortcuts = isRecord(parsed.shortcuts) ? parsed.shortcuts : {}
     return {
       editorMode: parsed.editorMode === 'raw' ? 'raw' : defaultPreferences.editorMode,
       zoomLevel: clampZoom(parsed.zoomLevel),
@@ -54,6 +82,15 @@ export function loadPreferences(): Preferences {
       dateFormat: ['long', 'long-short', 'weekday-month', 'short', 'month-day', 'iso', 'numeric'].includes(parsed.dateFormat as string) ? parsed.dateFormat as DateFormat : defaultPreferences.dateFormat,
       theme: parsed.theme === 'dark' ? 'dark' : defaultPreferences.theme,
       compactSpacing: parsed.compactSpacing === true,
+      backupFrequency: ['off', 'hourly', 'daily', 'weekly'].includes(parsed.backupFrequency as string) ? parsed.backupFrequency as BackupFrequency : defaultPreferences.backupFrequency,
+      backupFolder: typeof parsed.backupFolder === 'string' ? parsed.backupFolder : defaultPreferences.backupFolder,
+      captureShortcut: typeof parsed.captureShortcut === 'string' && parsed.captureShortcut.trim() ? parsed.captureShortcut : defaultPreferences.captureShortcut,
+      captureAlwaysOnTop: parsed.captureAlwaysOnTop !== false,
+      launchAtLogin: parsed.launchAtLogin === true,
+      showMenuBar: parsed.showMenuBar !== false || parsed.showDockIcon !== true,
+      showDockIcon: parsed.showDockIcon === true,
+      shortcuts: Object.fromEntries(Object.entries(defaultPreferences.shortcuts).map(([key, value]) => [key, typeof parsedShortcuts[key] === 'string' && parsedShortcuts[key].trim() ? parsedShortcuts[key] : value])),
+      hideTagSyntax: parsed.hideTagSyntax !== false,
     }
   } catch {
     return defaultPreferences
