@@ -35,6 +35,7 @@ function App() {
   const [tagInput, setTagInput] = useState('')
   const [selection, setSelection] = useState<Selection>({ day: '', from: 0, to: 0 })
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
+  const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const streamEndRef = useRef<HTMLDivElement>(null)
 
@@ -56,6 +57,17 @@ function App() {
     if (streamEndRef.current) observer.observe(streamEndRef.current)
     return () => observer.disconnect()
   }, [loaded])
+
+  useEffect(() => {
+    function focusTagInput(event: KeyboardEvent) {
+      if (event.metaKey && event.key.toLowerCase() === 't' && selection.day && selection.from !== selection.to) {
+        event.preventDefault()
+        tagInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', focusTagInput)
+    return () => window.removeEventListener('keydown', focusTagInput)
+  }, [selection])
 
   useEffect(() => {
     if (!loaded) return
@@ -95,6 +107,17 @@ function App() {
     }
   }
 
+  function submitTag() {
+    const previousDay = selection.day
+    applyTag()
+    if (previousDay) {
+      window.setTimeout(() => {
+        const editor = document.querySelector(`[data-day="${previousDay}"] .cm-content`) as HTMLElement | null
+        editor?.focus()
+      }, 0)
+    }
+  }
+
   function exportMarkdown(day: string) {
     const blob = new Blob([documents[day] ?? ''], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -130,23 +153,25 @@ function App() {
         {days.map((documentDay) => {
           const source = documents[documentDay] ?? ''
           const parsed = parseMarkdown(source)
-          const isSelectedDay = selection.day === documentDay && selection.from !== selection.to
-          return <article className="day-card" key={documentDay}>
+          return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay)}</h1>
               <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} />
-              {!sourceMode && isSelectedDay && <div className="tag-popover" role="dialog" aria-label="Add tag to selection">
-                <span className="popover-label">Tag lines</span>
-                <input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyTag() }} placeholder="therapy, 🧠, or project" aria-label="New tag" />
-                <button type="button" onClick={applyTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
-                {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
-              </div>}
+
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
           </article>
         })}
         <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
       </section>
+
+      {!sourceMode && selection.day && selection.from !== selection.to && <div className="tag-bar" role="dialog" aria-label="Add tag to selection">
+        <span className="popover-label">Tag lines</span>
+        <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="therapy, 🧠, or project" aria-label="New tag" />
+        <button type="button" onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
+        {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
+        <span className="tag-shortcut">⌘T</span>
+      </div>}
     </main>
   )
 }

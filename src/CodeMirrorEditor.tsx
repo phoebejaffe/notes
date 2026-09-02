@@ -23,6 +23,27 @@ function markdownLineStyle(line: string) {
   return ''
 }
 
+function toggleMarkdownMark(view: EditorView, opening: string, closing: string) {
+  const selection = view.state.selection.main
+  const selectedText = view.state.sliceDoc(selection.from, selection.to)
+  const before = view.state.sliceDoc(Math.max(0, selection.from - opening.length), selection.from)
+  const after = view.state.sliceDoc(selection.to, selection.to + closing.length)
+  if (before === opening && after === closing) {
+    view.dispatch({
+      changes: [{ from: selection.from - opening.length, to: selection.from, insert: '' }, { from: selection.to, to: selection.to + closing.length, insert: '' }],
+      selection: { anchor: selection.from - opening.length, head: selection.to - opening.length },
+    })
+  } else if (selectedText) {
+    view.dispatch({
+      changes: [{ from: selection.to, insert: closing }, { from: selection.from, insert: opening }],
+      selection: { anchor: selection.from + opening.length, head: selection.to + opening.length },
+    })
+  } else {
+    view.dispatch({ changes: { from: selection.from, insert: `${opening}${closing}` }, selection: { anchor: selection.from + opening.length } })
+  }
+  return true
+}
+
 const rangeDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet
 
@@ -124,7 +145,13 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           lineNumbers(),
           markdown(),
           syntaxHighlighting(defaultHighlightStyle),
-          keymap.of([...defaultKeymap, indentWithTab]),
+          keymap.of([
+            { key: 'Mod-b', run: (view) => toggleMarkdownMark(view, '**', '**') },
+            { key: 'Mod-i', run: (view) => toggleMarkdownMark(view, '*', '*') },
+            { key: 'Mod-u', run: (view) => toggleMarkdownMark(view, '<u>', '</u>') },
+            ...defaultKeymap,
+            indentWithTab,
+          ]),
           EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
           rangeDecorations,
@@ -150,7 +177,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
               onSelectionRef.current?.(selection.from, selection.to)
             }
           }),
-          EditorView.theme({ '&': { minHeight: '100px' }, '.cm-scroller': { overflow: 'visible', overflowX: 'hidden' }, '.cm-content': { overflowWrap: 'anywhere' } }),
+          EditorView.theme({ '&': { minHeight: '50px' }, '.cm-scroller': { overflow: 'visible', overflowX: 'hidden' }, '.cm-content': { overflowWrap: 'anywhere' } }),
         ],
       }),
       parent: host.current,
