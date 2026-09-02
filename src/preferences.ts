@@ -48,6 +48,7 @@ export const defaultPreferences: Preferences = {
     jumpToToday: 'Mod-j',
     exportToday: 'Mod-s',
     tagSelection: 'Mod-t',
+    strikethrough: 'Mod-Shift-x',
     settings: 'Mod-,',
     dayPrevious: 'Mod-Alt-ArrowUp',
     dayNext: 'Mod-Alt-ArrowDown',

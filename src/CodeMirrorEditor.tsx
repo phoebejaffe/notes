@@ -32,6 +32,14 @@ function markdownLineStyle(line: string) {
   return ''
 }
 
+function lineMatchesFilter(parsed: ParsedMarkdown, lineIndex: number, filterTags: string[]) {
+  if (!filterTags.length) return true
+  const selected = new Set(filterTags)
+  const marker = parsed.markers.find((item) => item.line === lineIndex)
+  if (marker?.tags.some((tag) => selected.has(tag))) return true
+  return parsed.ranges.some((range) => selected.has(range.tag) && range.startLine < lineIndex && lineIndex < range.endLine)
+}
+
 function toggleMarkdownMark(view: EditorView, opening: string, closing: string) {
   const selection = view.state.selection.main
   const selectedText = view.state.sliceDoc(selection.from, selection.to)
@@ -53,7 +61,7 @@ function toggleMarkdownMark(view: EditorView, opening: string, closing: string) 
   return true
 }
 
-function createRangeDecorations(tagColors: Record<string, string>) {
+function createRangeDecorations(tagColors: Record<string, string>, filterTags: string[]) {
   return ViewPlugin.fromClass(class {
   decorations: DecorationSet
 
@@ -81,7 +89,7 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         }
         seenLines.add(lineIndex)
         const rangeClass = lineStyle(parsed, lineIndex, tagColors)
-        const className = [rangeClass, markdownLineStyle(line.text)].filter(Boolean).join(' ')
+        const className = [rangeClass, markdownLineStyle(line.text), lineMatchesFilter(parsed, lineIndex, filterTags) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
         const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
         const customColors = activeTags.slice(0, 4).map((range, index) => tagColors[range.tag] ? `--tag-${['outer', 'inner', 'third', 'fourth'][index]}:${tagColors[range.tag]}` : '').filter(Boolean).join(';')
         const dayInset = Math.min(maxTagDepth(parsed), 4) * 3
@@ -137,6 +145,7 @@ function createRangeDecorations(tagColors: Record<string, string>) {
         }
         const strikethroughPattern = /(?<!~)~~(\S(?:.*?\S)?)~~(?!~)/gu
         for (const match of line.text.matchAll(strikethroughPattern)) {
+          ranges.push(Decoration.mark({ class: 'cm-strikethrough-dim' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
           ranges.push(Decoration.mark({ class: 'cm-strikethrough-text' }).range(line.from + match.index! + 2, line.from + match.index! + match[0].length - 2))
         }
         if (line.to >= to) break
@@ -157,9 +166,11 @@ interface CodeMirrorEditorProps {
   tagColors?: Record<string, string>
   restoreSelection?: { from: number; to: number }
   hideTagSyntax?: boolean
+  strikethroughShortcut?: string
+  filterTags?: string[]
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', filterTags = [] }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -188,13 +199,14 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
             { key: 'Mod-b', run: (view) => toggleMarkdownMark(view, '**', '**') },
             { key: 'Mod-i', run: (view) => toggleMarkdownMark(view, '*', '*') },
             { key: 'Mod-u', run: (view) => toggleMarkdownMark(view, '<u>', '</u>') },
+            { key: strikethroughShortcut, run: (view) => toggleMarkdownMark(view, '~~', '~~') },
             ...defaultKeymap,
             ...historyKeymap,
             indentWithTab,
           ]),
           EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
-          createRangeDecorations(tagColors),
+          createRangeDecorations(tagColors, filterTags),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               let next = update.state.doc.toString()
@@ -230,7 +242,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       view.focus()
     }
     return () => { viewRef.current = null; view.destroy() }
-  }, [focusAtEnd, hideTagSyntax, initialValue, tagColors])
+  }, [filterTags, focusAtEnd, hideTagSyntax, initialValue, strikethroughShortcut, tagColors])
 
   const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 4)
   useEffect(() => {
