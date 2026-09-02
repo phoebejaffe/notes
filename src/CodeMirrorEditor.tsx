@@ -94,11 +94,15 @@ const rangeDecorations = ViewPlugin.fromClass(class {
             }
           }
         }
-        const strongPattern = /(\*\*|__)(\S(?:.*?\S)?)\1/gu
+        const strongPattern = /(?<![*_])(\*\*|__)(?![*_])(\S(?:.*?\S)?)\1(?![*_])/gu
         for (const match of line.text.matchAll(strongPattern)) {
           ranges.push(Decoration.mark({ class: 'cm-strong-text' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
         }
-        const italicPattern = /(^|[^*_])([*_])(\S(?:.*?\S)?)\2(?![*_])/gu
+        const triplePattern = /(?<!\*)\*{3}(\S(?:.*?\S)?)\*{3}(?!\*)/gu
+        for (const match of line.text.matchAll(triplePattern)) {
+          ranges.push(Decoration.mark({ class: 'cm-strong-text cm-emphasis-text' }).range(line.from + match.index!, line.from + match.index! + match[0].length))
+        }
+        const italicPattern = /(^|[^*_])([*_])(?!\2)(\S(?:.*?\S)?)\2(?![*_])/gu
         for (const match of line.text.matchAll(italicPattern)) {
           const start = line.from + match.index! + match[1].length
           ranges.push(Decoration.mark({ class: 'cm-emphasis-text' }).range(start, start + match[0].length - match[1].length))
