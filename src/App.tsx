@@ -35,6 +35,7 @@ function App() {
   const [tagInput, setTagInput] = useState('')
   const [selection, setSelection] = useState<Selection>({ day: '', from: 0, to: 0 })
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
+  const [zoomLevel, setZoomLevel] = useState(100)
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const streamEndRef = useRef<HTMLDivElement>(null)
@@ -68,6 +69,35 @@ function App() {
     window.addEventListener('keydown', focusTagInput)
     return () => window.removeEventListener('keydown', focusTagInput)
   }, [selection])
+
+  useEffect(() => {
+    function handleInterfaceShortcuts(event: KeyboardEvent) {
+      if (!event.metaKey) return
+      if (event.key === '=' || event.key === '+') {
+        event.preventDefault()
+        setZoomLevel((current) => Math.min(150, current + 10))
+        return
+      }
+      if (event.key === '-') {
+        event.preventDefault()
+        setZoomLevel((current) => Math.max(70, current - 10))
+        return
+      }
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+      const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
+      const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
+      const currentIndex = activeCard ? cards.indexOf(activeCard) : 0
+      const nextIndex = currentIndex + (event.key === 'ArrowDown' ? 1 : -1)
+      const nextEditor = cards[nextIndex]?.querySelector<HTMLElement>('.cm-content')
+      if (nextEditor) {
+        event.preventDefault()
+        nextEditor.focus()
+        nextEditor.scrollIntoView({ block: 'center' })
+      }
+    }
+    window.addEventListener('keydown', handleInterfaceShortcuts)
+    return () => window.removeEventListener('keydown', handleInterfaceShortcuts)
+  }, [])
 
   useEffect(() => {
     if (!loaded) return
@@ -131,7 +161,7 @@ function App() {
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
 
   return (
-    <main className={captureMode ? 'capture-shell' : 'app-shell'}>
+    <main className={captureMode ? 'capture-shell' : 'app-shell'} style={{ zoom: zoomLevel / 100 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left">
           <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
