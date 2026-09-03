@@ -75,16 +75,6 @@ function toggleTaskAtSelection(view: EditorView) {
   return true
 }
 
-function continueUncheckedTask(view: EditorView) {
-  const selection = view.state.selection.main
-  const line = view.state.doc.lineAt(selection.head)
-  if (!selection.empty || selection.head !== line.to) return false
-  const match = line.text.match(/^(\s*(?:(?:[-*+]|\d+[.)])\s+)?)\[ \]\s+\S.*$/u)
-  if (!match) return false
-  view.dispatch({ changes: { from: line.to, insert: `\n${match[1]}[ ] ` } })
-  return true
-}
-
 function toggleMutedAtSelection(view: EditorView) {
   const selection = view.state.selection.main
   const startLine = view.state.doc.lineAt(selection.from).number - 1
@@ -303,7 +293,6 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
             { key: 'Mod-u', run: (view) => toggleMarkdownMark(view, '<u>', '</u>') },
             { key: strikethroughShortcut, run: (view) => toggleMarkdownMark(view, '~~', '~~') },
             { key: taskToggleShortcut, run: toggleTaskAtSelection },
-            { key: 'Enter', run: continueUncheckedTask },
             ...defaultKeymap,
             ...historyKeymap,
             indentWithTab,
