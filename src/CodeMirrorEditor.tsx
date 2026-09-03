@@ -49,7 +49,9 @@ function moveToVisibleLine(view: EditorView, direction: -1 | 1, filterTags: stri
   const selection = view.state.selection.main
   const currentLine = view.state.doc.lineAt(selection.head)
   const currentLineIndex = currentLine.number - 1
-  if ((direction < 0 && selection.head !== currentLine.from) || (direction > 0 && selection.head !== currentLine.to)) return false
+  const cursorCoords = view.coordsAtPos(selection.head)
+  const lineBlock = view.lineBlockAt(selection.head)
+  if (!cursorCoords || (direction < 0 && cursorCoords.top > lineBlock.top + 1) || (direction > 0 && cursorCoords.bottom < lineBlock.bottom - 1)) return false
   let targetLineIndex = currentLineIndex + direction
   const parsed = parseMarkdown(view.state.doc.toString())
   while (targetLineIndex >= 0 && targetLineIndex < parsed.lines.length && !lineIsNavigable(parsed, targetLineIndex, filterTags, hideMutedLines)) targetLineIndex += direction
