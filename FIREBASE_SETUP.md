@@ -70,7 +70,13 @@ firebase login
 firebase use --add
 ```
 
-Select the project created above. If this repository later gains `firebase.json` and rules files, deploy rules with:
+Select the project created above, or use the already-created local project configuration:
+
+```bash
+firebase use notes-363bc
+```
+
+The repository includes `firebase.json`, `firestore.rules`, and `firestore.indexes.json`. Deploy the rules after reviewing them:
 
 ```bash
 firebase deploy --only firestore:rules
