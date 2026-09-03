@@ -63,6 +63,10 @@ function currentTimestamp() {
   return Date.now()
 }
 
+function isIOSDevice() {
+  return /iPad|iPhone|iPod/u.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/u.test(navigator.userAgent))
+}
+
 function recoveryPhraseStorageKey(uid: string) {
   return `notes-recovery-phrase:${uid}`
 }
@@ -174,6 +178,7 @@ function App() {
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const [captureFocused, setCaptureFocused] = useState(() => document.hasFocus())
+  const [keyboardOffset, setKeyboardOffset] = useState(0)
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null)
   const [recoveryPhrase, setRecoveryPhrase] = useState('')
   const [dataKey, setDataKey] = useState<CryptoKey>()
@@ -364,6 +369,23 @@ function App() {
     return () => {
       window.removeEventListener('keydown', closeTransientPanels)
       window.removeEventListener('mousedown', closeOnOutsideClick)
+    }
+  }, [])
+
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    function updateKeyboardOffset() {
+      const currentViewport = window.visualViewport
+      if (!currentViewport) return
+      setKeyboardOffset(Math.max(0, window.innerHeight - currentViewport.height - currentViewport.offsetTop))
+    }
+    updateKeyboardOffset()
+    viewport.addEventListener('resize', updateKeyboardOffset)
+    viewport.addEventListener('scroll', updateKeyboardOffset)
+    return () => {
+      viewport.removeEventListener('resize', updateKeyboardOffset)
+      viewport.removeEventListener('scroll', updateKeyboardOffset)
     }
   }, [])
 
@@ -709,10 +731,14 @@ function App() {
     document.querySelector(`[data-day="${today}"]`)?.scrollIntoView({ block: 'start' })
   }
 
+  function reloadApp() {
+    window.location.reload()
+  }
+
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: preferences.zoomLevel / 100 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isIOSDevice() ? 1 : preferences.zoomLevel / 100 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -725,6 +751,7 @@ function App() {
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
+          <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
@@ -741,6 +768,7 @@ function App() {
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
+          <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
@@ -770,7 +798,7 @@ function App() {
         <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
       </section>
 
-      {!sourceMode && loaded && <div className="tag-bar" role="toolbar" aria-label="Formatting and tags">
+      {!sourceMode && loaded && <div className="tag-bar" role="toolbar" aria-label="Formatting and tags" style={{ bottom: `calc(${keyboardOffset}px + env(safe-area-inset-bottom))` }}>
         <div className="tag-format-actions">
           <button className="tag-format-button" type="button" aria-label="Bold" title="Bold" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('bold')}><strong>B</strong></button>
           <button className="tag-format-button" type="button" aria-label="Italic" title="Italic" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('italic')}><em>I</em></button>

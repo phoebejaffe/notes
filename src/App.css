@@ -6,8 +6,8 @@
 .capture-shell .codemirror-host { border: 0; }
 .capture-shell .cm-editor { min-height: 50px; }
 .app-shell { width: min(980px, 100%); margin: 0 auto; padding: 88px 16px 64px; background: #fff; }
-.topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 0; background: #fff; backdrop-filter: blur(12px); }
-.topbar-left, .topbar-right { display: flex; align-items: center; gap: 8px; }
+.topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 0; background: transparent; pointer-events: none; }
+.topbar-left, .topbar-right, .topbar > .filter-panel { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
 .capture-menu { position: fixed; z-index: 14; top: 2px; right: 2px; display: flex; align-items: center; gap: 8px; }
 .capture-menu .menu-panel { top: 42px; right: 0; left: auto; }
 .shortcut-hint { display: block; padding: 8px 11px; color: #9b9185; font-size: 10px; white-space: nowrap; }
@@ -187,7 +187,8 @@ button { cursor: pointer; font: inherit; }
 .compact-spacing.app-shell { padding-top: 76px; padding-bottom: 20px; }
 .compact-spacing .editor-card { padding-bottom: 2px; }
 .theme-dark.app-shell, .theme-dark.capture-shell { --tag-chip-base: #000; color: #e8e2dc; background: #201e21; }
-.theme-dark .topbar, .theme-dark .search-panel, .theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: #201e21; }
+.theme-dark .topbar { color: #e8e2dc; background: transparent; }
+.theme-dark .search-panel, .theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: #201e21; }
 .theme-dark .cm-editor, .theme-dark .cm-scroller, .theme-dark .cm-gutters { color: #e8e2dc; background: #201e21; }
 .theme-dark .cm-content { caret-color: #fffaf5; }
 .theme-dark .cm-cursor, .theme-dark .cm-dropCursor { border-left-color: #fffaf5; }
