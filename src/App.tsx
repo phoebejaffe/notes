@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
-import { addTagToRange, formatMarker, lineRangeForSelection, parseMarkdown, removeTagAtPosition, renameTagEverywhere } from './markerEngine'
+import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, parseMarkdown, removeTagAtPosition, renameTagEverywhere } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
@@ -41,10 +41,9 @@ function loadTagColors() {
   }
 }
 
-function sourceMatchesFilter(source: string, filterTags: string[]) {
-  if (!filterTags.length) return true
+function sourceMatchesFilter(source: string, filterTags: string[], hideMutedLines: boolean) {
   const parsed = parseMarkdown(source)
-  return parsed.lines.some((line, index) => line.trim() && parsed.ranges.some((range) => filterTags.includes(range.tag) && range.startLine < index && index < range.endLine))
+  return parsed.lines.some((line, index) => line.trim() && (!hideMutedLines || !isMutedLine(line)) && (!filterTags.length || parsed.ranges.some((range) => filterTags.includes(range.tag) && range.startLine < index && index < range.endLine)))
 }
 
 function FilterIcon({ active }: { active: boolean }) {
@@ -106,6 +105,7 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterTags, setFilterTags] = useState<string[]>([])
+  const [hideMutedLines, setHideMutedLines] = useState(false)
   const [tagBarOpen, setTagBarOpen] = useState(false)
   const sourceMode = preferences.editorMode === 'raw'
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
@@ -180,6 +180,11 @@ function App() {
         event.preventDefault()
         setSettingsOpen(true)
         setMenuOpen(false)
+        return
+      }
+      if (matchesShortcut(event, preferences.shortcuts.toggleMuted)) {
+        event.preventDefault()
+        setHideMutedLines((hidden) => !hidden)
         return
       }
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
@@ -463,7 +468,7 @@ function App() {
         <div className="topbar-left" />
         <div className="topbar-right">
           <button className="search-button" type="button" aria-label="Search" aria-expanded={searchOpen} onClick={() => setSearchOpen((open) => !open)}>⌕</button>
-          <button className={`filter-button icon-button${filterTags.length ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0} /></button>
+          <button className={`filter-button icon-button${filterTags.length || hideMutedLines ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0 || hideMutedLines} /></button>
           <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
           {saveState === 'saving' && <span className="save-spinner" role="status" aria-label="Saving" />}
         </div>
@@ -477,10 +482,10 @@ function App() {
           <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
         </nav>}
-        {filterOpen && <div className="filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => setFilterTags([])} disabled={!filterTags.length}>Clear filters</button>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
+        {filterOpen && <div className="filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </header>}
       {captureMode && <div className="capture-menu">
-        <button className={`filter-button icon-button${filterTags.length ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0} /></button>
+        <button className={`filter-button icon-button${filterTags.length || hideMutedLines ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0 || hideMutedLines} /></button>
         <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
@@ -493,19 +498,19 @@ function App() {
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
           <span className="shortcut-hint">Ctrl⌥N to show or hide</span>
         </nav>}
-        {filterOpen && <div className="filter-panel capture-filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => setFilterTags([])} disabled={!filterTags.length}>Clear filters</button>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
+        {filterOpen && <div className="filter-panel capture-filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </div>}
 
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
 
       <section className="day-stream" aria-label="Daily notes">
-        {days.filter((documentDay) => (filterTags.length ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags) : preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
+        {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
           const source = documents[documentDay] ?? ''
           const parsed = parseMarkdown(source)
           return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -559,7 +564,7 @@ function App() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Keyboard shortcuts</legend>
-            {Object.entries({ search: 'Search', settings: 'Settings', rawEditor: 'Raw Editor', zoomIn: 'Zoom in', zoomOut: 'Zoom out', jumpToToday: 'Jump to today', exportToday: 'Export today', tagSelection: 'Tag selection', strikethrough: 'Strikethrough', taskToggle: 'Toggle task', dayPrevious: 'Previous day', dayNext: 'Next day' }).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={formatShortcut(preferences.shortcuts[name] ?? '')} onChange={(event) => updateShortcut(name, parseDisplayedShortcut(event.target.value))} aria-label={`${label} shortcut`} /></label>)}
+            {Object.entries({ search: 'Search', settings: 'Settings', rawEditor: 'Raw Editor', zoomIn: 'Zoom in', zoomOut: 'Zoom out', jumpToToday: 'Jump to today', exportToday: 'Export today', tagSelection: 'Tag selection', strikethrough: 'Strikethrough', taskToggle: 'Toggle task', toggleMuted: 'Hide muted lines', dayPrevious: 'Previous day', dayNext: 'Next day' }).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={formatShortcut(preferences.shortcuts[name] ?? '')} onChange={(event) => updateShortcut(name, parseDisplayedShortcut(event.target.value))} aria-label={`${label} shortcut`} /></label>)}
             {shortcutConflicts.size > 0 && <p className="settings-help shortcut-error">Each shortcut must be unique.</p>}
           </fieldset>
 

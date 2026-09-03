@@ -4,7 +4,7 @@ import { defaultKeymap, deleteCharBackwardStrict, history, historyKeymap, indent
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
-import { findMarkerTagRename, parseMarkdown, renameMatchingTag, type ParsedMarkdown } from './markerEngine'
+import { findMarkerTagRename, isMutedLine, mutedMarkerPosition, parseMarkdown, renameMatchingTag, toggleMutedLines, type ParsedMarkdown } from './markerEngine'
 
 function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<string, string>) {
   if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
@@ -32,7 +32,8 @@ function markdownLineStyle(line: string) {
   return ''
 }
 
-function lineMatchesFilter(parsed: ParsedMarkdown, lineIndex: number, filterTags: string[]) {
+function lineMatchesFilter(parsed: ParsedMarkdown, lineIndex: number, filterTags: string[], hideMutedLines: boolean) {
+  if (hideMutedLines && isMutedLine(parsed.lines[lineIndex] ?? '')) return false
   if (!filterTags.length) return true
   const selected = new Set(filterTags)
   const marker = parsed.markers.find((item) => item.line === lineIndex)
@@ -47,6 +48,16 @@ function toggleTaskAtSelection(view: EditorView) {
   if (!match) return false
   const from = line.from + match[0].indexOf('[')
   view.dispatch({ changes: { from, to: from + 3, insert: match[1].toLowerCase() === 'x' ? '[ ]' : '[x]' } })
+  return true
+}
+
+function toggleMutedAtSelection(view: EditorView) {
+  const selection = view.state.selection.main
+  const startLine = view.state.doc.lineAt(selection.from).number - 1
+  const endLine = view.state.doc.lineAt(selection.to).number - 1
+  const result = toggleMutedLines(view.state.doc.toString(), startLine, endLine)
+  if (!result.changes.length) return false
+  view.dispatch({ changes: result.changes })
   return true
 }
 
@@ -104,7 +115,7 @@ class TaskCheckboxWidget extends WidgetType {
   }
 }
 
-function createRangeDecorations(tagColors: Record<string, string>, filterTags: string[], sourceMode: boolean) {
+function createRangeDecorations(tagColors: Record<string, string>, filterTags: string[], sourceMode: boolean, hideMutedLines: boolean) {
   return ViewPlugin.fromClass(class {
   decorations: DecorationSet
 
@@ -132,7 +143,8 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
         }
         seenLines.add(lineIndex)
         const rangeClass = lineStyle(parsed, lineIndex, tagColors)
-        const className = [rangeClass, markdownLineStyle(line.text), lineMatchesFilter(parsed, lineIndex, filterTags) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
+        const mutedMarker = mutedMarkerPosition(line.text)
+        const className = [rangeClass, markdownLineStyle(line.text), mutedMarker ? 'cm-muted-line' : '', lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
         const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
         const customColors = activeTags.slice(0, 4).map((range, index) => tagColors[range.tag] ? `--tag-${['outer', 'inner', 'third', 'fourth'][index]}:${tagColors[range.tag]}` : '').filter(Boolean).join(';')
         const dayInset = Math.min(maxTagDepth(parsed), 4) * 3
@@ -140,6 +152,7 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
         const lineInset = rangeClass.includes('cm-marker-line') ? 0 : dayInset + (borderCount ? borderCount * 3 + 12 : 0)
         const lineStyles = [`--tag-border-start:0px`, `--tag-text-inset:${lineInset}px`, `padding-left:${lineInset}px`, customColors].filter(Boolean).join(';')
         if (className) ranges.push(Decoration.line({ attributes: { class: className, style: lineStyles } }).range(line.from))
+        if (mutedMarker && !sourceMode) ranges.push(Decoration.mark({ class: 'cm-muted-marker' }).range(line.from + mutedMarker.start, line.from + mutedMarker.end))
         if (!sourceMode) {
           const taskMatch = line.text.match(/^(?:\s*(?:[-*+]|\d+[.)])\s+)?\[([ xX])\]/u)
           if (taskMatch && taskMatch.index !== undefined) {
@@ -219,9 +232,10 @@ interface CodeMirrorEditorProps {
   strikethroughShortcut?: string
   taskToggleShortcut?: string
   filterTags?: string[]
+  hideMutedLines?: boolean
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [] }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [], hideMutedLines = false }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -241,11 +255,12 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       state: EditorState.create({
         doc: initialValue,
         extensions: [
-          lineNumbers({ formatNumber: (lineNumber, state) => lineMatchesFilter(parseMarkdown(state.doc.toString()), lineNumber - 1, filterTags) ? String(lineNumber) : '' }),
+          lineNumbers({ formatNumber: (lineNumber, state) => lineMatchesFilter(parseMarkdown(state.doc.toString()), lineNumber - 1, filterTags, hideMutedLines) ? String(lineNumber) : '' }),
           markdown(),
           syntaxHighlighting(defaultHighlightStyle),
           history(),
           keymap.of([
+            { key: 'Mod-/', run: toggleMutedAtSelection },
             { key: 'Backspace', run: deleteCharBackwardStrict },
             { key: 'Mod-b', run: (view) => toggleMarkdownMark(view, '**', '**') },
             { key: 'Mod-i', run: (view) => toggleMarkdownMark(view, '*', '*') },
@@ -258,7 +273,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           ]),
           EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
-          createRangeDecorations(tagColors, filterTags, sourceMode),
+          createRangeDecorations(tagColors, filterTags, sourceMode, hideMutedLines),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               let next = update.state.doc.toString()
@@ -294,7 +309,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       view.focus()
     }
     return () => { viewRef.current = null; view.destroy() }
-  }, [filterTags, focusAtEnd, hideTagSyntax, initialValue, sourceMode, strikethroughShortcut, tagColors, taskToggleShortcut])
+  }, [filterTags, focusAtEnd, hideMutedLines, hideTagSyntax, initialValue, sourceMode, strikethroughShortcut, tagColors, taskToggleShortcut])
 
   const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 4)
   useEffect(() => {

@@ -50,6 +50,7 @@ export const defaultPreferences: Preferences = {
     tagSelection: 'Mod-t',
     strikethrough: 'Mod-Shift-x',
     taskToggle: 'Mod-Enter',
+    toggleMuted: 'Mod-Alt-/',
     settings: 'Mod-,',
     dayPrevious: 'Mod-Alt-ArrowUp',
     dayNext: 'Mod-Alt-ArrowDown',

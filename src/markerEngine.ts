@@ -160,6 +160,42 @@ export function addTagToRange(source: string, startLine: number, endLine: number
   return { source: lines.join('\n') }
 }
 
+const MUTED_PREFIX_PATTERN = /^(\s*(?:(?:[-*+]|\d+[.)])\s+|#{1,6}\s+)?)(%%)(?:\s|$)/u
+
+export function mutedMarkerPosition(line: string) {
+  const match = line.match(MUTED_PREFIX_PATTERN)
+  if (!match) return undefined
+  return { start: match[1].length, end: match[0].length }
+}
+
+export function isMutedLine(line: string) {
+  return mutedMarkerPosition(line) !== undefined
+}
+
+export function toggleMutedLines(source: string, startLine: number, endLine: number) {
+  const originalLines = source.split('\n')
+  const lines = [...originalLines]
+  const selected = lines.slice(startLine, endLine + 1)
+  const unmute = selected.length > 0 && selected.every(isMutedLine)
+  lines.slice(startLine, endLine + 1).forEach((line, offset) => {
+    const index = startLine + offset
+    const marker = mutedMarkerPosition(line)
+    if (unmute && marker) {
+      lines[index] = `${line.slice(0, marker.start)}${line.slice(marker.end)}`
+    } else if (!unmute && !marker) {
+      const prefix = line.match(/^(\s*(?:(?:[-*+]|\d+[.)])\s+|#{1,6}\s+)?)/u)?.[1] ?? ''
+      lines[index] = `${prefix}%% ${line.slice(prefix.length)}`
+    }
+  })
+  const changes: Array<{ from: number; to: number; insert: string }> = []
+  let offset = 0
+  originalLines.forEach((line, index) => {
+    if (line !== lines[index] && index >= startLine && index <= endLine) changes.push({ from: offset, to: offset + line.length, insert: lines[index] })
+    offset += line.length + 1
+  })
+  return { source: lines.join('\n'), muted: !unmute, changes }
+}
+
 function removeTagFromMarkerLine(line: string, kind: MarkerKind, tag: string) {
   const target = markerTagSpans(line).find((span) => span.kind === kind && span.tag === normalizeTag(tag))
   if (!target) return line

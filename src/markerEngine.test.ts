@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, removeTagAtPosition, renameMatchingTag, renameTagEverywhere } from './markerEngine'
+import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, isMutedLine, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -56,6 +56,14 @@ describe('marker engine', () => {
     expect(findMarkerTagRename(before, after)).toBeUndefined()
     expect(after).toContain('<!-- therapy -->')
     expect(after).toContain('<!-- meeting -->')
+  })
+
+  it('mutes and unmutes plain, list, and heading lines', () => {
+    const source = 'plain\n- grocery item\n## heading'
+    const muted = toggleMutedLines(source, 0, 2)
+    expect(muted.source).toBe('%% plain\n- %% grocery item\n## %% heading')
+    expect(isMutedLine(muted.source.split('\n')[1])).toBe(true)
+    expect(toggleMutedLines(muted.source, 0, 2).source).toBe(source)
   })
 
   it('renames every matching marker while preserving quoted names', () => {
