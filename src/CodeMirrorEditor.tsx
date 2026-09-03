@@ -41,6 +41,24 @@ function lineMatchesFilter(parsed: ParsedMarkdown, lineIndex: number, filterTags
   return parsed.ranges.some((range) => selected.has(range.tag) && range.startLine < lineIndex && lineIndex < range.endLine)
 }
 
+function lineIsNavigable(parsed: ParsedMarkdown, lineIndex: number, filterTags: string[], hideMutedLines: boolean) {
+  return !parsed.markers.some((marker) => marker.line === lineIndex) && lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines)
+}
+
+function moveToVisibleLine(view: EditorView, direction: -1 | 1, filterTags: string[], hideMutedLines: boolean) {
+  const selection = view.state.selection.main
+  const currentLineIndex = view.state.doc.lineAt(selection.head).number - 1
+  let targetLineIndex = currentLineIndex + direction
+  const parsed = parseMarkdown(view.state.doc.toString())
+  while (targetLineIndex >= 0 && targetLineIndex < parsed.lines.length && !lineIsNavigable(parsed, targetLineIndex, filterTags, hideMutedLines)) targetLineIndex += direction
+  if (targetLineIndex === currentLineIndex + direction) return false
+  if (targetLineIndex < 0 || targetLineIndex >= parsed.lines.length) return true
+  const targetLine = view.state.doc.line(targetLineIndex + 1)
+  const column = Math.min(selection.head - view.state.doc.line(currentLineIndex + 1).from, targetLine.length)
+  view.dispatch({ selection: { anchor: targetLine.from + column } })
+  return true
+}
+
 function toggleTaskAtSelection(view: EditorView) {
   const selection = view.state.selection.main
   const line = view.state.doc.lineAt(selection.from)
@@ -260,6 +278,8 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           syntaxHighlighting(defaultHighlightStyle),
           history(),
           keymap.of([
+            { key: 'ArrowUp', run: (view) => moveToVisibleLine(view, -1, filterTags, hideMutedLines) },
+            { key: 'ArrowDown', run: (view) => moveToVisibleLine(view, 1, filterTags, hideMutedLines) },
             { key: 'Mod-/', run: toggleMutedAtSelection },
             { key: 'Backspace', run: deleteCharBackwardStrict },
             { key: 'Mod-b', run: (view) => toggleMarkdownMark(view, '**', '**') },

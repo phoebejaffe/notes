@@ -59,11 +59,11 @@ describe('marker engine', () => {
   })
 
   it('mutes and unmutes plain, list, and heading lines', () => {
-    const source = 'plain\n- grocery item\n## heading'
-    const muted = toggleMutedLines(source, 0, 2)
-    expect(muted.source).toBe('%% plain\n- %% grocery item\n## %% heading')
-    expect(isMutedLine(muted.source.split('\n')[1])).toBe(true)
-    expect(toggleMutedLines(muted.source, 0, 2).source).toBe(source)
+    const source = 'plain\n  indented\n- grocery item\n## heading'
+    const muted = toggleMutedLines(source, 0, 3)
+    expect(muted.source).toBe('%% plain\n  %% indented\n- %% grocery item\n## %% heading')
+    expect(isMutedLine(muted.source.split('\n')[2])).toBe(true)
+    expect(toggleMutedLines(muted.source, 0, 3).source).toBe(source)
   })
 
   it('renames every matching marker while preserving quoted names', () => {
