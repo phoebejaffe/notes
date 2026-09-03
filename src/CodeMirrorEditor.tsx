@@ -47,7 +47,9 @@ function lineIsNavigable(parsed: ParsedMarkdown, lineIndex: number, filterTags: 
 
 function moveToVisibleLine(view: EditorView, direction: -1 | 1, filterTags: string[], hideMutedLines: boolean) {
   const selection = view.state.selection.main
-  const currentLineIndex = view.state.doc.lineAt(selection.head).number - 1
+  const currentLine = view.state.doc.lineAt(selection.head)
+  const currentLineIndex = currentLine.number - 1
+  if ((direction < 0 && selection.head !== currentLine.from) || (direction > 0 && selection.head !== currentLine.to)) return false
   let targetLineIndex = currentLineIndex + direction
   const parsed = parseMarkdown(view.state.doc.toString())
   while (targetLineIndex >= 0 && targetLineIndex < parsed.lines.length && !lineIsNavigable(parsed, targetLineIndex, filterTags, hideMutedLines)) targetLineIndex += direction

@@ -80,7 +80,8 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const wantsAlt = parts.includes('alt') || parts.includes('option')
   const wantsShift = parts.includes('shift')
   const modifierMatches = wantsMod ? (/mac/i.test(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) : wantsCtrl ? event.ctrlKey && !event.metaKey : !event.ctrlKey && !event.metaKey
-  return event.key.toLowerCase() === key && modifierMatches && (wantsAlt ? event.altKey : !event.altKey) && (wantsShift ? event.shiftKey : !event.shiftKey)
+  const keyMatches = event.key.toLowerCase() === key || (key === '/' && event.code === 'Slash')
+  return keyMatches && modifierMatches && (wantsAlt ? event.altKey : !event.altKey) && (wantsShift ? event.shiftKey : !event.shiftKey)
 }
 
 function formatShortcut(shortcut: string) {
