@@ -340,6 +340,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
   useEffect(() => {
     const view = viewRef.current
     if (!view || !commandRequest) return
+    view.dispatch({ selection: { anchor: selectionRef.current.from, head: selectionRef.current.to } })
     if (commandRequest.kind === 'bold') toggleMarkdownMark(view, '**', '**')
     if (commandRequest.kind === 'italic') toggleMarkdownMark(view, '*', '*')
     if (commandRequest.kind === 'strikethrough') toggleMarkdownMark(view, '~~', '~~')

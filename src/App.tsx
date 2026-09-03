@@ -809,15 +809,15 @@ function App() {
 
       {!sourceMode && loaded && <div className="tag-bar" role="toolbar" aria-label="Formatting and tags" style={{ bottom: `calc(${keyboardOffset}px + env(safe-area-inset-bottom))` }}>
         <div className="tag-format-actions">
-          <button className="tag-format-button" type="button" aria-label="Bold" title="Bold" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('bold')}><strong>B</strong></button>
-          <button className="tag-format-button" type="button" aria-label="Italic" title="Italic" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('italic')}><em>I</em></button>
-          <button className="tag-format-button" type="button" aria-label="Strikethrough" title="Strikethrough" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('strikethrough')}><span className="strikethrough-label">S</span></button>
-          <button className="tag-format-button" type="button" aria-label="Mute or unmute lines" title="Mute or unmute lines" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('mute')}><MuteIcon /></button>
+          <button className="tag-format-button" type="button" aria-label="Bold" title="Bold" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('bold')}><strong>B</strong></button>
+          <button className="tag-format-button" type="button" aria-label="Italic" title="Italic" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('italic')}><em>I</em></button>
+          <button className="tag-format-button" type="button" aria-label="Strikethrough" title="Strikethrough" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('strikethrough')}><span className="strikethrough-label">S</span></button>
+          <button className="tag-format-button" type="button" aria-label="Mute or unmute lines" title="Mute or unmute lines" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('mute')}><MuteIcon /></button>
         </div>
         <div className="active-tag-chips">{currentTags.map((tag) => <span className="active-tag-chip" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeSelectedTag(tag)}>×</button></span>)}</div>
         <span className="popover-label">Tag</span>
         <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" />
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
+        <button type="button" onPointerDown={(event) => event.preventDefault()} onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
         {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
         <span className="tag-shortcut">⌘T</span>
       </div>}

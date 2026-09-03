@@ -18,6 +18,7 @@
 button { cursor: pointer; font: inherit; }
 .menu-panel { position: absolute; z-index: 5; top: 42px; left: 0; display: flex; flex-direction: column; min-width: 170px; padding: 6px; border: 1px solid #d9d4cb; border-radius: 10px; background: #fffdf9; box-shadow: 0 12px 30px #392c1f22; }
 .topbar .menu-panel { right: 0; left: auto; }
+.topbar > .filter-panel { right: auto; left: 0; }
 .menu-panel button { padding: 9px 11px; color: #504941; border: 0; background: transparent; border-radius: 6px; text-align: left; font-size: 12px; }
 .menu-panel button:hover { background: #f8f6fa; }
 .menu-build { margin: 4px 5px 1px; padding-top: 8px; border-top: 1px solid #eeeae5; color: #9b9185; font-size: 10px; line-height: 1.3; white-space: nowrap; }
