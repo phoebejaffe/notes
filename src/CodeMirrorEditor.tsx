@@ -3,7 +3,7 @@ import { EditorState } from '@codemirror/state'
 import { defaultKeymap, deleteCharBackwardStrict, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { findMarkerTagRename, parseMarkdown, renameMatchingTag, type ParsedMarkdown } from './markerEngine'
 
 function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<string, string>) {
@@ -40,6 +40,16 @@ function lineMatchesFilter(parsed: ParsedMarkdown, lineIndex: number, filterTags
   return parsed.ranges.some((range) => selected.has(range.tag) && range.startLine < lineIndex && lineIndex < range.endLine)
 }
 
+function toggleTaskAtSelection(view: EditorView) {
+  const selection = view.state.selection.main
+  const line = view.state.doc.lineAt(selection.from)
+  const match = line.text.match(/^(?:\s*(?:[-*+]|\d+[.)])\s+)?\[([ xX])\]/u)
+  if (!match) return false
+  const from = line.from + match[0].indexOf('[')
+  view.dispatch({ changes: { from, to: from + 3, insert: match[1].toLowerCase() === 'x' ? '[ ]' : '[x]' } })
+  return true
+}
+
 function toggleMarkdownMark(view: EditorView, opening: string, closing: string) {
   const selection = view.state.selection.main
   const selectedText = view.state.sliceDoc(selection.from, selection.to)
@@ -61,7 +71,40 @@ function toggleMarkdownMark(view: EditorView, opening: string, closing: string) 
   return true
 }
 
-function createRangeDecorations(tagColors: Record<string, string>, filterTags: string[]) {
+class TaskCheckboxWidget extends WidgetType {
+  private readonly checked: boolean
+  private readonly from: number
+
+  constructor(checked: boolean, from: number) {
+    super()
+    this.checked = checked
+    this.from = from
+  }
+
+  eq(other: TaskCheckboxWidget) {
+    return this.checked === other.checked
+  }
+
+  toDOM(view: EditorView) {
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = this.checked
+    input.className = 'cm-task-checkbox'
+    input.setAttribute('aria-label', this.checked ? 'Mark task incomplete' : 'Mark task complete')
+    input.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      view.dispatch({ changes: { from: this.from, to: this.from + 3, insert: this.checked ? '[ ]' : '[x]' } })
+    })
+    return input
+  }
+
+  ignoreEvent() {
+    return true
+  }
+}
+
+function createRangeDecorations(tagColors: Record<string, string>, filterTags: string[], sourceMode: boolean) {
   return ViewPlugin.fromClass(class {
   decorations: DecorationSet
 
@@ -97,6 +140,13 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
         const lineInset = rangeClass.includes('cm-marker-line') ? 0 : dayInset + (borderCount ? borderCount * 3 + 12 : 0)
         const lineStyles = [`--tag-border-start:0px`, `--tag-text-inset:${lineInset}px`, `padding-left:${lineInset}px`, customColors].filter(Boolean).join(';')
         if (className) ranges.push(Decoration.line({ attributes: { class: className, style: lineStyles } }).range(line.from))
+        if (!sourceMode) {
+          const taskMatch = line.text.match(/^(?:\s*(?:[-*+]|\d+[.)])\s+)?\[([ xX])\]/u)
+          if (taskMatch && taskMatch.index !== undefined) {
+            const checkboxStart = line.from + taskMatch.index + taskMatch[0].indexOf('[')
+            ranges.push(Decoration.replace({ widget: new TaskCheckboxWidget(taskMatch[1].toLowerCase() === 'x', checkboxStart) }).range(checkboxStart, checkboxStart + 3))
+          }
+        }
         if (rangeClass === 'cm-marker-line') {
           const markerStart = line.text.indexOf('<!--')
           const markerEnd = line.text.lastIndexOf('-->')
@@ -167,10 +217,11 @@ interface CodeMirrorEditorProps {
   restoreSelection?: { from: number; to: number }
   hideTagSyntax?: boolean
   strikethroughShortcut?: string
+  taskToggleShortcut?: string
   filterTags?: string[]
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', filterTags = [] }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [] }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -200,13 +251,14 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
             { key: 'Mod-i', run: (view) => toggleMarkdownMark(view, '*', '*') },
             { key: 'Mod-u', run: (view) => toggleMarkdownMark(view, '<u>', '</u>') },
             { key: strikethroughShortcut, run: (view) => toggleMarkdownMark(view, '~~', '~~') },
+            { key: taskToggleShortcut, run: toggleTaskAtSelection },
             ...defaultKeymap,
             ...historyKeymap,
             indentWithTab,
           ]),
           EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
-          createRangeDecorations(tagColors, filterTags),
+          createRangeDecorations(tagColors, filterTags, sourceMode),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               let next = update.state.doc.toString()
@@ -242,7 +294,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       view.focus()
     }
     return () => { viewRef.current = null; view.destroy() }
-  }, [filterTags, focusAtEnd, hideTagSyntax, initialValue, strikethroughShortcut, tagColors])
+  }, [filterTags, focusAtEnd, hideTagSyntax, initialValue, sourceMode, strikethroughShortcut, tagColors, taskToggleShortcut])
 
   const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 4)
   useEffect(() => {

@@ -54,6 +54,7 @@ button { cursor: pointer; font: inherit; }
 .cm-scroller { overflow: visible !important; overflow-x: hidden !important; }
 .cm-heading-line { font-size: 1.2em; font-weight: 650; }
 .cm-list-line { padding-left: 5px; }
+.cm-task-checkbox { width: 13px; height: 13px; margin: 0 6px 0 1px; padding: 0; vertical-align: -1px; accent-color: #806790; cursor: pointer; }
 .cm-filter-hidden { display: none !important; }
 .cm-gutters .cm-gutterElement:empty { display: none !important; }
 .cm-strikethrough-dim { opacity: .55; }
