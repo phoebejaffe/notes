@@ -63,6 +63,22 @@ function currentTimestamp() {
   return Date.now()
 }
 
+function recoveryPhraseStorageKey(uid: string) {
+  return `notes-recovery-phrase:${uid}`
+}
+
+function loadStoredRecoveryPhrase(uid: string) {
+  try {
+    return localStorage.getItem(recoveryPhraseStorageKey(uid)) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function storeRecoveryPhrase(uid: string, phrase: string) {
+  localStorage.setItem(recoveryPhraseStorageKey(uid), phrase)
+}
+
 function loadTagColors() {
   try {
     return JSON.parse(localStorage.getItem('notes-tag-colors') ?? '{}') as Record<string, string>
@@ -171,6 +187,28 @@ function App() {
   const streamEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => watchAuth(setFirebaseUser), [])
+
+  useEffect(() => {
+    if (!firebaseUser || !loaded || dataKey) return
+    const storedPhrase = loadStoredRecoveryPhrase(firebaseUser.uid)
+    if (!storedPhrase) return
+    queueMicrotask(() => {
+      setRecoveryPhrase(storedPhrase)
+      setSyncState('working')
+    })
+    void recoverRemoteDataKey(firebaseUser.uid, storedPhrase).then((key) => {
+      if (!key) {
+        setSyncState('idle')
+        return
+      }
+      setDataKey(key)
+      setSyncState('ready')
+      setSyncMessage('Encryption unlocked from this device.')
+    }).catch(() => {
+      setSyncState('idle')
+      setSyncMessage('Enter your recovery phrase to unlock encrypted sync.')
+    })
+  }, [dataKey, firebaseUser, loaded])
 
   useEffect(() => {
     documentsRef.current = documents
@@ -526,6 +564,7 @@ function App() {
         const created = await createRemoteKeyBundle(firebaseUser.uid, recoveryPhrase.trim() ? normalizeRecoveryPhrase(recoveryPhrase) : undefined)
         setDataKey(created.key)
         setRecoveryPhrase(created.recoveryKey)
+        storeRecoveryPhrase(firebaseUser.uid, created.recoveryKey)
         setSyncState('ready')
         setSyncMessage('Save this recovery phrase before closing this window.')
         return
@@ -533,6 +572,7 @@ function App() {
       const key = await recoverRemoteDataKey(firebaseUser.uid, normalizeRecoveryPhrase(recoveryPhrase))
       if (!key) throw new Error('No recovery bundle found')
       setDataKey(key)
+      storeRecoveryPhrase(firebaseUser.uid, normalizeRecoveryPhrase(recoveryPhrase))
       setSyncState('ready')
       setSyncMessage('Encryption unlocked. You can sync this device.')
     } catch (error) {
@@ -568,6 +608,7 @@ function App() {
       await deleteRemoteUserData(firebaseUser.uid)
       setDataKey(undefined)
       setRecoveryPhrase('')
+      localStorage.removeItem(recoveryPhraseStorageKey(firebaseUser.uid))
       setDeleteCloudDataOpen(false)
       setSyncState('ready')
       setSyncMessage('Cloud notes and encryption key deleted. Local notes were kept.')
