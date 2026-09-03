@@ -7,10 +7,10 @@ import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, parseM
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
-import { backupSignature, pickBackupDirectory, writeBackup } from './backup'
+import { backupFolderName, backupSignature, pickBackupDirectory, writeBackup } from './backup'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
-import { createRemoteKeyBundle, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments } from './firebaseSync'
-import { normalizeRecoveryPhrase } from './crypto'
+import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'
+import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
 import type { User } from 'firebase/auth'
 import './App.css'
 
@@ -57,6 +57,10 @@ const BUILTIN_SHORTCUTS = [
 function defaultTagColor(tag: string) {
   const hash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % DEFAULT_TAG_COLORS.length
   return DEFAULT_TAG_COLORS[hash]
+}
+
+function currentTimestamp() {
+  return Date.now()
 }
 
 function loadTagColors() {
@@ -159,14 +163,27 @@ function App() {
   const [dataKey, setDataKey] = useState<CryptoKey>()
   const [syncState, setSyncState] = useState<'idle' | 'working' | 'ready' | 'error'>('idle')
   const [syncMessage, setSyncMessage] = useState('')
+  const [deleteCloudDataOpen, setDeleteCloudDataOpen] = useState(false)
+  const [syncConflicts, setSyncConflicts] = useState<SyncConflict[]>([])
+  const documentUpdatedAtRef = useRef<Record<string, number>>({})
+  const documentsRef = useRef<Record<string, string>>({})
+  const remoteUpdateRef = useRef(false)
   const streamEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => watchAuth(setFirebaseUser), [])
 
   useEffect(() => {
+    documentsRef.current = documents
+  }, [documents])
+
+  useEffect(() => {
     listDailyDocuments().then((stored) => {
       const savedDocuments = Object.fromEntries(stored.map((document) => [document.day, document.markdown]))
-      if (!stored.length) savedDocuments[today] = SAMPLE
+      documentUpdatedAtRef.current = Object.fromEntries(stored.map((document) => [document.day, document.updatedAt]))
+      if (!stored.length) {
+        savedDocuments[today] = SAMPLE
+        documentUpdatedAtRef.current[today] = Date.now()
+      }
       setDocuments(savedDocuments)
       setLoaded(true)
     }).catch(() => setLoaded(true))
@@ -361,10 +378,53 @@ function App() {
     if (!loaded) return
     const timer = window.setTimeout(() => {
       setSaveState('saving')
-      Promise.all(Object.entries(documents).filter(([, markdown]) => markdown).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() }))).then(() => setSaveState('saved')).catch(() => setSaveState('saved'))
+      Promise.all(Object.entries(documents).filter(([, markdown]) => markdown).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: documentUpdatedAtRef.current[day] ?? Date.now() }))).then(() => setSaveState('saved')).catch(() => setSaveState('saved'))
     }, 350)
     return () => window.clearTimeout(timer)
   }, [documents, loaded])
+
+  useEffect(() => {
+    if (!loaded || !firebaseUser || !dataKey) return
+    return watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => {
+      const conflicts = remoteDocuments.flatMap((remote) => {
+        const localMarkdown = documentsRef.current[remote.day] ?? ''
+        return localMarkdown && remote.markdown && localMarkdown !== remote.markdown ? [{ day: remote.day, local: { day: remote.day, markdown: localMarkdown, updatedAt: documentUpdatedAtRef.current[remote.day] ?? 0 }, remote }] : []
+      })
+      const updates = remoteDocuments.filter((document) => !conflicts.some((conflict) => conflict.day === document.day) && document.updatedAt > (documentUpdatedAtRef.current[document.day] ?? 0))
+      if (conflicts.length) setSyncConflicts((current) => [...current.filter((conflict) => !conflicts.some((next) => next.day === conflict.day)), ...conflicts])
+      if (!updates.length) {
+        if (conflicts.length) setSyncMessage(`${conflicts.length} day${conflicts.length === 1 ? '' : 's'} need conflict resolution.`)
+        return
+      }
+      remoteUpdateRef.current = true
+      updates.forEach((document) => { documentUpdatedAtRef.current[document.day] = document.updatedAt })
+      setDocuments((current) => ({ ...current, ...Object.fromEntries(updates.map((document) => [document.day, document.markdown])) }))
+      setSyncState('ready')
+      setSyncMessage(conflicts.length ? `${conflicts.length} day${conflicts.length === 1 ? '' : 's'} need conflict resolution.` : 'Cloud changes received.')
+    }, (error) => {
+      setSyncState('error')
+      setSyncMessage(error.message || 'Realtime sync failed.')
+    })
+  }, [dataKey, firebaseUser, loaded])
+
+  useEffect(() => {
+    if (!loaded || !firebaseUser || !dataKey) return
+    if (remoteUpdateRef.current) {
+      remoteUpdateRef.current = false
+      return
+    }
+    const timer = window.setTimeout(() => {
+      const localDocuments = Object.entries(documents).filter(([, markdown]) => markdown).map(([day, markdown]) => ({ day, markdown, updatedAt: documentUpdatedAtRef.current[day] ?? Date.now() }))
+      void Promise.all(localDocuments.map((document) => uploadEncryptedDocument(firebaseUser.uid, document, dataKey))).then(() => {
+        setSyncState('ready')
+        setSyncMessage('Changes synced.')
+      }).catch((error: unknown) => {
+        setSyncState('error')
+        setSyncMessage(error instanceof Error ? error.message : 'Realtime sync failed.')
+      })
+    }, 600)
+    return () => window.clearTimeout(timer)
+  }, [dataKey, documents, firebaseUser, loaded])
 
   const performBackup = useCallback(async () => {
     const directory = backupDirectoryRef.current
@@ -375,9 +435,9 @@ function App() {
     setBackupState('saving')
     try {
       if (isTauriEnvironment()) {
-        await invoke('write_backup', { root: preferences.backupFolder, folderName: new Date().toISOString().slice(0, 10), documents: dailyDocuments.map(({ day, markdown }) => ({ day, markdown })) })
+        await invoke('write_backup', { root: preferences.backupFolder, folderName: backupFolderName(preferences.backupFrequency), documents: dailyDocuments.map(({ day, markdown }) => ({ day, markdown })) })
       } else if (directory) {
-        await writeBackup(directory, dailyDocuments)
+        await writeBackup(directory, dailyDocuments, preferences.backupFrequency)
       }
       lastBackupSignatureRef.current = signature
       setBackupState('saved')
@@ -387,12 +447,10 @@ function App() {
   }, [documents, loaded, preferences.backupFolder, preferences.backupFrequency])
 
   useEffect(() => {
-    const intervals = { hourly: 60 * 60 * 1000, daily: 24 * 60 * 60 * 1000, weekly: 7 * 24 * 60 * 60 * 1000 }
-    const interval = preferences.backupFrequency === 'off' ? undefined : intervals[preferences.backupFrequency]
-    if (!interval) return
-    const timer = window.setInterval(() => { void performBackup() }, interval)
-    return () => window.clearInterval(timer)
-  }, [performBackup, preferences.backupFrequency])
+    if (!loaded) return
+    const timer = window.setTimeout(() => { void performBackup() }, 400)
+    return () => window.clearTimeout(timer)
+  }, [documents, loaded, performBackup])
 
   async function chooseBackupFolder() {
     try {
@@ -430,16 +488,32 @@ function App() {
   }
 
   function updateSource(day: string, markdown: string) {
+    documentUpdatedAtRef.current[day] = currentTimestamp()
     setDocuments((current) => ({ ...current, [day]: markdown }))
   }
 
+  async function generateRecoveryPhrase() {
+    const phrase = createRecoveryPhrase()
+    setRecoveryPhrase(phrase)
+    try {
+      await navigator.clipboard.writeText(phrase)
+      setSyncMessage('Random recovery phrase copied to the clipboard.')
+    } catch {
+      setSyncMessage('Phrase generated, but it could not be copied automatically.')
+    }
+  }
+
   async function signIn() {
+    setSyncState('working')
+    setSyncMessage('Opening Google sign-in in your browser…')
     try {
       await signInWithGoogle()
+      setSyncState('ready')
       setSyncMessage('Signed in with Google.')
-    } catch {
+    } catch (error) {
       setSyncState('error')
-      setSyncMessage('Google sign-in failed.')
+      const details = typeof error === 'object' && error !== null && 'message' in error ? String(error.message) : String(error)
+      setSyncMessage(details || 'Google sign-in failed.')
     }
   }
 
@@ -449,7 +523,7 @@ function App() {
     try {
       const existingBundle = await loadRemoteKeyBundle(firebaseUser.uid)
       if (!existingBundle) {
-        const created = await createRemoteKeyBundle(firebaseUser.uid)
+        const created = await createRemoteKeyBundle(firebaseUser.uid, recoveryPhrase.trim() ? normalizeRecoveryPhrase(recoveryPhrase) : undefined)
         setDataKey(created.key)
         setRecoveryPhrase(created.recoveryKey)
         setSyncState('ready')
@@ -461,9 +535,11 @@ function App() {
       setDataKey(key)
       setSyncState('ready')
       setSyncMessage('Encryption unlocked. You can sync this device.')
-    } catch {
+    } catch (error) {
       setSyncState('error')
-      setSyncMessage('Could not unlock encryption. Check the recovery phrase.')
+      const errorName = typeof error === 'object' && error !== null && 'name' in error ? String(error.name) : ''
+      const details = typeof error === 'object' && error !== null && 'message' in error ? String(error.message) : String(error)
+      setSyncMessage(errorName === 'OperationError' ? 'This recovery phrase does not match the encryption key for this Google account. Use the original phrase; generating a new one cannot unlock existing data.' : details || 'Could not unlock encryption. Check the recovery phrase.')
     }
   }
 
@@ -473,13 +549,50 @@ function App() {
     try {
       await Promise.all(Object.entries(documents).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() })))
       const localDocuments = await listDailyDocuments()
-      const merged = await syncDocuments(firebaseUser.uid, localDocuments, dataKey)
-      setDocuments(Object.fromEntries(merged.map((document) => [document.day, document.markdown])))
+      const result = await syncDocuments(firebaseUser.uid, localDocuments, dataKey)
+      result.documents.forEach((document) => { documentUpdatedAtRef.current[document.day] = document.updatedAt })
+      setDocuments(Object.fromEntries(result.documents.map((document) => [document.day, document.markdown])))
+      setSyncConflicts(result.conflicts)
       setSyncState('ready')
-      setSyncMessage(`Synced ${merged.length} day${merged.length === 1 ? '' : 's'}.`)
+      setSyncMessage(result.conflicts.length ? `${result.conflicts.length} day${result.conflicts.length === 1 ? '' : 's'} need conflict resolution.` : `Synced ${result.documents.length} day${result.documents.length === 1 ? '' : 's'}.`)
     } catch {
       setSyncState('error')
       setSyncMessage('Sync failed. Check your Firebase setup and recovery phrase.')
+    }
+  }
+
+  async function deleteCloudData() {
+    if (!firebaseUser) return
+    setSyncState('working')
+    try {
+      await deleteRemoteUserData(firebaseUser.uid)
+      setDataKey(undefined)
+      setRecoveryPhrase('')
+      setDeleteCloudDataOpen(false)
+      setSyncState('ready')
+      setSyncMessage('Cloud notes and encryption key deleted. Local notes were kept.')
+    } catch (error) {
+      setSyncState('error')
+      const details = typeof error === 'object' && error !== null && 'message' in error ? String(error.message) : String(error)
+      setSyncMessage(details || 'Could not delete cloud data.')
+    }
+  }
+
+  async function resolveConflict(conflict: SyncConflict, choice: 'local' | 'remote' | 'append') {
+    if (!firebaseUser || !dataKey) return
+    const markdown = choice === 'local' ? conflict.local.markdown : choice === 'remote' ? conflict.remote.markdown : `${conflict.remote.markdown}${conflict.remote.markdown.endsWith('\\n') ? '' : '\\n'}${conflict.local.markdown}`
+    const document = { day: conflict.day, markdown, updatedAt: currentTimestamp() }
+    setSyncState('working')
+    try {
+      await uploadEncryptedDocument(firebaseUser.uid, document, dataKey)
+      documentUpdatedAtRef.current[document.day] = document.updatedAt
+      setDocuments((current) => ({ ...current, [document.day]: document.markdown }))
+      setSyncConflicts((current) => current.filter((currentConflict) => currentConflict.day !== conflict.day))
+      setSyncState('ready')
+      setSyncMessage('Conflict resolved and synced.')
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage(error instanceof Error ? error.message : 'Could not sync the conflict resolution.')
     }
   }
 
@@ -667,20 +780,21 @@ function App() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Cloud sync</legend>
-            {!firebaseConfigured ? <p className="settings-help">Add the VITE_FIREBASE_* values from FIREBASE_SETUP.md to enable Google sign-in and encrypted sync.</p> : !firebaseUser ? <button className="settings-action" type="button" onClick={() => { void signIn() }}>Sign in with Google</button> : <>
+            {!firebaseConfigured ? <p className="settings-help">Add the VITE_FIREBASE_* values from FIREBASE_SETUP.md to enable Google sign-in and encrypted sync.</p> : !firebaseUser ? <><button className="settings-action" type="button" onClick={() => { void signIn() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Opening Google…' : 'Sign in with Google'}</button>{syncMessage && <p className="settings-help sync-error">{syncMessage}</p>}</> : <>
               <p className="settings-help">Signed in as {firebaseUser.email || firebaseUser.displayName || 'Google user'}.</p>
-              {!dataKey && <><label className="settings-row"><span className="settings-label">Recovery phrase</span><input value={recoveryPhrase} onChange={(event) => setRecoveryPhrase(event.target.value)} placeholder="12 words" autoComplete="off" /></label><button className="settings-action" type="button" onClick={() => { void prepareSync() }}>Unlock encrypted sync</button></>}
+              {!dataKey && <><div className="settings-row"><span className="settings-label">Recovery phrase <button className="settings-link" type="button" onClick={() => { void generateRecoveryPhrase() }}>Generate random phrase</button></span><input value={recoveryPhrase} onChange={(event) => setRecoveryPhrase(event.target.value)} placeholder="12 words" autoComplete="off" /></div><button className="settings-action" type="button" onClick={() => { void prepareSync() }}>Unlock encrypted sync</button></>}
               {recoveryPhrase && <p className="settings-help">Write down the displayed recovery phrase and keep it private. It cannot be reset.</p>}
               {dataKey && <button className="settings-action" type="button" onClick={() => { void syncNow() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Syncing…' : 'Sync now'}</button>}
               {syncMessage && <p className="settings-help">{syncMessage}</p>}
-              <button className="settings-action" type="button" onClick={() => { void signOutOfGoogle(); setDataKey(undefined); setRecoveryPhrase(''); setSyncState('idle'); setSyncMessage('') }}>Sign out</button>
+              {!deleteCloudDataOpen ? <button className="settings-danger-action" type="button" onClick={() => setDeleteCloudDataOpen(true)}>Delete cloud data</button> : <div className="settings-danger-confirm"><strong>Delete all cloud notes and the encryption key?</strong><p>This cannot be undone. Your local notes will be kept, but they will no longer match the deleted cloud key.</p><div className="settings-danger-actions"><button className="settings-action" type="button" onClick={() => setDeleteCloudDataOpen(false)}>Cancel</button><button className="settings-danger-action" type="button" onClick={() => { void deleteCloudData() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Deleting…' : 'Permanently delete'}</button></div></div>}
+              <button className="settings-action" type="button" onClick={() => { void signOutOfGoogle(); setDataKey(undefined); setRecoveryPhrase(''); setSyncState('idle'); setSyncMessage(''); setDeleteCloudDataOpen(false) }}>Sign out</button>
             </>}
           </fieldset>
 
           <fieldset className="settings-group"><legend>Data &amp; backups</legend>
             <label className="settings-row"><span className="settings-label">Automatic backup</span><select value={preferences.backupFrequency} onChange={(event) => setPreferences((current) => ({ ...current, backupFrequency: event.target.value as Preferences['backupFrequency'] }))}><option value="off">Off</option><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
             {preferences.backupFrequency !== 'off' && <label className="settings-row"><span className="settings-label">Backup folder</span><button className="settings-action" type="button" onClick={() => { void chooseBackupFolder() }}>{preferences.backupFolder || 'Choose folder'}</button></label>}
-            {preferences.backupFrequency !== 'off' && <p className="settings-help">Backups run only after changes, in date-named folders, with empty notes omitted.{backupState === 'saved' ? ' Last backup saved.' : backupState === 'error' ? ' Backup failed.' : ''}</p>}
+            {preferences.backupFrequency !== 'off' && <p className="settings-help">Backups save after every change in the current {preferences.backupFrequency === 'weekly' ? 'week' : preferences.backupFrequency === 'hourly' ? 'hour' : 'day'} folder; previous periods are kept.{backupState === 'saved' ? ' Last backup saved.' : backupState === 'error' ? ' Backup failed.' : ''}</p>}
           </fieldset>
 
           <fieldset className="settings-group"><legend>Capture mode</legend>
@@ -702,6 +816,14 @@ function App() {
             <p className="settings-help">Rename tags and choose their colors from the known-tags manager.</p>
             <label className="settings-row"><span className="settings-label">Hide tag syntax</span><input type="checkbox" checked={preferences.hideTagSyntax} onChange={(event) => setPreferences((current) => ({ ...current, hideTagSyntax: event.target.checked }))} /></label>
           </fieldset>
+        </section>
+      </div>}
+
+      {syncConflicts.length > 0 && <div className="modal-backdrop" role="presentation">
+        <section className="settings-modal sync-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="sync-conflict-title">
+          <div className="modal-heading"><div><span className="eyebrow">Cloud sync</span><h2 id="sync-conflict-title">Choose which notes to keep</h2></div></div>
+          <p className="settings-help">These days were edited both locally and on the server. Choose how to combine each one.</p>
+          {syncConflicts.map((conflict) => <div className="sync-conflict" key={conflict.day}><strong>{formatLogicalDay(conflict.day, preferences.dateFormat)}</strong><div className="sync-conflict-preview"><div><span>On this device</span><p>{conflict.local.markdown || '(empty)'}</p></div><div><span>On server</span><p>{conflict.remote.markdown || '(empty)'}</p></div></div><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'local') }}>Keep local</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'remote') }}>Keep server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'append') }}>Append local to server</button></div></div>)}
         </section>
       </div>}
 

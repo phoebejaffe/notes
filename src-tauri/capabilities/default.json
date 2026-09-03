@@ -8,6 +8,9 @@
   "permissions": [
     "core:default",
     "dialog:default",
+    "oauth:allow-start",
+    "oauth:allow-cancel",
+    "shell:allow-open",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered"

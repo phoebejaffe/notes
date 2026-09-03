@@ -1,3 +1,4 @@
+import type { BackupFrequency } from './preferences'
 import type { DailyDocument } from './storage'
 
 export interface BackupDirectoryPicker {
@@ -8,8 +9,26 @@ export function backupSignature(documents: DailyDocument[]) {
   return JSON.stringify(documents.filter((document) => document.markdown).sort((left, right) => left.day.localeCompare(right.day)).map(({ day, markdown }) => ({ day, markdown })))
 }
 
-export async function writeBackup(directory: FileSystemDirectoryHandle, documents: DailyDocument[], backupDate = new Date()) {
-  const folderName = backupDate.toISOString().slice(0, 10)
+function localDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function startOfWeek(date: Date) {
+  const monday = new Date(date)
+  const day = monday.getDay()
+  monday.setDate(monday.getDate() - (day === 0 ? 6 : day - 1))
+  return monday
+}
+
+export function backupFolderName(frequency: Exclude<BackupFrequency, 'off'>, date = new Date()) {
+  const day = localDateKey(date)
+  if (frequency === 'hourly') return `${day}-${String(date.getHours()).padStart(2, '0')}`
+  if (frequency === 'weekly') return `week-${localDateKey(startOfWeek(date))}`
+  return day
+}
+
+export async function writeBackup(directory: FileSystemDirectoryHandle, documents: DailyDocument[], frequency: Exclude<BackupFrequency, 'off'>, backupDate = new Date()) {
+  const folderName = backupFolderName(frequency, backupDate)
   const backupFolder = await directory.getDirectoryHandle(folderName, { create: true })
   const written = []
   for (const document of documents.filter((item) => item.markdown)) {

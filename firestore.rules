@@ -11,7 +11,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/documents/{day} {
-      allow read, write: if signedInAs(userId)
+      allow read: if signedInAs(userId);
+      allow create, update, delete: if signedInAs(userId)
         && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
     }
 

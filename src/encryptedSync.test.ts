@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createKeyBundle, createRecoveryKeyBackup, decryptText, encryptText, readRecoveryKeyBackup, recoverDataKey } from './crypto'
+import { createKeyBundle, createRecoveryKeyBackup, createRecoveryPhrase, decryptText, encryptText, readRecoveryKeyBackup, recoverDataKey } from './crypto'
 import { decryptDailyDocument, encryptDailyDocument } from './encryptedSync'
 
 describe('encrypted sync foundation', () => {
@@ -20,8 +20,9 @@ describe('encrypted sync foundation', () => {
   })
 
   it('creates a validated recovery-key backup', async () => {
-    const { recoveryKey } = await createKeyBundle()
-    expect(readRecoveryKeyBackup(createRecoveryKeyBackup(recoveryKey))).toBe(recoveryKey)
+    const recoveryPhrase = createRecoveryPhrase()
+    expect(recoveryPhrase.split(' ')).toHaveLength(12)
+    expect(readRecoveryKeyBackup(createRecoveryKeyBackup(recoveryPhrase))).toBe(recoveryPhrase)
     expect(() => readRecoveryKeyBackup('not-a-recovery-key')).toThrow()
   })
 })

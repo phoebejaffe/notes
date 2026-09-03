@@ -88,8 +88,8 @@ export function createRecoveryPhrase() {
   return generateMnemonic(wordlist, 128)
 }
 
-export async function createKeyBundle() {
-  const recoveryKey = createRecoveryPhrase()
+export async function createKeyBundle(recoveryKey = createRecoveryPhrase()) {
+  recoveryKey = normalizeRecoveryPhrase(recoveryKey)
   const salt = randomBytes(16)
   const dataKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'])
   const wrappingKey = await deriveWrappingKey(recoveryKey, salt)

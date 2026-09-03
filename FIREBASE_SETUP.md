@@ -27,6 +27,8 @@ VITE_FIREBASE_PROJECT_ID=your-project-id
 VITE_FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
 VITE_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
 VITE_FIREBASE_APP_ID=your-app-id
+VITE_GOOGLE_CLIENT_ID=your-desktop-oauth-client-id.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_SECRET=your-desktop-oauth-client-secret
 ```
 
 Use the exact values from the Firebase console. `.env.local` is ignored by git. Never put a service-account JSON file, private key, or `FIREBASE_ADMIN_*` value in the frontend environment.
@@ -39,6 +41,18 @@ Use the exact values from the Firebase console. `.env.local` is ignored by git. 
 4. Select **Google**.
 5. Enable it.
 6. Choose a project support email and save.
+
+### Desktop OAuth client ID
+
+The Mac app cannot use an embedded Google login popup because Google blocks OAuth sign-in inside native webviews. It uses the system browser and a temporary loopback callback instead.
+
+1. Open **Google Cloud Console > APIs & Services > Credentials** for the same Firebase project.
+2. Click **Create credentials > OAuth client ID**.
+3. Choose **Desktop app** as the application type.
+4. Create the client and copy its client ID.
+5. Put that value in `.env.local` as `VITE_GOOGLE_CLIENT_ID`.
+
+The desktop OAuth client ID is not a private secret. This OAuth client currently also requires its generated client secret for the token exchange, so add `VITE_GOOGLE_CLIENT_SECRET` to your local `.env.local` without sharing it in chat or committing it. This is not a Firebase Admin credential. The app uses an authorization-code flow with PKCE in the system browser and exchanges the code for an access token locally.
 
 ### Authorized domains
 
