@@ -58,8 +58,8 @@ button { cursor: pointer; font: inherit; }
 .cm-heading-line { font-size: 1.2em; font-weight: 650; }
 .cm-list-line { padding-left: 5px; }
 .cm-muted-line { color: #9b9691 !important; white-space: pre-wrap; }
-.cm-muted-marker { font-size: 0; }
-.codemirror-host.source-mode .cm-muted-marker { font-size: inherit; }
+.cm-muted-marker { display: inline-block; width: 0; overflow: visible; color: transparent; font-size: inherit; white-space: nowrap; }
+.codemirror-host.source-mode .cm-muted-marker { display: inline; width: auto; overflow: visible; color: inherit; font-size: inherit; }
 .cm-task-checkbox { width: 13px; height: 13px; margin: 0 6px 0 1px; padding: 0; vertical-align: -1px; accent-color: #806790; cursor: pointer; }
 .cm-filter-hidden { display: none !important; }
 .cm-gutters .cm-gutterElement:empty { display: none !important; }

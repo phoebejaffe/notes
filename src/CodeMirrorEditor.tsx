@@ -49,12 +49,13 @@ function moveToVisibleLine(view: EditorView, direction: -1 | 1, filterTags: stri
   const selection = view.state.selection.main
   const currentLine = view.state.doc.lineAt(selection.head)
   const currentLineIndex = currentLine.number - 1
+  const parsed = parseMarkdown(view.state.doc.toString())
+  if (isMutedLine(currentLine.text) || parsed.ranges.some((range) => range.startLine < currentLineIndex && currentLineIndex < range.endLine)) return false
   const cursorCoords = view.coordsAtPos(selection.head)
   const lineEndCoords = view.coordsAtPos(currentLine.to)
   if (direction < 0 && selection.head !== currentLine.from) return false
   if (direction > 0 && (!cursorCoords || !lineEndCoords || cursorCoords.bottom < lineEndCoords.bottom - 1)) return false
   let targetLineIndex = currentLineIndex + direction
-  const parsed = parseMarkdown(view.state.doc.toString())
   while (targetLineIndex >= 0 && targetLineIndex < parsed.lines.length && !lineIsNavigable(parsed, targetLineIndex, filterTags, hideMutedLines)) targetLineIndex += direction
   if (targetLineIndex === currentLineIndex + direction) return false
   if (targetLineIndex < 0 || targetLineIndex >= parsed.lines.length) return true
@@ -283,7 +284,6 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           syntaxHighlighting(defaultHighlightStyle),
           history(),
           keymap.of([
-            { key: 'ArrowUp', run: (view) => moveToVisibleLine(view, -1, filterTags, hideMutedLines) },
             { key: 'ArrowDown', run: (view) => moveToVisibleLine(view, 1, filterTags, hideMutedLines) },
             { key: 'Mod-/', run: toggleMutedAtSelection },
             { key: 'Backspace', run: deleteCharBackwardStrict },
