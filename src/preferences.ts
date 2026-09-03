@@ -51,6 +51,7 @@ export const defaultPreferences: Preferences = {
     strikethrough: 'Mod-Shift-x',
     taskToggle: 'Mod-Enter',
     toggleMuted: 'Mod-Alt-/',
+    help: 'Mod-Shift-?',
     settings: 'Mod-,',
     dayPrevious: 'Mod-Alt-ArrowUp',
     dayNext: 'Mod-Alt-ArrowDown',

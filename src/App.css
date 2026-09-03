@@ -146,6 +146,10 @@ button { cursor: pointer; font: inherit; }
 .settings-row .shortcut-input { width: 92px; text-align: center; }
 .settings-action { padding: 5px 9px; border: 1px solid #d9d4cb; border-radius: 6px; color: #625b54; background: #faf8f5; font-size: 12px; }
 .settings-action:hover { background: #f1ede8; }
+.shortcut-help-modal { width: min(460px, 100%); }
+.shortcut-help-list { display: grid; }
+.shortcut-help-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 9px 0; border-top: 1px solid #eeeae5; color: #504941; font-size: 13px; }
+.shortcut-help-row kbd { min-width: 72px; padding: 4px 7px; border: 1px solid #d9d4cb; border-radius: 5px; color: #625b54; background: #faf8f5; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
 .settings-help { margin: 4px 0 0; color: #9b9185; font-size: 11px; }
 .shortcut-conflict { border-color: #b84f43 !important; color: #a14c38 !important; }
 .shortcut-error { color: #a14c38; }
@@ -170,6 +174,8 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .cm-tag-chip, .theme-dark .cm-tag-chip.cm-tag-color-0, .theme-dark .cm-tag-chip.cm-tag-color-1, .theme-dark .cm-tag-chip.cm-tag-color-2, .theme-dark .cm-tag-chip.cm-tag-color-3, .theme-dark .cm-tag-chip.cm-tag-color-4, .theme-dark .active-tag-chip { color: #fffaf5 !important; -webkit-text-fill-color: #fffaf5; background: color-mix(in srgb, var(--tag-color, #ded9e2) 42%, #000) !important; }
 .theme-dark .active-tag-chip button { color: #fffaf5; -webkit-text-fill-color: #fffaf5; }
 .theme-dark .menu-panel, .theme-dark .filter-panel, .theme-dark .settings-modal, .theme-dark .tag-modal { border-color: #4d4649; color: #e8e2dc; background: #2a272b; }
+.theme-dark .shortcut-help-row { color: #e8e2dc; border-color: #403b3f; }
+.theme-dark .shortcut-help-row kbd { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
 .theme-dark .filter-option { color: #e8e2dc; }
 .theme-dark .filter-heading { color: #b8aeb0; }
 .theme-dark .filter-option:hover, .theme-dark .filter-clear:hover:not(:disabled) { background: #383338; }

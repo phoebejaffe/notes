@@ -27,6 +27,28 @@ A follow-up thought from later in the day.
 <!-- /therapy -->`
 
 const DEFAULT_TAG_COLORS = ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55']
+const SHORTCUT_LABELS = {
+  search: 'Search',
+  settings: 'Settings',
+  rawEditor: 'Raw Editor',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  jumpToToday: 'Jump to today',
+  exportToday: 'Export today',
+  tagSelection: 'Tag selection',
+  strikethrough: 'Strikethrough',
+  taskToggle: 'Toggle task',
+  toggleMuted: 'Hide muted lines',
+  help: 'Show keyboard shortcuts',
+  dayPrevious: 'Previous day',
+  dayNext: 'Next day',
+} as const
+const BUILTIN_SHORTCUTS = [
+  ['Mod-b', 'Bold'],
+  ['Mod-i', 'Italic'],
+  ['Mod-u', 'Underline'],
+  ['Backspace', 'Delete one character'],
+] as const
 
 function defaultTagColor(tag: string) {
   const hash = [...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % DEFAULT_TAG_COLORS.length
@@ -80,7 +102,7 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const wantsAlt = parts.includes('alt') || parts.includes('option')
   const wantsShift = parts.includes('shift')
   const modifierMatches = wantsMod ? (/mac/i.test(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) : wantsCtrl ? event.ctrlKey && !event.metaKey : !event.ctrlKey && !event.metaKey
-  const keyMatches = event.key.toLowerCase() === key || (key === '/' && event.code === 'Slash')
+  const keyMatches = event.key.toLowerCase() === key || ((key === '/' || key === '?') && event.code === 'Slash')
   return keyMatches && modifierMatches && (wantsAlt ? event.altKey : !event.altKey) && (wantsShift ? event.shiftKey : !event.shiftKey)
 }
 
@@ -100,6 +122,7 @@ function App() {
   const [loaded, setLoaded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
   const [tagToRename, setTagToRename] = useState('')
   const [renamedTag, setRenamedTag] = useState('')
@@ -177,6 +200,12 @@ function App() {
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
+      if (matchesShortcut(event, preferences.shortcuts.help)) {
+        event.preventDefault()
+        setShortcutHelpOpen(true)
+        setMenuOpen(false)
+        return
+      }
       if (matchesShortcut(event, preferences.shortcuts.settings)) {
         event.preventDefault()
         setSettingsOpen(true)
@@ -246,6 +275,7 @@ function App() {
         setSearchOpen(false)
         setFilterOpen(false)
         setSettingsOpen(false)
+        setShortcutHelpOpen(false)
         setTagsOpen(false)
       }
     }
@@ -477,6 +507,7 @@ function App() {
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
+          <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
           <button type="button" onClick={() => { exportAllMarkdown(); setMenuOpen(false) }}>Export all</button>
@@ -492,6 +523,7 @@ function App() {
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
+          <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
           <button type="button" onClick={() => { exportAllMarkdown(); setMenuOpen(false) }}>Export all</button>
@@ -527,6 +559,13 @@ function App() {
         <button type="button" onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
         {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
         <span className="tag-shortcut">⌘T</span>
+      </div>}
+
+      {shortcutHelpOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setShortcutHelpOpen(false) }}>
+        <section className="settings-modal shortcut-help-modal" role="dialog" aria-modal="true" aria-labelledby="shortcut-help-title">
+          <div className="modal-heading"><div><span className="eyebrow">Keyboard</span><h2 id="shortcut-help-title">Keyboard shortcuts</h2></div><button className="modal-close" type="button" aria-label="Close keyboard shortcuts" onClick={() => setShortcutHelpOpen(false)}>×</button></div>
+          <div className="shortcut-help-list">{Object.entries(SHORTCUT_LABELS).map(([name, label]) => <div className="shortcut-help-row" key={name}><span>{label}</span><kbd>{formatShortcut(preferences.shortcuts[name] ?? '')}</kbd></div>)}{BUILTIN_SHORTCUTS.map(([shortcut, label]) => <div className="shortcut-help-row" key={shortcut}><span>{label}</span><kbd>{formatShortcut(shortcut)}</kbd></div>)}</div>
+        </section>
       </div>}
 
       {settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
@@ -565,7 +604,7 @@ function App() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Keyboard shortcuts</legend>
-            {Object.entries({ search: 'Search', settings: 'Settings', rawEditor: 'Raw Editor', zoomIn: 'Zoom in', zoomOut: 'Zoom out', jumpToToday: 'Jump to today', exportToday: 'Export today', tagSelection: 'Tag selection', strikethrough: 'Strikethrough', taskToggle: 'Toggle task', toggleMuted: 'Hide muted lines', dayPrevious: 'Previous day', dayNext: 'Next day' }).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={formatShortcut(preferences.shortcuts[name] ?? '')} onChange={(event) => updateShortcut(name, parseDisplayedShortcut(event.target.value))} aria-label={`${label} shortcut`} /></label>)}
+            {Object.entries(SHORTCUT_LABELS).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={formatShortcut(preferences.shortcuts[name] ?? '')} onChange={(event) => updateShortcut(name, parseDisplayedShortcut(event.target.value))} aria-label={`${label} shortcut`} /></label>)}
             {shortcutConflicts.size > 0 && <p className="settings-help shortcut-error">Each shortcut must be unique.</p>}
           </fieldset>
 
