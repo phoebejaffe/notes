@@ -424,21 +424,13 @@ function App() {
   useEffect(() => {
     if (!loaded || !firebaseUser || !dataKey) return
     return watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => {
-      const conflicts = remoteDocuments.flatMap((remote) => {
-        const localMarkdown = documentsRef.current[remote.day] ?? ''
-        return localMarkdown && remote.markdown && localMarkdown !== remote.markdown ? [{ day: remote.day, local: { day: remote.day, markdown: localMarkdown, updatedAt: documentUpdatedAtRef.current[remote.day] ?? 0 }, remote }] : []
-      })
-      const updates = remoteDocuments.filter((document) => !conflicts.some((conflict) => conflict.day === document.day) && document.updatedAt > (documentUpdatedAtRef.current[document.day] ?? 0))
-      if (conflicts.length) setSyncConflicts((current) => [...current.filter((conflict) => !conflicts.some((next) => next.day === conflict.day)), ...conflicts])
-      if (!updates.length) {
-        if (conflicts.length) setSyncMessage(`${conflicts.length} day${conflicts.length === 1 ? '' : 's'} need conflict resolution.`)
-        return
-      }
+      const updates = remoteDocuments.filter((document) => document.updatedAt > (documentUpdatedAtRef.current[document.day] ?? 0))
+      if (!updates.length) return
       remoteUpdateRef.current = true
       updates.forEach((document) => { documentUpdatedAtRef.current[document.day] = document.updatedAt })
       setDocuments((current) => ({ ...current, ...Object.fromEntries(updates.map((document) => [document.day, document.markdown])) }))
       setSyncState('ready')
-      setSyncMessage(conflicts.length ? `${conflicts.length} day${conflicts.length === 1 ? '' : 's'} need conflict resolution.` : 'Cloud changes received.')
+      setSyncMessage('Cloud changes received.')
     }, (error) => {
       setSyncState('error')
       setSyncMessage(error.message || 'Realtime sync failed.')
