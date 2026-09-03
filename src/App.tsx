@@ -8,6 +8,10 @@ import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
 import { backupSignature, pickBackupDirectory, writeBackup } from './backup'
+import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
+import { createRemoteKeyBundle, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments } from './firebaseSync'
+import { normalizeRecoveryPhrase } from './crypto'
+import type { User } from 'firebase/auth'
 import './App.css'
 
 const SAMPLE = `<!-- therapy 🧠 -->
@@ -72,6 +76,10 @@ function FilterIcon({ active }: { active: boolean }) {
   return <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} aria-hidden="true"><path d="M3 4.6C3 4.03995 3 3.75992 3.10899 3.54601C3.20487 3.35785 3.35785 3.20487 3.54601 3.10899C3.75992 3 4.03995 3 4.6 3H19.4C19.9601 3 20.2401 3 20.454 3.10899C20.6422 3.20487 20.7951 3.35785 20.891 3.54601C21 3.75992 21 4.03995 21 4.6V6.33726C21 6.58185 21 6.70414 20.9724 6.81923C20.9479 6.92127 20.9075 7.01881 20.8526 7.10828C20.7908 7.2092 20.7043 7.29568 20.5314 7.46863L14.4686 13.5314C14.2957 13.7043 14.2092 13.7908 14.1474 13.8917C14.0925 13.9812 14.0521 14.0787 14.0276 14.1808C14 14.2959 14 14.4182 14 14.6627V17L10 21V14.6627C10 14.4182 10 14.2959 9.97237 14.1808C9.94787 14.0787 9.90747 13.9812 9.85264 13.8917C9.7908 13.7908 9.70432 13.7043 9.53137 13.5314L3.46863 7.46863C3.29568 7.29568 3.2092 7.2092 3.14736 7.10828C3.09253 7.01881 3.05213 6.92127 3.02763 6.81923C3 6.70414 3 6.58185 3 6.33726V4.6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 
+function MuteIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M22 10.5V12C22 16.714 22 19.071 20.536 20.536C19.071 22 16.714 22 12 22C7.286 22 4.929 22 3.464 20.536C2 19.071 2 16.714 2 12C2 7.286 2 4.929 3.464 3.464C4.929 2 7.286 2 12 2H13.5" /><path d="M22 2L17 7M17 2L22 7" /></svg>
+}
+
 function downloadMarkdown(markdown: string, filename: string) {
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -92,6 +100,8 @@ async function invokeNative(command: string, args?: Record<string, unknown>) {
 }
 
 interface Selection { day: string; from: number; to: number }
+type EditorCommandKind = 'bold' | 'italic' | 'strikethrough' | 'mute'
+interface EditorCommand { day: string; id: number; kind: EditorCommandKind }
 
 function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const parts = shortcut.toLowerCase().split('-')
@@ -135,7 +145,8 @@ function App() {
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
   const [tagInput, setTagInput] = useState('')
-  const [selection, setSelection] = useState<Selection>({ day: '', from: 0, to: 0 })
+  const [editorCommand, setEditorCommand] = useState<EditorCommand | null>(null)
+  const [selection, setSelection] = useState<Selection>({ day: today, from: 0, to: 0 })
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const backupDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null)
@@ -143,7 +154,14 @@ function App() {
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const [captureFocused, setCaptureFocused] = useState(() => document.hasFocus())
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null)
+  const [recoveryPhrase, setRecoveryPhrase] = useState('')
+  const [dataKey, setDataKey] = useState<CryptoKey>()
+  const [syncState, setSyncState] = useState<'idle' | 'working' | 'ready' | 'error'>('idle')
+  const [syncMessage, setSyncMessage] = useState('')
   const streamEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => watchAuth(setFirebaseUser), [])
 
   useEffect(() => {
     listDailyDocuments().then((stored) => {
@@ -407,8 +425,62 @@ function App() {
     return Object.entries(documents).flatMap(([day, markdown]) => parseMarkdown(markdown).lines.flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [{ day, line: index + 1, text: line }] : []))
   }, [documents, query])
 
+  function runEditorCommand(kind: EditorCommandKind) {
+    setEditorCommand({ day: selection.day || today, id: Date.now(), kind })
+  }
+
   function updateSource(day: string, markdown: string) {
     setDocuments((current) => ({ ...current, [day]: markdown }))
+  }
+
+  async function signIn() {
+    try {
+      await signInWithGoogle()
+      setSyncMessage('Signed in with Google.')
+    } catch {
+      setSyncState('error')
+      setSyncMessage('Google sign-in failed.')
+    }
+  }
+
+  async function prepareSync() {
+    if (!firebaseUser) return
+    setSyncState('working')
+    try {
+      const existingBundle = await loadRemoteKeyBundle(firebaseUser.uid)
+      if (!existingBundle) {
+        const created = await createRemoteKeyBundle(firebaseUser.uid)
+        setDataKey(created.key)
+        setRecoveryPhrase(created.recoveryKey)
+        setSyncState('ready')
+        setSyncMessage('Save this recovery phrase before closing this window.')
+        return
+      }
+      const key = await recoverRemoteDataKey(firebaseUser.uid, normalizeRecoveryPhrase(recoveryPhrase))
+      if (!key) throw new Error('No recovery bundle found')
+      setDataKey(key)
+      setSyncState('ready')
+      setSyncMessage('Encryption unlocked. You can sync this device.')
+    } catch {
+      setSyncState('error')
+      setSyncMessage('Could not unlock encryption. Check the recovery phrase.')
+    }
+  }
+
+  async function syncNow() {
+    if (!firebaseUser || !dataKey || !loaded) return
+    setSyncState('working')
+    try {
+      await Promise.all(Object.entries(documents).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() })))
+      const localDocuments = await listDailyDocuments()
+      const merged = await syncDocuments(firebaseUser.uid, localDocuments, dataKey)
+      setDocuments(Object.fromEntries(merged.map((document) => [document.day, document.markdown])))
+      setSyncState('ready')
+      setSyncMessage(`Synced ${merged.length} day${merged.length === 1 ? '' : 's'}.`)
+    } catch {
+      setSyncState('error')
+      setSyncMessage('Sync failed. Check your Firebase setup and recovery phrase.')
+    }
   }
 
   function applyTag() {
@@ -543,7 +615,7 @@ function App() {
           return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -552,11 +624,17 @@ function App() {
         <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
       </section>
 
-      {!sourceMode && selection.day && (tagBarOpen || selection.from !== selection.to || currentTags.length > 0) && <div className="tag-bar" role="dialog" aria-label="Tags at cursor or selection">
+      {!sourceMode && loaded && <div className="tag-bar" role="toolbar" aria-label="Formatting and tags">
+        <div className="tag-format-actions">
+          <button className="tag-format-button" type="button" aria-label="Bold" title="Bold" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('bold')}><strong>B</strong></button>
+          <button className="tag-format-button" type="button" aria-label="Italic" title="Italic" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('italic')}><em>I</em></button>
+          <button className="tag-format-button" type="button" aria-label="Strikethrough" title="Strikethrough" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('strikethrough')}><span className="strikethrough-label">S</span></button>
+          <button className="tag-format-button" type="button" aria-label="Mute or unmute lines" title="Mute or unmute lines" onMouseDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('mute')}><MuteIcon /></button>
+        </div>
         <div className="active-tag-chips">{currentTags.map((tag) => <span className="active-tag-chip" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeSelectedTag(tag)}>×</button></span>)}</div>
-        <span className="popover-label">Tag lines</span>
-        <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="therapy, 🧠, or project" aria-label="New tag" />
-        <button type="button" onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
+        <span className="popover-label">Tag</span>
+        <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" />
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
         {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
         <span className="tag-shortcut">⌘T</span>
       </div>}
@@ -586,6 +664,17 @@ function App() {
           <fieldset className="settings-group"><legend>Appearance</legend>
             <label className="settings-row"><span className="settings-label">Dark/light mode</span><select value={preferences.theme} onChange={(event) => setPreferences((current) => ({ ...current, theme: event.target.value === 'dark' ? 'dark' : 'light' }))}><option value="light">Light</option><option value="dark">Dark</option></select></label>
             <label className="settings-row"><span className="settings-label">Compact spacing</span><input type="checkbox" checked={preferences.compactSpacing} onChange={(event) => setPreferences((current) => ({ ...current, compactSpacing: event.target.checked }))} /></label>
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Cloud sync</legend>
+            {!firebaseConfigured ? <p className="settings-help">Add the VITE_FIREBASE_* values from FIREBASE_SETUP.md to enable Google sign-in and encrypted sync.</p> : !firebaseUser ? <button className="settings-action" type="button" onClick={() => { void signIn() }}>Sign in with Google</button> : <>
+              <p className="settings-help">Signed in as {firebaseUser.email || firebaseUser.displayName || 'Google user'}.</p>
+              {!dataKey && <><label className="settings-row"><span className="settings-label">Recovery phrase</span><input value={recoveryPhrase} onChange={(event) => setRecoveryPhrase(event.target.value)} placeholder="12 words" autoComplete="off" /></label><button className="settings-action" type="button" onClick={() => { void prepareSync() }}>Unlock encrypted sync</button></>}
+              {recoveryPhrase && <p className="settings-help">Write down the displayed recovery phrase and keep it private. It cannot be reset.</p>}
+              {dataKey && <button className="settings-action" type="button" onClick={() => { void syncNow() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Syncing…' : 'Sync now'}</button>}
+              {syncMessage && <p className="settings-help">{syncMessage}</p>}
+              <button className="settings-action" type="button" onClick={() => { void signOutOfGoogle(); setDataKey(undefined); setRecoveryPhrase(''); setSyncState('idle'); setSyncMessage('') }}>Sign out</button>
+            </>}
           </fieldset>
 
           <fieldset className="settings-group"><legend>Data &amp; backups</legend>

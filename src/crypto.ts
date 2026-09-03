@@ -1,3 +1,6 @@
+import { generateMnemonic, mnemonicToSeedSync } from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english.js'
+
 export interface EncryptedEnvelope {
   version: 1
   algorithm: 'AES-GCM-256'
@@ -48,7 +51,7 @@ function asBufferSource(bytes: Uint8Array): BufferSource {
 }
 
 async function deriveWrappingKey(recoveryKey: string, salt: Uint8Array) {
-  const material = await crypto.subtle.importKey('raw', encoder.encode(recoveryKey), 'PBKDF2', false, ['deriveKey'])
+  const material = await crypto.subtle.importKey('raw', encoder.encode(normalizeRecoveryPhrase(recoveryKey)), 'PBKDF2', false, ['deriveKey'])
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: asBufferSource(salt), iterations: iterationCount, hash: 'SHA-256' },
     material,
@@ -77,8 +80,16 @@ async function decryptBytes(envelope: EncryptedEnvelope, key: CryptoKey) {
   return new Uint8Array(plaintext)
 }
 
+export function normalizeRecoveryPhrase(phrase: string) {
+  return phrase.trim().toLowerCase().split(/\s+/u).join(' ')
+}
+
+export function createRecoveryPhrase() {
+  return generateMnemonic(wordlist, 128)
+}
+
 export async function createKeyBundle() {
-  const recoveryKey = toBase64Url(randomBytes(32))
+  const recoveryKey = createRecoveryPhrase()
   const salt = randomBytes(16)
   const dataKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'])
   const wrappingKey = await deriveWrappingKey(recoveryKey, salt)
@@ -103,13 +114,18 @@ export async function decryptText(envelope: EncryptedEnvelope, key: CryptoKey) {
 }
 
 export function createRecoveryKeyBackup(recoveryKey: string) {
-  return `notes-recovery-v1:${recoveryKey}`
+  return `notes-recovery-v2:${normalizeRecoveryPhrase(recoveryKey)}`
 }
 
 export function readRecoveryKeyBackup(backup: string) {
-  const prefix = 'notes-recovery-v1:'
+  const prefix = 'notes-recovery-v2:'
   if (!backup.startsWith(prefix)) throw new Error('Unsupported recovery key backup')
-  const recoveryKey = backup.slice(prefix.length)
-  if (!/^[A-Za-z0-9_-]{43}$/u.test(recoveryKey)) throw new Error('Invalid recovery key backup')
+  const recoveryKey = normalizeRecoveryPhrase(backup.slice(prefix.length))
+  if (recoveryKey.split(' ').length !== 12) throw new Error('Invalid recovery phrase backup')
+  try {
+    mnemonicToSeedSync(recoveryKey)
+  } catch {
+    throw new Error('Invalid recovery phrase backup')
+  }
   return recoveryKey
 }

@@ -9,7 +9,7 @@ if ('serviceWorker' in navigator) {
       void navigator.serviceWorker.getRegistrations().then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
       void caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith('notes-shell-')).map((key) => caches.delete(key))))
     } else {
-      void navigator.serviceWorker.register('/sw.js')
+      void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`)
     }
   })
 }
