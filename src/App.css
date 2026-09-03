@@ -8,6 +8,7 @@
 .app-shell { width: min(980px, 100%); margin: 0 auto; padding: 88px 16px 64px; background: #fff; }
 .topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 0; background: transparent; pointer-events: none; }
 .topbar-left, .topbar-right, .topbar > .filter-panel { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
+.topbar button, .topbar .menu-panel { pointer-events: auto; }
 .capture-menu { position: fixed; z-index: 14; top: 2px; right: 2px; display: flex; align-items: center; gap: 8px; }
 .capture-menu .menu-panel { top: 42px; right: 0; left: auto; }
 .shortcut-hint { display: block; padding: 8px 11px; color: #9b9185; font-size: 10px; white-space: nowrap; }
@@ -19,6 +20,7 @@ button { cursor: pointer; font: inherit; }
 .topbar .menu-panel { right: 0; left: auto; }
 .menu-panel button { padding: 9px 11px; color: #504941; border: 0; background: transparent; border-radius: 6px; text-align: left; font-size: 12px; }
 .menu-panel button:hover { background: #f8f6fa; }
+.menu-build { margin: 4px 5px 1px; padding-top: 8px; border-top: 1px solid #eeeae5; color: #9b9185; font-size: 10px; line-height: 1.3; white-space: nowrap; }
 .filter-button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
 .filter-button svg { display: block; width: 18px; height: 18px; }
 .filter-panel { position: absolute; z-index: 6; top: 56px; right: 44px; display: flex; flex-direction: column; min-width: 190px; max-height: min(360px, calc(100vh - 80px)); overflow-y: auto; padding: 6px; border: 1px solid #d9d4cb; border-radius: 10px; background: #fffdf9; box-shadow: 0 12px 30px #392c1f22; }
@@ -207,6 +209,7 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .filter-clear { border-color: #403b3f; color: #cbbbd0; }
 .theme-dark .menu-panel button, .theme-dark .settings-row, .theme-dark .color-row, .theme-dark .icon-button, .theme-dark .search-button { color: #e8e2dc; }
 .theme-dark .menu-panel button:hover, .theme-dark .settings-action:hover { background: #383338; }
+.theme-dark .menu-build { border-color: #403b3f; color: #b8aeb0; }
 .theme-dark .icon-button:hover, .theme-dark .icon-button[aria-expanded="true"], .theme-dark .search-button:hover, .theme-dark .search-button[aria-expanded="true"] { background: #141215; }
 .theme-dark .search-panel, .theme-dark .settings-row select, .theme-dark .settings-row input[type="time"], .theme-dark .shortcut-input, .theme-dark .settings-action { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
 .theme-dark .search-panel input, .theme-dark .tag-bar input { color: #f5f1ed; }
@@ -224,3 +227,4 @@ button { cursor: pointer; font: inherit; }
 .app-footer { display: flex; justify-content: space-between; padding-top: 18px; color: #988f86; font-size: 11px; }
 .loading-screen { display: grid; min-height: 100vh; place-items: center; color: #817970; font: 14px Georgia, serif; }
 @media (max-width: 700px) { .app-shell { padding: 78px 12px 24px; } .topbar { padding-inline: 12px; } .app-footer { gap: 8px; flex-direction: column; } .tag-bar { justify-content: stretch; } .tag-bar input { min-width: 0; flex: 1; } }
+@media (pointer: coarse) { input, select, textarea, button { touch-action: manipulation; } input, select, textarea { font-size: 16px; } }

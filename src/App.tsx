@@ -246,6 +246,13 @@ function App() {
     return new Set(values.filter((shortcut, index) => values.indexOf(shortcut) !== index))
   }, [preferences.shortcuts])
   const oldestDocumentDay = Object.keys(documents).sort()[0] ?? today
+  const buildTimeLabel = useMemo(() => {
+    const date = new Date(__BUILD_TIME__)
+    if (Number.isNaN(date.getTime())) return `Build time: ${__BUILD_TIME__}`
+    const formattedDate = `${date.getMonth() + 1}/${date.getDate()}/${String(date.getFullYear()).slice(-2)}`
+    const formattedTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date)
+    return `Build time: ${formattedDate} at ${formattedTime}`
+  }, [])
 
   useEffect(() => {
     if (!loaded) return
@@ -758,6 +765,7 @@ function App() {
           <button type="button" onClick={() => { exportAllMarkdown(); setMenuOpen(false) }}>Export all</button>
           <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
+          <p className="menu-build">{buildTimeLabel}</p>
         </nav>}
         {filterOpen && <div className="filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </header>}
@@ -776,6 +784,7 @@ function App() {
           <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
           <span className="shortcut-hint">Ctrl⌥N to show or hide</span>
+          <p className="menu-build">{buildTimeLabel}</p>
         </nav>}
         {filterOpen && <div className="filter-panel capture-filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </div>}
