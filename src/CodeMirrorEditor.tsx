@@ -257,7 +257,7 @@ interface CodeMirrorEditorProps {
   taskToggleShortcut?: string
   filterTags?: string[]
   hideMutedLines?: boolean
-  commandRequest?: { id: number; kind: 'bold' | 'italic' | 'strikethrough' | 'mute' }
+  commandRequest?: { id: number; kind: 'bold' | 'italic' | 'strikethrough' | 'mute'; selection: { from: number; to: number } }
 }
 
 export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [], hideMutedLines = false, commandRequest }: CodeMirrorEditorProps) {
@@ -340,7 +340,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
   useEffect(() => {
     const view = viewRef.current
     if (!view || !commandRequest) return
-    view.dispatch({ selection: { anchor: selectionRef.current.from, head: selectionRef.current.to } })
+    view.dispatch({ selection: { anchor: commandRequest.selection.from, head: commandRequest.selection.to } })
     if (commandRequest.kind === 'bold') toggleMarkdownMark(view, '**', '**')
     if (commandRequest.kind === 'italic') toggleMarkdownMark(view, '*', '*')
     if (commandRequest.kind === 'strikethrough') toggleMarkdownMark(view, '~~', '~~')

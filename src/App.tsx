@@ -125,7 +125,7 @@ async function invokeNative(command: string, args?: Record<string, unknown>) {
 
 interface Selection { day: string; from: number; to: number }
 type EditorCommandKind = 'bold' | 'italic' | 'strikethrough' | 'mute'
-interface EditorCommand { day: string; id: number; kind: EditorCommandKind }
+interface EditorCommand { day: string; id: number; kind: EditorCommandKind; selection: { from: number; to: number } }
 
 function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const parts = shortcut.toLowerCase().split('-')
@@ -171,6 +171,8 @@ function App() {
   const [tagInput, setTagInput] = useState('')
   const [editorCommand, setEditorCommand] = useState<EditorCommand | null>(null)
   const [selection, setSelection] = useState<Selection>({ day: today, from: 0, to: 0 })
+  const editorSelectionRef = useRef<Selection>({ day: today, from: 0, to: 0 })
+  const editorCommandIdRef = useRef(0)
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const backupDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null)
@@ -543,7 +545,8 @@ function App() {
   }, [documents, query])
 
   function runEditorCommand(kind: EditorCommandKind) {
-    setEditorCommand({ day: selection.day || today, id: Date.now(), kind })
+    const currentSelection = editorSelectionRef.current
+    setEditorCommand({ day: currentSelection.day || today, id: ++editorCommandIdRef.current, kind, selection: { from: currentSelection.from, to: currentSelection.to } })
   }
 
   function updateSource(day: string, markdown: string) {
@@ -660,37 +663,48 @@ function App() {
 
   function applyTag() {
     const tag = tagInput.trim()
-    if (!tag || tagAlreadyActive) return
-    if (selection.from === selection.to) {
-      const { startLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
-      const currentLine = selectedParsed.lines[startLine] ?? ''
+    const currentSelection = editorSelectionRef.current
+    const source = documents[currentSelection.day] ?? ''
+    const parsed = parseMarkdown(source)
+    const selectedLines = lineRangeForSelection(source, currentSelection.from, currentSelection.to)
+    const alreadyActive = currentSelection.from !== currentSelection.to && parsed.ranges.some((range) => range.tag === tag.normalize('NFC') && range.startLine <= selectedLines.startLine && range.endLine >= selectedLines.endLine)
+    if (!tag || alreadyActive) return
+    if (currentSelection.from === currentSelection.to) {
+      const { startLine } = lineRangeForSelection(source, currentSelection.from, currentSelection.to)
+      const currentLine = parsed.lines[startLine] ?? ''
       if (currentLine.trim()) {
-        const result = addTagToRange(selectedSource, startLine, startLine, tag)
+        const result = addTagToRange(source, startLine, startLine, tag)
         if (!result.error) {
           const markerShift = formatMarker('open', [tag]).length + 1
-          updateSource(selection.day, result.source)
+          updateSource(currentSelection.day, result.source)
           setTagInput('')
-          setSelection({ day: selection.day, from: selection.from + markerShift, to: selection.to + markerShift })
+          const nextSelection = { day: currentSelection.day, from: currentSelection.from + markerShift, to: currentSelection.to + markerShift }
+          editorSelectionRef.current = nextSelection
+          setSelection(nextSelection)
         }
         return
       }
       const openLine = formatMarker('open', [tag])
       const closeLine = formatMarker('close', [tag])
       const insertion = `${openLine}\n\n${closeLine}`
-      const source = `${selectedSource.slice(0, selection.from)}${insertion}${selectedSource.slice(selection.from)}`
-      const cursor = selection.from + openLine.length + 1
-      updateSource(selection.day, source)
+      const nextSource = `${source.slice(0, currentSelection.from)}${insertion}${source.slice(currentSelection.from)}`
+      const cursor = currentSelection.from + openLine.length + 1
+      updateSource(currentSelection.day, nextSource)
       setTagInput('')
-      setSelection({ day: selection.day, from: cursor, to: cursor })
+      const nextSelection = { day: currentSelection.day, from: cursor, to: cursor }
+      editorSelectionRef.current = nextSelection
+      setSelection(nextSelection)
       return
     }
-    const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
-    const result = addTagToRange(selectedSource, startLine, endLine, tag)
+    const { startLine, endLine } = lineRangeForSelection(source, currentSelection.from, currentSelection.to)
+    const result = addTagToRange(source, startLine, endLine, tag)
     if (!result.error) {
       const markerShift = formatMarker('open', [tag]).length + 1
-      updateSource(selection.day, result.source)
+      updateSource(currentSelection.day, result.source)
       setTagInput('')
-      setSelection({ day: selection.day, from: selection.from + markerShift, to: selection.to + markerShift })
+      const nextSelection = { day: currentSelection.day, from: currentSelection.from + markerShift, to: currentSelection.to + markerShift }
+      editorSelectionRef.current = nextSelection
+      setSelection(nextSelection)
     }
   }
 
@@ -798,7 +812,7 @@ function App() {
           return <article className="day-card" data-day={documentDay} key={documentDay}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => setSelection({ day: documentDay, from, to })} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => { const nextSelection = { day: documentDay, from, to }; editorSelectionRef.current = nextSelection; setSelection(nextSelection) }} focusAtEnd={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
