@@ -1,0 +1,26 @@
+name = "notes"
+description = "Encrypted local-first notes"
+icon = "📝"
+category = "tools"
+autostart = "on-demand"
+
+[[process]]
+name = "dev"
+type = "service"
+runtime = "shell"
+cmd = "npm run dev -- --host 127.0.0.1 --port $PORT"
+port = 3430
+port_range = [3430, 3439]
+health = "http://127.0.0.1:3430/"
+
+[[process]]
+name = "build"
+type = "command"
+runtime = "shell"
+cmd = "npm run build"
+
+[[process]]
+name = "preview"
+type = "command"
+runtime = "shell"
+cmd = "npm run preview -- --host 127.0.0.1 --port 4430"
