@@ -85,6 +85,30 @@ function toggleMutedAtSelection(view: EditorView) {
   return true
 }
 
+function toggleAsteriskMark(view: EditorView, kind: 'bold' | 'italic') {
+  const selection = view.state.selection.main
+  const selectedText = view.state.sliceDoc(selection.from, selection.to)
+  const before = view.state.sliceDoc(Math.max(0, selection.from - 3), selection.from)
+  const after = view.state.sliceDoc(selection.to, selection.to + 3)
+  const beforeCount = before.match(/\*+$/u)?.[0].length ?? 0
+  const afterCount = after.match(/^\*+/u)?.[0].length ?? 0
+  const existing = beforeCount === afterCount && beforeCount <= 3 ? beforeCount : 0
+  const target = kind === 'bold' ? (existing === 1 ? 3 : existing === 2 ? 0 : existing === 3 ? 1 : 2) : (existing === 1 ? 0 : existing === 2 ? 3 : existing === 3 ? 2 : 1)
+  const opening = '*'.repeat(target)
+  const closing = opening
+  const nextFrom = selection.from - existing + target
+  const nextTo = selection.to - existing + target
+  if (!selectedText) {
+    view.dispatch({ changes: { from: selection.from - existing, to: selection.from + existing, insert: `${opening}${closing}` }, selection: { anchor: nextFrom } })
+    return true
+  }
+  view.dispatch({
+    changes: [{ from: selection.from - existing, to: selection.from, insert: opening }, { from: selection.to, to: selection.to + existing, insert: closing }],
+    selection: { anchor: nextFrom, head: nextTo },
+  })
+  return true
+}
+
 function toggleMarkdownMark(view: EditorView, opening: string, closing: string) {
   const selection = view.state.selection.main
   const selectedText = view.state.sliceDoc(selection.from, selection.to)
@@ -267,6 +291,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
   const onSelectionRef = useRef(onSelection)
   const sourceModeRef = useRef(sourceMode)
   const selectionRef = useRef({ from: 0, to: 0 })
+  const pendingLocalValueRef = useRef<string | undefined>(undefined)
   const syncingRenameRef = useRef(false)
   const [initialValue] = useState(value)
 
@@ -288,8 +313,8 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
             { key: 'ArrowDown', run: (view) => moveToVisibleLine(view, 1, filterTags, hideMutedLines) },
             { key: 'Mod-/', run: toggleMutedAtSelection },
             { key: 'Backspace', run: deleteCharBackwardStrict },
-            { key: 'Mod-b', run: (view) => toggleMarkdownMark(view, '**', '**') },
-            { key: 'Mod-i', run: (view) => toggleMarkdownMark(view, '*', '*') },
+            { key: 'Mod-b', run: (view) => toggleAsteriskMark(view, 'bold') },
+            { key: 'Mod-i', run: (view) => toggleAsteriskMark(view, 'italic') },
             { key: 'Mod-u', run: (view) => toggleMarkdownMark(view, '<u>', '</u>') },
             { key: strikethroughShortcut, run: (view) => toggleMarkdownMark(view, '~~', '~~') },
             { key: taskToggleShortcut, run: toggleTaskAtSelection },
@@ -315,6 +340,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
                   }
                 }
               }
+              pendingLocalValueRef.current = next
               onChangeRef.current(next)
             }
             if (update.selectionSet || update.docChanged) {
@@ -341,8 +367,8 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     const view = viewRef.current
     if (!view || !commandRequest) return
     view.dispatch({ selection: { anchor: commandRequest.selection.from, head: commandRequest.selection.to } })
-    if (commandRequest.kind === 'bold') toggleMarkdownMark(view, '**', '**')
-    if (commandRequest.kind === 'italic') toggleMarkdownMark(view, '*', '*')
+    if (commandRequest.kind === 'bold') toggleAsteriskMark(view, 'bold')
+    if (commandRequest.kind === 'italic') toggleAsteriskMark(view, 'italic')
     if (commandRequest.kind === 'strikethrough') toggleMarkdownMark(view, '~~', '~~')
     if (commandRequest.kind === 'mute') toggleMutedAtSelection(view)
     view.focus()
@@ -353,7 +379,9 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
     const view = viewRef.current
     if (!view) return
     const current = view.state.doc.toString()
+    if (pendingLocalValueRef.current === value) pendingLocalValueRef.current = undefined
     if (current !== value) {
+      if (pendingLocalValueRef.current === current) return
       const from = Math.min(restoreSelection?.from ?? selectionRef.current.from, value.length)
       const to = Math.min(restoreSelection?.to ?? selectionRef.current.to, value.length)
       view.dispatch({ changes: { from: 0, to: current.length, insert: value }, selection: { anchor: from, head: to } })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, normalizeRepeatedOpens, parseMarkdown, isMutedLine, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, toggleMutedLines } from './markerEngine'
+import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, normalizeRepeatedOpens, parseMarkdown, isMutedLine, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -36,6 +36,18 @@ describe('marker engine', () => {
   it('adds separate opening and closing marker lines', () => {
     const result = addTagToRange('one\ntwo\nthree', 1, 1, 'therapy')
     expect(result.source).toBe('one\n<!-- therapy -->\ntwo\n<!-- /therapy -->\nthree')
+  })
+
+  it('matches one-word tags when filtering a tagged range', () => {
+    const source = '<!-- work -->\n\n<!-- /work -->'
+    expect(sourceMatchesFilter(source, ['work'], false)).toBe(true)
+    expect(sourceMatchesFilter(source, ['other'], false)).toBe(false)
+  })
+
+  it('detects bold, italic, and combined asterisk marks', () => {
+    expect(markdownMarkState('**bold**', 2, 6)).toEqual({ bold: true, italic: false, strikethrough: false })
+    expect(markdownMarkState('*italic*', 1, 7)).toEqual({ bold: false, italic: true, strikethrough: false })
+    expect(markdownMarkState('***both***', 3, 7)).toEqual({ bold: true, italic: true, strikethrough: false })
   })
 
   it('renames the matching close when a rendered opening chip changes', () => {

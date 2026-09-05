@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
-import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, parseMarkdown, removeTagAtPosition, renameTagEverywhere } from './markerEngine'
+import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, markdownMarkState, parseMarkdown, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
@@ -91,11 +91,6 @@ function loadTagColors() {
   }
 }
 
-function sourceMatchesFilter(source: string, filterTags: string[], hideMutedLines: boolean) {
-  const parsed = parseMarkdown(source)
-  return parsed.lines.some((line, index) => line.trim() && (!hideMutedLines || !isMutedLine(line)) && (!filterTags.length || parsed.ranges.some((range) => filterTags.includes(range.tag) && range.startLine < index && index < range.endLine)))
-}
-
 function FilterIcon({ active }: { active: boolean }) {
   return <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} aria-hidden="true"><path d="M3 4.6C3 4.03995 3 3.75992 3.10899 3.54601C3.20487 3.35785 3.35785 3.20487 3.54601 3.10899C3.75992 3 4.03995 3 4.6 3H19.4C19.9601 3 20.2401 3 20.454 3.10899C20.6422 3.20487 20.7951 3.35785 20.891 3.54601C21 3.75992 21 4.03995 21 4.6V6.33726C21 6.58185 21 6.70414 20.9724 6.81923C20.9479 6.92127 20.9075 7.01881 20.8526 7.10828C20.7908 7.2092 20.7043 7.29568 20.5314 7.46863L14.4686 13.5314C14.2957 13.7043 14.2092 13.7908 14.1474 13.8917C14.0925 13.9812 14.0521 14.0787 14.0276 14.1808C14 14.2959 14 14.4182 14 14.6627V17L10 21V14.6627C10 14.4182 10 14.2959 9.97237 14.1808C9.94787 14.0787 9.90747 13.9812 9.85264 13.8917C9.7908 13.7908 9.70432 13.7043 9.53137 13.5314L3.46863 7.46863C3.29568 7.29568 3.2092 7.2092 3.14736 7.10828C3.09253 7.01881 3.05213 6.92127 3.02763 6.81923C3 6.70414 3 6.58185 3 6.33726V4.6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
@@ -173,6 +168,7 @@ function App() {
   const [selection, setSelection] = useState<Selection>({ day: today, from: 0, to: 0 })
   const editorSelectionRef = useRef<Selection>({ day: today, from: 0, to: 0 })
   const editorCommandIdRef = useRef(0)
+  const toolbarPointerRef = useRef(false)
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const backupDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null)
@@ -256,18 +252,28 @@ function App() {
     return `Build time: ${formattedDate} at ${formattedTime}`
   }, [])
 
+  const appendOlderDay = useCallback(() => {
+    setDays((current) => {
+      if (!preferences.showEmptyDays && current[current.length - 1] <= oldestDocumentDay) return current
+      return [...current, shiftLogicalDay(current[current.length - 1], -1)]
+    })
+  }, [oldestDocumentDay, preferences.showEmptyDays])
+
   useEffect(() => {
     if (!loaded) return
     const observer = new IntersectionObserver((entries) => {
-      if (!entries[0].isIntersecting) return
-      setDays((current) => {
-        if (!preferences.showEmptyDays && current[current.length - 1] <= oldestDocumentDay) return current
-        return [...current, shiftLogicalDay(current[current.length - 1], -1)]
-      })
+      if (entries[0].isIntersecting && !filterTags.length && !hideMutedLines) appendOlderDay()
     }, { rootMargin: '0px 0px 800px 0px' })
     if (streamEndRef.current) observer.observe(streamEndRef.current)
     return () => observer.disconnect()
-  }, [loaded, oldestDocumentDay, preferences.showEmptyDays])
+  }, [appendOlderDay, filterTags.length, hideMutedLines, loaded])
+
+  useEffect(() => {
+    if (!loaded || filterTags.length || hideMutedLines) return
+    const sentinel = streamEndRef.current
+    if (!sentinel || sentinel.getBoundingClientRect().top > window.innerHeight + 800) return
+    appendOlderDay()
+  }, [appendOlderDay, days.length, filterTags.length, hideMutedLines, loaded])
 
   useEffect(() => {
     if (tagBarOpen) tagInputRef.current?.focus()
@@ -538,6 +544,11 @@ function App() {
     return selectedParsed.ranges.some((range) => range.tag === tagInput.trim().normalize('NFC') && range.startLine <= startLine && range.endLine >= endLine)
   }, [selectedParsed, selectedSource, selection, tagInput])
   const currentTags = useMemo(() => [...new Set(selectedParsed.ranges.filter((range) => selection.from === selection.to ? range.start < selection.from && selection.from < range.end : range.start < selection.to && range.end > selection.from).sort((left, right) => left.startLine - right.startLine || right.endLine - left.endLine).map((range) => range.tag))], [selectedParsed, selection])
+  const activeMarks = useMemo(() => {
+    const marks = markdownMarkState(selectedSource, selection.from, selection.to)
+    const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
+    return { ...marks, mute: selectedParsed.lines.slice(startLine, endLine + 1).every(isMutedLine) }
+  }, [selectedParsed.lines, selectedSource, selection])
   const searchResults = useMemo(() => {
     if (!query.trim()) return []
     const needle = query.toLocaleLowerCase()
@@ -547,6 +558,19 @@ function App() {
   function runEditorCommand(kind: EditorCommandKind) {
     const currentSelection = editorSelectionRef.current
     setEditorCommand({ day: currentSelection.day || today, id: ++editorCommandIdRef.current, kind, selection: { from: currentSelection.from, to: currentSelection.to } })
+  }
+
+  function runEditorCommandFromPointer(kind: EditorCommandKind) {
+    toolbarPointerRef.current = true
+    runEditorCommand(kind)
+  }
+
+  function runEditorCommandFromClick(kind: EditorCommandKind) {
+    if (toolbarPointerRef.current) {
+      toolbarPointerRef.current = false
+      return
+    }
+    runEditorCommand(kind)
   }
 
   function updateSource(day: string, markdown: string) {
@@ -823,14 +847,15 @@ function App() {
 
       {!sourceMode && loaded && <div className="tag-bar" role="toolbar" aria-label="Formatting and tags" style={{ bottom: `calc(${keyboardOffset}px + env(safe-area-inset-bottom))` }}>
         <div className="tag-format-actions">
-          <button className="tag-format-button" type="button" aria-label="Bold" title="Bold" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('bold')}><strong>B</strong></button>
-          <button className="tag-format-button" type="button" aria-label="Italic" title="Italic" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('italic')}><em>I</em></button>
-          <button className="tag-format-button" type="button" aria-label="Strikethrough" title="Strikethrough" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('strikethrough')}><span className="strikethrough-label">S</span></button>
-          <button className="tag-format-button" type="button" aria-label="Mute or unmute lines" title="Mute or unmute lines" onPointerDown={(event) => event.preventDefault()} onClick={() => runEditorCommand('mute')}><MuteIcon /></button>
+          <button className={`tag-format-button${activeMarks.bold ? ' format-active' : ''}`} type="button" aria-label="Bold" aria-pressed={activeMarks.bold} title="Bold" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('bold') }} onClick={() => runEditorCommandFromClick('bold')}><strong>B</strong></button>
+          <button className={`tag-format-button${activeMarks.italic ? ' format-active' : ''}`} type="button" aria-label="Italic" aria-pressed={activeMarks.italic} title="Italic" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('italic') }} onClick={() => runEditorCommandFromClick('italic')}><em>I</em></button>
+          <button className={`tag-format-button${activeMarks.strikethrough ? ' format-active' : ''}`} type="button" aria-label="Strikethrough" aria-pressed={activeMarks.strikethrough} title="Strikethrough" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('strikethrough') }} onClick={() => runEditorCommandFromClick('strikethrough')}><span className="strikethrough-label">S</span></button>
+          <button className={`tag-format-button${activeMarks.mute ? ' format-active' : ''}`} type="button" aria-label="Mute or unmute lines" aria-pressed={activeMarks.mute} title="Mute or unmute lines" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('mute') }} onClick={() => runEditorCommandFromClick('mute')}><MuteIcon /></button>
         </div>
         <div className="active-tag-chips">{currentTags.map((tag) => <span className="active-tag-chip" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeSelectedTag(tag)}>×</button></span>)}</div>
         <span className="popover-label">Tag</span>
-        <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" />
+        <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" autoComplete="on" autoCorrect="on" autoCapitalize="none" list="tag-suggestions" />
+        <datalist id="tag-suggestions">{allTags.map((tag) => <option value={tag} key={tag} />)}</datalist>
         <button type="button" onPointerDown={(event) => event.preventDefault()} onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
         {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
         <span className="tag-shortcut">⌘T</span>

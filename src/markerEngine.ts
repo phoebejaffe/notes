@@ -36,6 +36,28 @@ function normalizeTag(tag: string) {
   return tag.normalize('NFC')
 }
 
+export function markdownMarkState(source: string, from: number, to: number) {
+  const before = source.slice(Math.max(0, from - 3), from)
+  const after = source.slice(to, to + 3)
+  const starBefore = before.match(/\*+$/u)?.[0].length ?? 0
+  const starAfter = after.match(/^\*+/u)?.[0].length ?? 0
+  const stars = starBefore === starAfter && starBefore <= 3 ? starBefore : 0
+  return {
+    bold: stars === 2 || stars === 3,
+    italic: stars === 1 || stars === 3,
+    strikethrough: source.slice(Math.max(0, from - 2), from) === '~~' && source.slice(to, to + 2) === '~~',
+  }
+}
+
+export function sourceMatchesFilter(source: string, filterTags: string[], hideMutedLines: boolean) {
+  const parsed = parseMarkdown(source)
+  if (filterTags.length) {
+    const selected = new Set(filterTags.map(normalizeTag))
+    return parsed.lines.some((_line, index) => parsed.ranges.some((range) => selected.has(range.tag) && range.startLine < index && index < range.endLine))
+  }
+  return parsed.lines.some((line) => line.trim() && (!hideMutedLines || !isMutedLine(line)))
+}
+
 function tokenizeTags(input: string): { tags: string[]; malformed: boolean } {
   const tags: string[] = []
   let index = 0

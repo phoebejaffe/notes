@@ -8,6 +8,7 @@
 .app-shell { width: min(980px, 100%); margin: 0 auto; padding: 88px 16px 64px; background: #fff; }
 .topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 0; background: transparent; pointer-events: none; }
 .topbar-left, .topbar-right, .topbar > .filter-panel { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
+.topbar > .filter-panel { align-items: stretch; }
 .topbar button, .topbar .menu-panel { pointer-events: auto; }
 .capture-menu { position: fixed; z-index: 14; top: 2px; right: 2px; display: flex; align-items: center; gap: 8px; }
 .capture-menu .menu-panel { top: 42px; right: 0; left: auto; }
@@ -18,7 +19,6 @@
 button { cursor: pointer; font: inherit; }
 .menu-panel { position: absolute; z-index: 5; top: 42px; left: 0; display: flex; flex-direction: column; min-width: 170px; padding: 6px; border: 1px solid #d9d4cb; border-radius: 10px; background: #fffdf9; box-shadow: 0 12px 30px #392c1f22; }
 .topbar .menu-panel { right: 0; left: auto; }
-.topbar > .filter-panel { right: auto; left: 0; }
 .menu-panel button { padding: 9px 11px; color: #504941; border: 0; background: transparent; border-radius: 6px; text-align: left; font-size: 12px; }
 .menu-panel button:hover { background: #f8f6fa; }
 .menu-build { margin: 4px 5px 1px; padding-top: 8px; border-top: 1px solid #eeeae5; color: #9b9185; font-size: 10px; line-height: 1.3; white-space: nowrap; }
@@ -29,7 +29,7 @@ button { cursor: pointer; font: inherit; }
 .filter-clear { margin-bottom: 4px; padding: 8px 10px; border: 0; border-bottom: 1px solid #eeeae5; color: #806790; background: transparent; text-align: left; font-size: 12px; font-weight: 700; }
 .filter-clear:hover:not(:disabled) { background: #f8f6fa; }
 .filter-clear:disabled { color: #aaa19a; cursor: default; }
-.filter-option { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; color: #504941; font-size: 12px; }
+.filter-option { display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 8px 10px; border-radius: 6px; color: #504941; font-size: 12px; text-align: left; }
 .filter-option:hover { background: #f8f6fa; }
 .filter-option input { width: 15px; height: 15px; accent-color: #806790; }
 .filter-empty { padding: 9px 10px; color: #817970; font-size: 12px; }
@@ -120,6 +120,8 @@ button { cursor: pointer; font: inherit; }
 .tag-format-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
 .tag-format-button { display: grid; place-items: center; width: 27px; height: 27px; padding: 0; border: 0 !important; border-radius: 5px !important; color: #625b54 !important; background: transparent !important; font-size: 14px !important; }
 .tag-format-button:hover { background: #f1ede8 !important; }
+.tag-format-button.format-active { color: #fff !important; background: #806790 !important; }
+.theme-dark .tag-format-button.format-active { color: #fff !important; background: #a98fc4 !important; }
 .strikethrough-label { text-decoration: line-through; }
 .active-tag-chips { display: flex; flex: 0 1 auto; gap: 5px; min-width: 0; flex-wrap: nowrap; }
 .active-tag-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 9px; color: #77727b; background: #f4f1f8; border: 1px solid #d8d0e3; border-radius: 999px; font-size: 11px; }
