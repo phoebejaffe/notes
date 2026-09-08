@@ -193,6 +193,22 @@ function App() {
   useEffect(() => watchAuth(setFirebaseUser), [])
 
   useEffect(() => {
+    if (!isTauriEnvironment()) return
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void listen<boolean>('always-on-top-changed', (event) => {
+      setPreferences((current) => ({ ...current, captureAlwaysOnTop: event.payload }))
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else unlisten = cleanup
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
     const timer = window.setInterval(() => setCurrentDate(new Date()), 60_000)
     return () => window.clearInterval(timer)
   }, [])

@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -239,6 +240,27 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
             }
+
+            let keep_on_top = MenuItemBuilder::with_id("keep-on-top", "Keep on top")
+                .accelerator("CmdOrCtrl+Shift+A")
+                .build(app)?;
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .item(&keep_on_top)
+                .build()?;
+            let menu = MenuBuilder::new(app).item(&window_menu).build()?;
+            app.set_menu(menu)?;
+            app.on_menu_event(|app, event| {
+                if event.id() != "keep-on-top" {
+                    return;
+                }
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(current) = window.is_always_on_top() {
+                        let next = !current;
+                        let _ = window.set_always_on_top(next);
+                        let _ = app.emit("always-on-top-changed", next);
+                    }
+                }
+            });
 
             let app_handle = app.handle().clone();
             let decoder = png::Decoder::new(Cursor::new(include_bytes!("../icons/tray-note.png")));
