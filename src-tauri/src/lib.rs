@@ -152,6 +152,22 @@ fn set_capture_window_always_on_top(app: AppHandle, always_on_top: bool) -> Resu
         .map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn hide_standard_window_buttons(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())?;
+    let ns_window = unsafe { &*(ns_window_ptr as *mut objc2_app_kit::NSWindow) };
+    for button in [
+        objc2_app_kit::NSWindowButton::CloseButton,
+        objc2_app_kit::NSWindowButton::MiniaturizeButton,
+        objc2_app_kit::NSWindowButton::ZoomButton,
+    ] {
+        if let Some(button) = ns_window.standardWindowButton(button) {
+            button.setHidden(true);
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn set_capture_window_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -261,6 +277,8 @@ pub fn run() {
             restore_window_geometry(app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
+                #[cfg(target_os = "macos")]
+                hide_standard_window_buttons(&window)?;
             }
 
             let app_menu = SubmenuBuilder::new(app, "Notes")
