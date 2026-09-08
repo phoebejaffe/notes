@@ -45,6 +45,33 @@ function lineIsNavigable(parsed: ParsedMarkdown, lineIndex: number, filterTags: 
   return !parsed.markers.some((marker) => marker.line === lineIndex) && lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines)
 }
 
+function moveToLineContentBoundary(view: EditorView, direction: -1 | 1) {
+  const selection = view.state.selection.main
+  const line = view.state.doc.lineAt(direction < 0 ? selection.from : selection.to)
+  if (direction < 0) {
+    const listPrefix = line.text.match(/^\s*(?:(?:[-*+]\s+|\d+[.)]\s+))/u)?.[0] ?? ''
+    view.dispatch({ selection: { anchor: line.from + listPrefix.length } })
+  } else {
+    view.dispatch({ selection: { anchor: line.to } })
+  }
+  return true
+}
+
+function moveByWhitespaceWord(view: EditorView, direction: -1 | 1) {
+  const selection = view.state.selection.main
+  let position = direction < 0 ? selection.from : selection.to
+  const isWhitespace = (character: string) => /\s/u.test(character)
+  if (direction < 0) {
+    while (position > 0 && isWhitespace(view.state.sliceDoc(position - 1, position))) position -= 1
+    while (position > 0 && !isWhitespace(view.state.sliceDoc(position - 1, position))) position -= 1
+  } else {
+    while (position < view.state.doc.length && !isWhitespace(view.state.sliceDoc(position, position + 1))) position += 1
+    while (position < view.state.doc.length && isWhitespace(view.state.sliceDoc(position, position + 1))) position += 1
+  }
+  view.dispatch({ selection: { anchor: position } })
+  return true
+}
+
 function moveToVisibleLine(view: EditorView, direction: -1 | 1, filterTags: string[], hideMutedLines: boolean) {
   const selection = view.state.selection.main
   const currentLine = view.state.doc.lineAt(selection.head)
@@ -310,6 +337,10 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           syntaxHighlighting(defaultHighlightStyle),
           history(),
           keymap.of([
+            { key: 'Mod-ArrowLeft', run: (view) => moveToLineContentBoundary(view, -1) },
+            { key: 'Mod-ArrowRight', run: (view) => moveToLineContentBoundary(view, 1) },
+            { key: 'Alt-ArrowLeft', run: (view) => moveByWhitespaceWord(view, -1) },
+            { key: 'Alt-ArrowRight', run: (view) => moveByWhitespaceWord(view, 1) },
             { key: 'ArrowDown', run: (view) => moveToVisibleLine(view, 1, filterTags, hideMutedLines) },
             { key: 'Mod-/', run: toggleMutedAtSelection },
             { key: 'Backspace', run: deleteCharBackwardStrict },

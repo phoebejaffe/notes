@@ -91,11 +91,11 @@ button { cursor: pointer; font: inherit; }
 .cm-tagged-2 { background-image: linear-gradient(to right, transparent var(--tag-border-start), var(--tag-outer) var(--tag-border-start) calc(var(--tag-border-start) + 3px), var(--tag-inner) calc(var(--tag-border-start) + 3px) calc(var(--tag-border-start) + 6px), transparent calc(var(--tag-border-start) + 6px)); }
 .cm-tagged-3 { background-image: linear-gradient(to right, transparent var(--tag-border-start), var(--tag-outer) var(--tag-border-start) calc(var(--tag-border-start) + 3px), var(--tag-inner) calc(var(--tag-border-start) + 3px) calc(var(--tag-border-start) + 6px), var(--tag-third) calc(var(--tag-border-start) + 6px) calc(var(--tag-border-start) + 9px), transparent calc(var(--tag-border-start) + 9px)); }
 .cm-tagged-4 { background-image: linear-gradient(to right, transparent var(--tag-border-start), var(--tag-outer) var(--tag-border-start) calc(var(--tag-border-start) + 3px), var(--tag-inner) calc(var(--tag-border-start) + 3px) calc(var(--tag-border-start) + 6px), var(--tag-third) calc(var(--tag-border-start) + 6px) calc(var(--tag-border-start) + 9px), var(--tag-fourth) calc(var(--tag-border-start) + 9px) calc(var(--tag-border-start) + 12px), transparent calc(var(--tag-border-start) + 12px)); }
-.cm-tag-color-0 { --tag-outer: #6d9b91; border-left-color: #6d9b91; }
-.cm-tag-color-1 { --tag-outer: #8975aa; border-left-color: #8975aa; }
-.cm-tag-color-2 { --tag-outer: #c88968; border-left-color: #c88968; }
-.cm-tag-color-3 { --tag-outer: #7190b0; border-left-color: #7190b0; }
-.cm-tag-color-4 { --tag-outer: #b28a55; border-left-color: #b28a55; }
+.cm-tag-color-0 { --tag-outer: #6d9b91; --tag-color: #6d9b91; }
+.cm-tag-color-1 { --tag-outer: #8975aa; --tag-color: #8975aa; }
+.cm-tag-color-2 { --tag-outer: #c88968; --tag-color: #c88968; }
+.cm-tag-color-3 { --tag-outer: #7190b0; --tag-color: #7190b0; }
+.cm-tag-color-4 { --tag-outer: #b28a55; --tag-color: #b28a55; }
 .cm-tag-inner-color-0 { --tag-inner: #6d9b91; }
 .cm-tag-inner-color-1 { --tag-inner: #8975aa; }
 .cm-tag-inner-color-2 { --tag-inner: #c88968; }
