@@ -829,11 +829,9 @@ function App() {
 
   const syncPrompt = !firebaseConfigured
     ? 'Cloud sync is not enabled. Configure Firebase to sign in and sync your notes.'
-    : !firebaseUser
-      ? 'Sign in with Google in Settings to enable encrypted sync.'
-      : dataKey || syncState === 'working'
-        ? ''
-        : 'You are signed in, but encrypted sync is not enabled on this device. Open Settings to unlock it.'
+    : firebaseUser && !dataKey && syncState !== 'working'
+      ? 'You are signed in, but encrypted sync is not enabled on this device. Open Settings to unlock it.'
+      : ''
 
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
 
@@ -883,7 +881,7 @@ function App() {
       </div>}
 
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
-      {syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
+      {!firebaseConfigured ? <p className="sync-prompt" role="status">{syncPrompt}</p> : !firebaseUser ? <p className="sync-prompt" role="status"><button className="sync-prompt-link" type="button" onClick={() => setSettingsOpen(true)}>Sign in with Google</button> to enable encrypted sync.</p> : syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
 
       <section className="day-stream" aria-label="Daily notes">
         {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {

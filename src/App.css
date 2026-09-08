@@ -44,6 +44,7 @@ button { cursor: pointer; font: inherit; }
 .search-panel input { flex: 1; border: 0; outline: 0; color: #403a42; background: transparent; font-size: 13px; }
 .search-symbol, .search-count { color: #9b9185; font-size: 12px; }
 .sync-prompt { margin: 0 auto 18px; padding: 9px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #756a7d; background: #f8f5fa; font-size: 12px; text-align: center; }
+.sync-prompt-link { padding: 0; border: 0; color: #806790; background: transparent; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .day-stream { display: flex; flex-direction: column; gap: 0; }
 .day-card { scroll-margin-top: 78px; background: #fff; }
 .day-title { margin: 0 0 6px; color: #817970; font: 500 15px/1.1 Georgia, serif; letter-spacing: .01em; }
