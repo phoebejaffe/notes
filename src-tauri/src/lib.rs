@@ -153,6 +153,26 @@ fn set_capture_window_always_on_top(app: AppHandle, always_on_top: bool) -> Resu
 }
 
 #[tauri::command]
+fn set_capture_window_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "Main window is unavailable".to_string())?;
+        let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())?;
+        let ns_window = unsafe { &*(ns_window_ptr as *mut objc2_app_kit::NSWindow) };
+        ns_window.setOpaque(false);
+        ns_window.setAlphaValue(opacity.clamp(0.5, 1.0));
+        return Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, opacity);
+        Err("Window opacity is currently supported on macOS only".to_string())
+    }
+}
+
+#[tauri::command]
 fn set_capture_shortcut(app: AppHandle, state: tauri::State<'_, CaptureShortcut>, shortcut: String) -> Result<(), String> {
     let parsed = Shortcut::from_str(&shortcut).map_err(|error| error.to_string())?;
     let mut current = state.0.lock().map_err(|_| "Shortcut state is unavailable".to_string())?;
@@ -262,7 +282,20 @@ pub fn run() {
                 let transparency = MenuItemBuilder::with_id("toggle-transparency", "Transparency")
                     .accelerator("CmdOrCtrl+Shift+T")
                     .build(app)?;
-                window_menu_builder = window_menu_builder.item(&transparency);
+                let opacity_50 = MenuItemBuilder::with_id("opacity-50", "50%")
+                    .build(app)?;
+                let opacity_65 = MenuItemBuilder::with_id("opacity-65", "65%")
+                    .build(app)?;
+                let opacity_80 = MenuItemBuilder::with_id("opacity-80", "80%")
+                    .build(app)?;
+                let opacity_100 = MenuItemBuilder::with_id("opacity-100", "100%")
+                    .build(app)?;
+                let transparency_menu = SubmenuBuilder::new(app, "Transparency")
+                    .items(&[&opacity_50, &opacity_65, &opacity_80, &opacity_100])
+                    .build()?;
+                window_menu_builder = window_menu_builder
+                    .item(&transparency)
+                    .item(&transparency_menu);
             }
             let window_menu = window_menu_builder
                 .close_window()
@@ -284,6 +317,15 @@ pub fn run() {
                 #[cfg(target_os = "macos")]
                 if event.id() == "toggle-transparency" {
                     let _ = app.emit("toggle-window-transparency", ());
+                }
+                if let Some(opacity) = match event.id().as_ref() {
+                    "opacity-50" => Some(0.5),
+                    "opacity-65" => Some(0.65),
+                    "opacity-80" => Some(0.8),
+                    "opacity-100" => Some(1.0),
+                    _ => None,
+                } {
+                    let _ = app.emit("set-window-opacity", opacity);
                 }
             });
 
@@ -328,7 +370,7 @@ pub fn run() {
             app.global_shortcut().register(shortcut)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup])
+        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup])
         .on_window_event(|window, event| {
             if window.label() == "main"
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))

@@ -197,6 +197,7 @@ function App() {
     let disposed = false
     let unlistenAlwaysOnTop: (() => void) | undefined
     let unlistenTransparency: (() => void) | undefined
+    let unlistenOpacity: (() => void) | undefined
     void listen<boolean>('always-on-top-changed', (event) => {
       setPreferences((current) => ({ ...current, captureAlwaysOnTop: event.payload }))
     }).then((cleanup) => {
@@ -209,10 +210,18 @@ function App() {
       if (disposed) cleanup()
       else unlistenTransparency = cleanup
     })
+    void listen<number>('set-window-opacity', (event) => {
+      const windowOpacity = Math.round(event.payload * 100)
+      setPreferences((current) => ({ ...current, windowOpacity, windowOpacityEnabled: windowOpacity < 100 }))
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else unlistenOpacity = cleanup
+    })
     return () => {
       disposed = true
       unlistenAlwaysOnTop?.()
       unlistenTransparency?.()
+      unlistenOpacity?.()
     }
   }, [])
 
@@ -269,6 +278,7 @@ function App() {
   useEffect(() => {
     savePreferences(preferences)
     void invokeNative('set_capture_window_always_on_top', { alwaysOnTop: preferences.captureAlwaysOnTop })
+    void invokeNative('set_capture_window_opacity', { opacity: preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 })
     void invokeNative('set_capture_shortcut', { shortcut: preferences.captureShortcut })
     void invokeNative('set_launch_at_login', { enabled: preferences.launchAtLogin })
     void invokeNative('set_app_visibility', { showMenuBar: preferences.showMenuBar, showDockIcon: preferences.showDockIcon })
