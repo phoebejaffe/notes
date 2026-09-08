@@ -299,7 +299,7 @@ interface CodeMirrorEditorProps {
   value: string
   onChange: (value: string) => void
   onSelection?: (from: number, to: number) => void
-  focusAtEnd?: boolean
+  focusAtStart?: boolean
   sourceMode?: boolean
   tagColors?: Record<string, string>
   restoreSelection?: { from: number; to: number }
@@ -311,7 +311,7 @@ interface CodeMirrorEditorProps {
   commandRequest?: { id: number; kind: 'bold' | 'italic' | 'strikethrough' | 'mute'; selection: { from: number; to: number } }
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [], hideMutedLines = false, commandRequest }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [], hideMutedLines = false, commandRequest }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -394,9 +394,9 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       view.focus()
     }
     editorHost.addEventListener('notes-boundary-focus', boundaryFocusHandler)
-    if (focusAtEnd) {
-      view.dispatch({ selection: { anchor: view.state.doc.length } })
-      selectionRef.current = { from: view.state.doc.length, to: view.state.doc.length }
+    if (focusAtStart) {
+      view.dispatch({ selection: { anchor: 0 } })
+      selectionRef.current = { from: 0, to: 0 }
       view.focus()
     }
     return () => {
@@ -404,7 +404,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
       viewRef.current = null
       view.destroy()
     }
-  }, [filterTags, focusAtEnd, hideMutedLines, hideTagSyntax, initialValue, sourceMode, strikethroughShortcut, tagColors, taskToggleShortcut])
+  }, [filterTags, focusAtStart, hideMutedLines, hideTagSyntax, initialValue, sourceMode, strikethroughShortcut, tagColors, taskToggleShortcut])
 
   useEffect(() => {
     const view = viewRef.current

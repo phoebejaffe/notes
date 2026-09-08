@@ -241,13 +241,27 @@ pub fn run() {
                 window.show()?;
             }
 
+            let app_menu = SubmenuBuilder::new(app, "Notes")
+                .about(None)
+                .separator()
+                .quit()
+                .build()?;
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
             let keep_on_top = MenuItemBuilder::with_id("keep-on-top", "Keep on top")
                 .accelerator("CmdOrCtrl+Shift+A")
                 .build(app)?;
             let window_menu = SubmenuBuilder::new(app, "Window")
                 .item(&keep_on_top)
+                .close_window()
                 .build()?;
-            let menu = MenuBuilder::new(app).item(&window_menu).build()?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&app_menu, &edit_menu, &window_menu])
+                .build()?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
                 if event.id() != "keep-on-top" {
