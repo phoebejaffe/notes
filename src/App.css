@@ -43,6 +43,7 @@ button { cursor: pointer; font: inherit; }
 .search-panel { position: fixed; z-index: 9; top: 70px; left: 50%; display: flex; align-items: center; gap: 8px; width: min(948px, calc(100% - 32px)); margin: 0; padding: 9px 12px; transform: translateX(-50%); border: 1px solid #d9d4cb; border-radius: 9px; background: #fffdf9; box-shadow: 0 8px 20px #392c1f18; }
 .search-panel input { flex: 1; border: 0; outline: 0; color: #403a42; background: transparent; font-size: 13px; }
 .search-symbol, .search-count { color: #9b9185; font-size: 12px; }
+.sync-prompt { margin: 0 auto 18px; padding: 9px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #756a7d; background: #f8f5fa; font-size: 12px; text-align: center; }
 .day-stream { display: flex; flex-direction: column; gap: 0; }
 .day-card { scroll-margin-top: 78px; background: #fff; }
 .day-title { margin: 0 0 6px; color: #817970; font: 500 15px/1.1 Georgia, serif; letter-spacing: .01em; }
@@ -194,6 +195,7 @@ button { cursor: pointer; font: inherit; }
 .theme-dark.app-shell, .theme-dark.capture-shell { --tag-chip-base: #000; color: #e8e2dc; background: #201e21; }
 .theme-dark .topbar { color: #e8e2dc; background: transparent; }
 .theme-dark .search-panel, .theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: #201e21; }
+.theme-dark .sync-prompt { border-color: #4d4659; color: #cbbbd0; background: #332f3b; }
 .theme-dark .cm-editor, .theme-dark .cm-scroller, .theme-dark .cm-gutters { color: #e8e2dc; background: #201e21; }
 .theme-dark .cm-content { caret-color: #fffaf5; }
 .theme-dark .cm-cursor, .theme-dark .cm-dropCursor { border-left-color: #fffaf5; }
