@@ -85,7 +85,7 @@ function moveToVisibleLine(view: EditorView, direction: -1 | 1, filterTags: stri
   let targetLineIndex = currentLineIndex + direction
   while (targetLineIndex >= 0 && targetLineIndex < parsed.lines.length && !lineIsNavigable(parsed, targetLineIndex, filterTags, hideMutedLines)) targetLineIndex += direction
   if (targetLineIndex === currentLineIndex + direction) return false
-  if (targetLineIndex < 0 || targetLineIndex >= parsed.lines.length) return true
+  if (targetLineIndex < 0 || targetLineIndex >= parsed.lines.length) return false
   const targetLine = view.state.doc.line(targetLineIndex + 1)
   const column = Math.min(selection.head - view.state.doc.line(currentLineIndex + 1).from, targetLine.length)
   view.dispatch({ selection: { anchor: targetLine.from + column } })
@@ -328,6 +328,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
 
   useEffect(() => {
     if (!host.current) return
+    const editorHost = host.current
     const view = new EditorView({
       state: EditorState.create({
         doc: initialValue,
@@ -383,15 +384,26 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtEnd = fa
           EditorView.theme({ '&': { minHeight: '50px' }, '.cm-scroller': { overflow: 'visible', overflowX: 'hidden' }, '.cm-content': { overflowWrap: 'anywhere' } }),
         ],
       }),
-      parent: host.current,
+      parent: editorHost,
     })
     viewRef.current = view
+    const boundaryFocusHandler = (event: Event) => {
+      const position = (event as CustomEvent<{ position: number }>).detail.position
+      const target = Math.min(Math.max(0, position), view.state.doc.length)
+      view.dispatch({ selection: { anchor: target } })
+      view.focus()
+    }
+    editorHost.addEventListener('notes-boundary-focus', boundaryFocusHandler)
     if (focusAtEnd) {
       view.dispatch({ selection: { anchor: view.state.doc.length } })
       selectionRef.current = { from: view.state.doc.length, to: view.state.doc.length }
       view.focus()
     }
-    return () => { viewRef.current = null; view.destroy() }
+    return () => {
+      editorHost.removeEventListener('notes-boundary-focus', boundaryFocusHandler)
+      viewRef.current = null
+      view.destroy()
+    }
   }, [filterTags, focusAtEnd, hideMutedLines, hideTagSyntax, initialValue, sourceMode, strikethroughShortcut, tagColors, taskToggleShortcut])
 
   useEffect(() => {

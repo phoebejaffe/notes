@@ -356,7 +356,26 @@ function App() {
         downloadMarkdown(documents[today] ?? '', `${today}.md`)
         return
       }
-      if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) return
+      const arrowDirection = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+      if (arrowDirection && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+        const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
+        const activeDay = activeCard?.dataset.day
+        const activeSource = activeDay ? documents[activeDay] ?? '' : ''
+        const atBoundary = arrowDirection < 0 ? selection.from === 0 && selection.to === 0 : selection.to === activeSource.length
+        if (!activeCard || !activeDay || selection.day !== activeDay || !atBoundary) return
+        const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
+        const currentIndex = cards.indexOf(activeCard)
+        const nextCard = cards[currentIndex + arrowDirection]
+        const nextEditor = nextCard?.querySelector<HTMLElement>('.cm-content')
+        if (nextEditor) {
+          event.preventDefault()
+          const nextDay = nextCard?.dataset.day ?? ''
+          const nextSource = documents[nextDay] ?? ''
+          nextEditor.dispatchEvent(new CustomEvent('notes-boundary-focus', { detail: { position: arrowDirection > 0 ? 0 : nextSource.length } }))
+          nextEditor.scrollIntoView({ block: 'center' })
+        }
+        return
+      }
       const direction = matchesShortcut(event, preferences.shortcuts.dayPrevious) ? -1 : matchesShortcut(event, preferences.shortcuts.dayNext) ? 1 : 0
       if (!direction) return
       const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
