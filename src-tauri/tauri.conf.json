@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Notes",
@@ -20,6 +21,7 @@
         "minHeight": 120,
         "resizable": true,
         "decorations": false,
+        "transparent": true,
         "alwaysOnTop": true,
         "visible": false,
         "fullscreen": false

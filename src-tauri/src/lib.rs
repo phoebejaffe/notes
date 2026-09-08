@@ -162,6 +162,8 @@ fn set_capture_window_opacity(app: AppHandle, opacity: f64) -> Result<(), String
         let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())?;
         let ns_window = unsafe { &*(ns_window_ptr as *mut objc2_app_kit::NSWindow) };
         ns_window.setOpaque(false);
+        let clear_color = objc2_app_kit::NSColor::clearColor();
+        ns_window.setBackgroundColor(Some(&clear_color));
         ns_window.setAlphaValue(opacity.clamp(0.5, 1.0));
         return Ok(())
     }
