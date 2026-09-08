@@ -379,6 +379,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
               const selection = update.state.selection.main
               selectionRef.current = { from: selection.from, to: selection.to }
               onSelectionRef.current?.(selection.from, selection.to)
+              update.view.dispatch({ effects: EditorView.scrollIntoView(selection.head, { y: 'nearest' }) })
             }
           }),
           EditorView.theme({ '&': { minHeight: '50px' }, '.cm-scroller': { overflow: 'visible', overflowX: 'hidden' }, '.cm-content': { overflowWrap: 'anywhere' } }),
