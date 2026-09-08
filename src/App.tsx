@@ -195,16 +195,24 @@ function App() {
   useEffect(() => {
     if (!isTauriEnvironment()) return
     let disposed = false
-    let unlisten: (() => void) | undefined
+    let unlistenAlwaysOnTop: (() => void) | undefined
+    let unlistenTransparency: (() => void) | undefined
     void listen<boolean>('always-on-top-changed', (event) => {
       setPreferences((current) => ({ ...current, captureAlwaysOnTop: event.payload }))
     }).then((cleanup) => {
       if (disposed) cleanup()
-      else unlisten = cleanup
+      else unlistenAlwaysOnTop = cleanup
+    })
+    void listen('toggle-window-transparency', () => {
+      setPreferences((current) => ({ ...current, windowOpacityEnabled: !current.windowOpacityEnabled }))
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else unlistenTransparency = cleanup
     })
     return () => {
       disposed = true
-      unlisten?.()
+      unlistenAlwaysOnTop?.()
+      unlistenTransparency?.()
     }
   }, [])
 
@@ -836,7 +844,7 @@ function App() {
   if (!loaded) return <main className="loading-screen">Opening your notes…</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isIOSDevice() ? 1 : preferences.zoomLevel / 100 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isIOSDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -963,6 +971,7 @@ function App() {
           <fieldset className="settings-group"><legend>Capture mode</legend>
             <label className="settings-row"><span className="settings-label">Global capture shortcut</span><input className="shortcut-input" value={preferences.captureShortcut} onChange={(event) => setPreferences((current) => ({ ...current, captureShortcut: event.target.value }))} onBlur={() => { void invokeNative('set_capture_shortcut', { shortcut: preferences.captureShortcut }) }} /></label>
             <label className="settings-row"><span className="settings-label">Capture window always on top</span><input type="checkbox" checked={preferences.captureAlwaysOnTop} onChange={(event) => { const alwaysOnTop = event.target.checked; setPreferences((current) => ({ ...current, captureAlwaysOnTop: alwaysOnTop })); void invokeNative('set_capture_window_always_on_top', { alwaysOnTop }) }} /></label>
+            {isTauriEnvironment() && <label className="settings-row settings-range-row"><span className="settings-label">Window transparency</span><span className="settings-range-control"><input type="range" min="50" max="100" step="5" value={preferences.windowOpacity} onChange={(event) => { const windowOpacity = Number(event.target.value); setPreferences((current) => ({ ...current, windowOpacity, windowOpacityEnabled: windowOpacity < 100 })) }} /><output>{preferences.windowOpacity}%</output></span></label>}
             <label className="settings-row"><span className="settings-label">Launch at login</span><input type="checkbox" checked={preferences.launchAtLogin} onChange={(event) => { const launchAtLogin = event.target.checked; setPreferences((current) => ({ ...current, launchAtLogin })); void invokeNative('set_launch_at_login', { enabled: launchAtLogin }) }} /></label>
             <label className="settings-row"><span className="settings-label">Show in menu bar</span><input type="checkbox" checked={preferences.showMenuBar} onChange={(event) => { const showMenuBar = event.target.checked; if (!showMenuBar && !preferences.showDockIcon) return; setPreferences((current) => ({ ...current, showMenuBar })); void invokeNative('set_app_visibility', { showMenuBar, showDockIcon: preferences.showDockIcon }) }} /></label>
             <label className="settings-row"><span className="settings-label">Show dock icon</span><input type="checkbox" checked={preferences.showDockIcon} onChange={(event) => { const showDockIcon = event.target.checked; if (!showDockIcon && !preferences.showMenuBar) return; setPreferences((current) => ({ ...current, showDockIcon })); void invokeNative('set_app_visibility', { showMenuBar: preferences.showMenuBar, showDockIcon }) }} /></label>

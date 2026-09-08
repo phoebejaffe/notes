@@ -255,8 +255,16 @@ pub fn run() {
             let keep_on_top = MenuItemBuilder::with_id("keep-on-top", "Keep on top")
                 .accelerator("CmdOrCtrl+Shift+A")
                 .build(app)?;
-            let window_menu = SubmenuBuilder::new(app, "Window")
-                .item(&keep_on_top)
+            let mut window_menu_builder = SubmenuBuilder::new(app, "Window")
+                .item(&keep_on_top);
+            #[cfg(target_os = "macos")]
+            {
+                let transparency = MenuItemBuilder::with_id("toggle-transparency", "Transparency")
+                    .accelerator("CmdOrCtrl+Shift+T")
+                    .build(app)?;
+                window_menu_builder = window_menu_builder.item(&transparency);
+            }
+            let window_menu = window_menu_builder
                 .close_window()
                 .build()?;
             let menu = MenuBuilder::new(app)
@@ -264,15 +272,18 @@ pub fn run() {
                 .build()?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
-                if event.id() != "keep-on-top" {
-                    return;
-                }
-                if let Some(window) = app.get_webview_window("main") {
-                    if let Ok(current) = window.is_always_on_top() {
-                        let next = !current;
-                        let _ = window.set_always_on_top(next);
-                        let _ = app.emit("always-on-top-changed", next);
+                if event.id() == "keep-on-top" {
+                    if let Some(window) = app.get_webview_window("main") {
+                        if let Ok(current) = window.is_always_on_top() {
+                            let next = !current;
+                            let _ = window.set_always_on_top(next);
+                            let _ = app.emit("always-on-top-changed", next);
+                        }
                     }
+                }
+                #[cfg(target_os = "macos")]
+                if event.id() == "toggle-transparency" {
+                    let _ = app.emit("toggle-window-transparency", ());
                 }
             });
 

@@ -17,6 +17,8 @@ export interface Preferences {
   backupFolder: string
   captureShortcut: string
   captureAlwaysOnTop: boolean
+  windowOpacity: number
+  windowOpacityEnabled: boolean
   launchAtLogin: boolean
   showMenuBar: boolean
   showDockIcon: boolean
@@ -37,6 +39,8 @@ export const defaultPreferences: Preferences = {
   backupFolder: '',
   captureShortcut: 'Ctrl+Alt+N',
   captureAlwaysOnTop: true,
+  windowOpacity: 85,
+  windowOpacityEnabled: false,
   launchAtLogin: false,
   showMenuBar: true,
   showDockIcon: false,
@@ -70,6 +74,11 @@ function clampZoom(value: unknown) {
   return Math.min(150, Math.max(60, Math.round(value / 10) * 10))
 }
 
+function clampWindowOpacity(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return defaultPreferences.windowOpacity
+  return Math.min(100, Math.max(50, Math.round(value / 5) * 5))
+}
+
 function clampRolloverHour(value: unknown) {
   if (typeof value !== 'number' || !Number.isInteger(value)) return defaultPreferences.rolloverHour
   return Math.min(5, Math.max(0, value))
@@ -93,6 +102,8 @@ export function loadPreferences(): Preferences {
       backupFolder: typeof parsed.backupFolder === 'string' ? parsed.backupFolder : defaultPreferences.backupFolder,
       captureShortcut: typeof parsed.captureShortcut === 'string' && parsed.captureShortcut.trim() ? parsed.captureShortcut : defaultPreferences.captureShortcut,
       captureAlwaysOnTop: parsed.captureAlwaysOnTop !== false,
+      windowOpacity: clampWindowOpacity(parsed.windowOpacity),
+      windowOpacityEnabled: parsed.windowOpacityEnabled === true,
       launchAtLogin: parsed.launchAtLogin === true,
       showMenuBar: parsed.showMenuBar !== false || parsed.showDockIcon !== true,
       showDockIcon: parsed.showDockIcon === true,
