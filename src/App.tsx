@@ -145,7 +145,8 @@ function parseDisplayedShortcut(shortcut: string) {
 
 function App() {
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences)
-  const today = useMemo(() => logicalDayKey(new Date(), preferences.rolloverHour), [preferences.rolloverHour])
+  const [currentDate, setCurrentDate] = useState(() => new Date())
+  const today = useMemo(() => logicalDayKey(currentDate, preferences.rolloverHour), [currentDate, preferences.rolloverHour])
   const [days, setDays] = useState(() => [today, shiftLogicalDay(today, -1)])
   const [documents, setDocuments] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
@@ -192,6 +193,11 @@ function App() {
   useEffect(() => watchAuth(setFirebaseUser), [])
 
   useEffect(() => {
+    const timer = window.setInterval(() => setCurrentDate(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
     if (!firebaseUser || !loaded || dataKey) return
     const storedPhrase = loadStoredRecoveryPhrase(firebaseUser.uid)
     if (!storedPhrase) return
@@ -224,10 +230,19 @@ function App() {
       if (!stored.length) {
         savedDocuments[today] = SAMPLE
         documentUpdatedAtRef.current[today] = Date.now()
+      } else if (!(today in savedDocuments)) {
+        savedDocuments[today] = ''
       }
       setDocuments(savedDocuments)
       setLoaded(true)
     }).catch(() => setLoaded(true))
+  }, [today])
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setDays((current) => current.includes(today) ? current : [today, ...current])
+      setDocuments((current) => today in current ? current : { ...current, [today]: '' })
+    })
   }, [today])
 
   useEffect(() => {
@@ -830,7 +845,7 @@ function App() {
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
 
       <section className="day-stream" aria-label="Daily notes">
-        {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
+        {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
           const source = documents[documentDay] ?? ''
           const parsed = parseMarkdown(source)
           return <article className="day-card" data-day={documentDay} key={documentDay}>
