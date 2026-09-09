@@ -295,6 +295,11 @@ fn read_backup(root: String) -> Result<Vec<BackupDocument>, String> {
 }
 
 #[tauri::command]
+fn request_backup_access(root: String) -> Result<(), String> {
+    fs::read_dir(PathBuf::from(root)).map(|_| ()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn write_backup(root: String, folder_name: String, documents: Vec<BackupDocument>) -> Result<Vec<String>, String> {
     let backup_folder = PathBuf::from(root).join(folder_name);
     fs::create_dir_all(&backup_folder).map_err(|error| error.to_string())?;
@@ -439,7 +444,7 @@ pub fn run() {
             app.global_shortcut().register(shortcut)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup, cleanup_backups, read_backup])
+        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup, request_backup_access, cleanup_backups, read_backup])
         .on_window_event(|window, event| {
             if window.label() == "main"
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))

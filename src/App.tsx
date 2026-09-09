@@ -241,6 +241,7 @@ function App() {
   const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [lastBackupAt, setLastBackupAt] = useState<number>()
   const backupDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null)
+  const backupAccessRootRef = useRef('')
   const lastBackupSignatureRef = useRef(loadLastBackupSignature())
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
@@ -411,6 +412,12 @@ function App() {
     void invokeNative('set_launch_at_login', { enabled: preferences.launchAtLogin })
     void invokeNative('set_app_visibility', { showMenuBar: preferences.showMenuBar, showDockIcon: preferences.showDockIcon })
   }, [preferences])
+
+  useEffect(() => {
+    if (!loaded || !isTauriEnvironment() || preferences.backupFrequency === 'off' || !preferences.backupFolder || backupAccessRootRef.current === preferences.backupFolder) return
+    backupAccessRootRef.current = preferences.backupFolder
+    void invoke('request_backup_access', { root: preferences.backupFolder }).catch(() => setBackupState('error'))
+  }, [loaded, preferences.backupFolder, preferences.backupFrequency])
 
   const allTags = useMemo(() => [...new Set(Object.values(documents).flatMap((markdown) => parseMarkdown(markdown).ranges.map((range) => range.tag)))].sort((left, right) => left.localeCompare(right)), [documents])
   const shortcutConflicts = useMemo(() => {
@@ -603,10 +610,11 @@ function App() {
       if (settingsOpen || tagsOpen) return
       window.setTimeout(() => {
         if (settingsOpen || tagsOpen) return
-        const editorHost = document.querySelector(`[data-day="${today}"] .codemirror-host`) as HTMLElement | null
-        if (!editorHost) return
         const savedSelection = editorSelectionRef.current
-        if (hasEditorSelectionRef.current && savedSelection.day === today) {
+        const targetDay = hasEditorSelectionRef.current ? savedSelection.day : today
+        const editorHost = document.querySelector(`[data-day="${targetDay}"] .codemirror-host`) as HTMLElement | null
+        if (!editorHost) return
+        if (hasEditorSelectionRef.current) {
           editorHost.dispatchEvent(new CustomEvent('notes-restore-selection', { detail: { from: savedSelection.from, to: savedSelection.to } }))
         } else {
           editorHost.querySelector<HTMLElement>('.cm-content')?.focus()

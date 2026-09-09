@@ -414,8 +414,14 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
     }
     const restoreSelectionHandler = (event: Event) => {
       const detail = (event as CustomEvent<{ from: number; to: number }>).detail
-      const from = Math.min(Math.max(0, detail.from), view.state.doc.length)
-      const to = Math.min(Math.max(from, detail.to), view.state.doc.length)
+      const current = view.state.selection.main
+      const remembered = selectionRef.current
+      const currentHasCaret = current.from !== 0 || current.to !== 0
+      const rememberedHasCaret = remembered.from !== 0 || remembered.to !== 0
+      const fromValue = currentHasCaret ? current.from : rememberedHasCaret ? remembered.from : detail.from
+      const toValue = currentHasCaret ? current.to : rememberedHasCaret ? remembered.to : detail.to
+      const from = Math.min(Math.max(0, fromValue), view.state.doc.length)
+      const to = Math.min(Math.max(from, toValue), view.state.doc.length)
       view.dispatch({ selection: { anchor: from, head: to } })
       view.focus()
     }
