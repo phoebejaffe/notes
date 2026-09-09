@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { backupFolderName, backupSignature } from './backup'
+import { backupFolderName, backupSignature, foldersOlderThan } from './backup'
 
 describe('backup helpers', () => {
   it('excludes empty documents from change signatures', () => {
@@ -14,5 +14,9 @@ describe('backup helpers', () => {
     expect(backupFolderName('hourly', date)).toBe('2026-09-03-14')
     expect(backupFolderName('daily', date)).toBe('2026-09-03')
     expect(backupFolderName('weekly', date)).toBe('week-2026-08-31')
+  })
+
+  it('only marks generated folders older than retention', () => {
+    expect(foldersOlderThan(['2026-08-01', 'notes', 'week-2026-09-01'], 'month', new Date(2026, 8, 8))).toEqual(['2026-08-01'])
   })
 })

@@ -11,6 +11,7 @@
     "oauth:allow-start",
     "oauth:allow-cancel",
     "shell:allow-open",
+    "notification:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered"

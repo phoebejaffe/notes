@@ -157,6 +157,11 @@ button { cursor: pointer; font: inherit; }
 .settings-row .shortcut-input { width: 92px; text-align: center; }
 .settings-action { padding: 5px 9px; border: 1px solid #d9d4cb; border-radius: 6px; color: #625b54; background: #faf8f5; font-size: 12px; }
 .settings-action:hover { background: #f1ede8; }
+.cloud-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-top: 10px; }
+.cloud-actions > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sync-prompt { position: relative; padding-right: 34px; }
+.sync-prompt-close { position: absolute; top: 5px; right: 6px; padding: 2px 5px; border: 0; color: inherit; background: transparent; font-size: 17px; line-height: 1; }
+.command-palette button.command-selected { color: #fff; background: #806790; }
 .settings-link { margin-left: 6px; padding: 0; border: 0; color: #806790; background: transparent; font-size: 11px; text-decoration: underline; text-underline-offset: 2px; }
 .settings-link:hover { color: #62506f; }
 .sync-error { color: #a45d52; overflow-wrap: anywhere; }
@@ -233,4 +238,35 @@ button { cursor: pointer; font: inherit; }
 .app-footer { display: flex; justify-content: space-between; padding-top: 18px; color: #988f86; font-size: 11px; }
 .loading-screen { display: grid; min-height: 100vh; place-items: center; color: #817970; font: 14px Georgia, serif; }
 @media (max-width: 700px) { .app-shell { padding: 78px 12px 24px; } .topbar { padding-inline: 12px; } .app-footer { gap: 8px; flex-direction: column; } .tag-bar { justify-content: stretch; } .tag-bar input { min-width: 0; flex: 1; } }
-@media (pointer: coarse) { input, select, textarea, button { touch-action: manipulation; } input, select, textarea { font-size: 16px; } }
+@media (pointer: coarse) { input, select, textarea, button { touch-action: manipulation; } input, select, textarea { font-size: 16px; } .tag-shortcut { display: none; } }
+.offline-indicator { position: relative; display: inline-flex; align-items: center; padding: 4px 7px; border: 1px solid #d99a91; border-radius: 999px; color: #9a5145; background: #fff2ef; font-size: 10px; line-height: 1; }
+.offline-indicator:hover, .offline-indicator:focus-visible { border-color: #b84f43; background: #fbe8e4; }
+.offline-tooltip { position: absolute; z-index: 25; top: calc(100% + 8px); right: 0; display: none; width: 270px; padding: 9px 10px; border: 1px solid #d99a91; border-radius: 7px; color: #8f4035; background: #fff5f2; box-shadow: 0 8px 20px #392c1f22; font-size: 11px; line-height: 1.4; text-align: left; white-space: normal; }
+.offline-indicator:hover .offline-tooltip, .offline-indicator:focus-visible .offline-tooltip { display: block; }
+.tag-bar-browser { top: 54px; bottom: auto; border-top: 0; border-bottom: 1px solid #d1c4d8; box-shadow: 0 8px 24px #392c1f12; }
+.tag-bar-browser + .modal-backdrop { z-index: 20; }
+.tag-add-toggle { flex: 0 0 auto; padding: 6px 10px; color: #806790; background: transparent; border: 1px solid #d8cbe0; border-radius: 6px; font-size: 11px; }
+.command-palette { display: flex; width: min(520px, 100%); max-height: min(520px, calc(100vh - 40px)); overflow-y: auto; flex-direction: column; gap: 3px; padding: 12px; border: 1px solid #d9d4cb; background: #fffdf9; box-shadow: 0 18px 48px #392c1f26; }
+.command-palette input { margin-bottom: 6px; padding: 10px; border: 1px solid #d9d4cb; border-radius: 6px; font: inherit; }
+.command-palette button { padding: 10px; border: 0; border-radius: 6px; color: #504941; background: transparent; text-align: left; }
+.command-palette button:hover { background: #f1ede8; }
+.future-day-panel { position: fixed; z-index: 15; top: 62px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 10px; transform: translateX(-50%); border: 1px solid #d9d4cb; border-radius: 8px; background: #fffdf9; box-shadow: 0 12px 30px #392c1f22; font-size: 12px; }
+.future-day-panel button, .future-notice button { padding: 5px 8px; border: 0; border-radius: 5px; color: #fff; background: #806790; font-size: 11px; }
+.future-notice { position: fixed; z-index: 18; right: 16px; bottom: 68px; display: flex; align-items: center; gap: 8px; max-width: min(440px, calc(100% - 32px)); padding: 10px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #62506f; background: #f8f5fa; box-shadow: 0 8px 24px #392c1f18; font-size: 12px; }
+.privacy-status { display: grid; grid-template-columns: minmax(110px, .4fr) 1fr; gap: 8px 14px; margin: 12px 0 18px; padding: 12px 0; border-block: 1px solid #eeeae5; font-size: 12px; }
+.privacy-status strong { color: #756a7d; }
+.diff-viewer { max-height: 240px; margin-top: 6px; overflow: auto; border: 1px solid #e1dbd3; border-radius: 5px; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.diff-row { display: block; padding: 2px 7px; white-space: pre-wrap; }
+.diff-added { color: #287346; background: #eaf7ee; }
+.diff-removed { color: #a14c38; background: #fff0ec; }
+.onboarding-list { padding-left: 22px; color: #625b54; font-size: 13px; line-height: 1.6; }
+.theme-dark .offline-indicator { border-color: #a45d52; color: #f0aaa0; background: #3c2928; }
+.theme-dark .offline-indicator:hover, .theme-dark .offline-indicator:focus-visible { background: #50302e; }
+.theme-dark .offline-tooltip { border-color: #a45d52; color: #f0aaa0; background: #3c2928; }
+.theme-dark .tag-bar-browser, .theme-dark .command-palette, .theme-dark .future-day-panel { background: #2a272b; border-color: #4d4649; }
+.theme-dark .command-palette input { color: #e8e2dc; background: #332f33; border-color: #4d4649; }
+.theme-dark .command-palette button { color: #e8e2dc; }
+.theme-dark .command-palette button:hover { background: #383338; }
+.theme-dark .future-notice { color: #e8e2dc; background: #332f3b; border-color: #4d4659; }
+.theme-dark .privacy-status { border-color: #403b3f; }
+@media (max-width: 700px) { .app-shell { padding-top: 124px; padding-bottom: 24px; } .tag-bar-browser { top: 48px; justify-content: flex-start; } .future-day-panel { top: 104px; max-width: calc(100% - 24px); } .future-notice { right: 12px; bottom: 12px; } }

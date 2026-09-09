@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, markdownMarkState, parseMarkdown, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
-import { loadPreferences, savePreferences, type Preferences } from './preferences'
-import { backupFolderName, backupSignature, pickBackupDirectory, writeBackup } from './backup'
+import { loadPreferences, savePreferences, TOOLBAR_CONTROLS, type Preferences } from './preferences'
+import { backupFolderName, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
+import { diffLines, type ListKind } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
 import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'
 import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
@@ -83,6 +85,16 @@ function storeRecoveryPhrase(uid: string, phrase: string) {
   localStorage.setItem(recoveryPhraseStorageKey(uid), phrase)
 }
 
+function loadFutureDays() {
+  try { return JSON.parse(localStorage.getItem('notes-future-days') ?? '[]') as string[] } catch { return [] }
+}
+
+function storeFutureDay(day: string) {
+  const days = new Set(loadFutureDays())
+  days.add(day)
+  localStorage.setItem('notes-future-days', JSON.stringify([...days]))
+}
+
 function loadTagColors() {
   try {
     return JSON.parse(localStorage.getItem('notes-tag-colors') ?? '{}') as Record<string, string>
@@ -91,12 +103,27 @@ function loadTagColors() {
   }
 }
 
+function loadLastBackupSignature() {
+  try { return localStorage.getItem('notes-last-backup-signature') ?? '' } catch { return '' }
+}
+
 function FilterIcon({ active }: { active: boolean }) {
   return <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} aria-hidden="true"><path d="M3 4.6C3 4.03995 3 3.75992 3.10899 3.54601C3.20487 3.35785 3.35785 3.20487 3.54601 3.10899C3.75992 3 4.03995 3 4.6 3H19.4C19.9601 3 20.2401 3 20.454 3.10899C20.6422 3.20487 20.7951 3.35785 20.891 3.54601C21 3.75992 21 4.03995 21 4.6V6.33726C21 6.58185 21 6.70414 20.9724 6.81923C20.9479 6.92127 20.9075 7.01881 20.8526 7.10828C20.7908 7.2092 20.7043 7.29568 20.5314 7.46863L14.4686 13.5314C14.2957 13.7043 14.2092 13.7908 14.1474 13.8917C14.0925 13.9812 14.0521 14.0787 14.0276 14.1808C14 14.2959 14 14.4182 14 14.6627V17L10 21V14.6627C10 14.4182 10 14.2959 9.97237 14.1808C9.94787 14.0787 9.90747 13.9812 9.85264 13.8917C9.7908 13.7908 9.70432 13.7043 9.53137 13.5314L3.46863 7.46863C3.29568 7.29568 3.2092 7.2092 3.14736 7.10828C3.09253 7.01881 3.05213 6.92127 3.02763 6.81923C3 6.70414 3 6.58185 3 6.33726V4.6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 
 function MuteIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M22 10.5V12C22 16.714 22 19.071 20.536 20.536C19.071 22 16.714 22 12 22C7.286 22 4.929 22 3.464 20.536C2 19.071 2 16.714 2 12C2 7.286 2 4.929 3.464 3.464C4.929 2 7.286 2 12 2H13.5" /><path d="M22 2L17 7M17 2L22 7" /></svg>
+}
+
+function ListIcon({ kind }: { kind: 'bullet' | 'number' | 'task' | 'indent' | 'unindent' }) {
+  if (kind === 'bullet') return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth="3" /></svg>
+  if (kind === 'number') return <span className="list-number-icon">1.<br />2.<br />3.</span>
+  if (kind === 'task') return <span className="list-task-icon">☑</span>
+  return <span aria-hidden="true">{kind === 'indent' ? '→' : '←'}</span>
+}
+
+function OfflineIndicator() {
+  return <button className="offline-indicator" type="button" aria-label="Offline. Show sync warning" title="Offline" aria-describedby="offline-sync-tooltip"><span aria-hidden="true">Offline</span><span className="offline-tooltip" id="offline-sync-tooltip">Changes will still be synced, but if another device changes your notes before this device reconnects, those changes could be lost.</span></button>
 }
 
 function downloadMarkdown(markdown: string, filename: string) {
@@ -118,8 +145,19 @@ async function invokeNative(command: string, args?: Record<string, unknown>) {
   await invoke(command, args)
 }
 
+async function notifyMac(enabled: boolean, title: string, body: string) {
+  if (!isTauriEnvironment() || !enabled) return
+  try {
+    let allowed = await isPermissionGranted()
+    if (!allowed) allowed = await requestPermission() === 'granted'
+    if (allowed) sendNotification({ title, body })
+  } catch {
+    return
+  }
+}
+
 interface Selection { day: string; from: number; to: number }
-type EditorCommandKind = 'bold' | 'italic' | 'strikethrough' | 'mute'
+type EditorCommandKind = 'bold' | 'italic' | 'strikethrough' | 'mute' | ListKind | 'indent' | 'unindent'
 interface EditorCommand { day: string; id: number; kind: EditorCommandKind; selection: { from: number; to: number } }
 
 function matchesShortcut(event: KeyboardEvent, shortcut: string) {
@@ -152,6 +190,16 @@ function App() {
   const [loaded, setLoaded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [privacyOpen, setPrivacyOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !loadPreferences().onboardingDismissed)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [commandIndex, setCommandIndex] = useState(0)
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine)
+  const [futureNotice, setFutureNotice] = useState<string>()
+  const [futureDateInput, setFutureDateInput] = useState('')
+  const [importPreview, setImportPreview] = useState<{ documents: ImportedBackupDocument[]; invalid: string[] }>()
+  const [importMode, setImportMode] = useState<'additive' | 'replace'>('additive')
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
   const [tagToRename, setTagToRename] = useState('')
@@ -172,8 +220,9 @@ function App() {
   const toolbarPointerRef = useRef(false)
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [lastBackupAt, setLastBackupAt] = useState<number>()
   const backupDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null)
-  const lastBackupSignatureRef = useRef('')
+  const lastBackupSignatureRef = useRef(loadLastBackupSignature())
   const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const [captureFocused, setCaptureFocused] = useState(() => document.hasFocus())
@@ -189,8 +238,27 @@ function App() {
   const documentsRef = useRef<Record<string, string>>({})
   const remoteUpdateRef = useRef(false)
   const streamEndRef = useRef<HTMLDivElement>(null)
+  const todayRef = useRef<HTMLElement>(null)
 
   useEffect(() => watchAuth(setFirebaseUser), [])
+
+  useEffect(() => {
+    const update = () => setIsOnline(navigator.onLine)
+    window.addEventListener('online', update)
+    window.addEventListener('offline', update)
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) }
+  }, [])
+
+  useEffect(() => {
+    function handlePaletteShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandPaletteOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', handlePaletteShortcut)
+    return () => window.removeEventListener('keydown', handlePaletteShortcut)
+  }, [])
 
   useEffect(() => {
     if (!isTauriEnvironment()) return
@@ -229,6 +297,14 @@ function App() {
     const timer = window.setInterval(() => setCurrentDate(new Date()), 60_000)
     return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (!loaded || !documents[today] || !loadFutureDays().includes(today)) return
+    const noticeKey = `notes-future-notice:${today}`
+    if (localStorage.getItem(noticeKey)) return
+    localStorage.setItem(noticeKey, 'shown')
+    queueMicrotask(() => setFutureNotice(`Future note opened for ${formatLogicalDay(today, preferences.dateFormat)}. You can snooze this reminder.`))
+  }, [documents, loaded, preferences.dateFormat, today])
 
   useEffect(() => {
     if (!firebaseUser || !loaded || dataKey) return
@@ -562,21 +638,27 @@ function App() {
     const directory = backupDirectoryRef.current
     if (!loaded || (!directory && !preferences.backupFolder) || preferences.backupFrequency === 'off') return
     const dailyDocuments = Object.entries(documents).map(([day, markdown]) => ({ day, markdown, updatedAt: Date.now() }))
-    const signature = backupSignature(dailyDocuments)
-    if (!dailyDocuments.some((document) => document.markdown) || signature === lastBackupSignatureRef.current) return
+    const documentSignature = backupSignature(dailyDocuments)
+    const folderName = backupFolderName(preferences.backupFrequency)
+    const currentBackupSignature = `${folderName}:${documentSignature}`
+    if (!dailyDocuments.some((document) => document.markdown) || currentBackupSignature === lastBackupSignatureRef.current) return
     setBackupState('saving')
     try {
       if (isTauriEnvironment()) {
-        await invoke('write_backup', { root: preferences.backupFolder, folderName: backupFolderName(preferences.backupFrequency), documents: dailyDocuments.map(({ day, markdown }) => ({ day, markdown })) })
+        await invoke('write_backup', { root: preferences.backupFolder, folderName, documents: dailyDocuments.map(({ day, markdown }) => ({ day, markdown })) })
       } else if (directory) {
         await writeBackup(directory, dailyDocuments, preferences.backupFrequency)
+        if (preferences.backupRetention !== 'off') await cleanupBrowserBackups(directory, preferences.backupRetention)
       }
-      lastBackupSignatureRef.current = signature
+      lastBackupSignatureRef.current = currentBackupSignature
+      localStorage.setItem('notes-last-backup-signature', currentBackupSignature)
+      setLastBackupAt(Date.now())
       setBackupState('saved')
     } catch {
       setBackupState('error')
+      void notifyMac(preferences.notificationsEnabled, 'Notes backup failed', 'Automatic backup could not save your latest notes.')
     }
-  }, [documents, loaded, preferences.backupFolder, preferences.backupFrequency])
+  }, [documents, loaded, preferences.backupFolder, preferences.backupFrequency, preferences.backupRetention, preferences.notificationsEnabled])
 
   useEffect(() => {
     if (!loaded) return
@@ -654,6 +736,16 @@ function App() {
     }
   }
 
+  async function copyRecoveryPhrase() {
+    if (!recoveryPhrase) return
+    try {
+      await navigator.clipboard.writeText(recoveryPhrase)
+      setSyncMessage('Recovery phrase copied to the clipboard.')
+    } catch {
+      setSyncMessage('Could not copy the recovery phrase.')
+    }
+  }
+
   async function signIn() {
     setSyncState('working')
     setSyncMessage('Opening Google sign-in in your browser…')
@@ -711,6 +803,7 @@ function App() {
     } catch {
       setSyncState('error')
       setSyncMessage('Sync failed. Check your Firebase setup and recovery phrase.')
+      void notifyMac(preferences.notificationsEnabled, 'Notes sync failed', 'Encrypted sync could not complete. Open Notes to retry.')
     }
   }
 
@@ -838,12 +931,67 @@ function App() {
   }
 
   function jumpToToday() {
-    document.querySelector(`[data-day="${today}"]`)?.scrollIntoView({ block: 'start' })
+    todayRef.current?.scrollIntoView({ block: 'start' })
+  }
+
+  function openFutureDay(day: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(day) || day <= today) return
+    storeFutureDay(day)
+    setDays((current) => current.includes(day) ? current : [day, ...current])
+    setDocuments((current) => day in current ? current : { ...current, [day]: '' })
+    window.setTimeout(() => document.querySelector(`[data-day="${day}"]`)?.scrollIntoView({ block: 'start' }), 0)
   }
 
   function reloadApp() {
     window.location.reload()
   }
+
+  async function previewImport() {
+    try {
+      const directory = await pickBackupDirectory()
+      setImportPreview(await readBackupDirectory(directory))
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : 'Could not read the backup folder.')
+    }
+  }
+
+  function applyImport() {
+    if (!importPreview) return
+    const imported = new Map(importPreview.documents.map((document) => [document.day, document.markdown]))
+    const next = { ...documents }
+    if (importMode === 'replace') {
+      Object.keys(next).forEach((day) => { delete next[day] })
+    }
+    imported.forEach((markdown, day) => {
+      if (importMode === 'replace' || !(day in next)) next[day] = markdown
+      else if (next[day] !== markdown && markdown) next[day] = `${next[day]}${next[day].endsWith('\\n') ? '' : '\\n'}\\n${markdown}`
+      documentUpdatedAtRef.current[day] = currentTimestamp()
+    })
+    setDocuments(next)
+    setDays((current) => [...new Set([...Object.keys(next), ...current])].sort((left, right) => right.localeCompare(left)))
+    setImportPreview(undefined)
+  }
+
+  function executeCommand(command: string) {
+    setCommandPaletteOpen(false)
+    setCommandQuery('')
+    setCommandIndex(0)
+    if (command === 'today') jumpToToday()
+    if (command === 'search') setSearchOpen(true)
+    if (command === 'settings') setSettingsOpen(true)
+    if (command === 'privacy') setPrivacyOpen(true)
+    if (command === 'sync') void syncNow()
+    if (command === 'backup') void performBackup()
+    if (command === 'import') void previewImport()
+    if (command === 'future') setFutureDateInput(shiftLogicalDay(today, 1))
+    if (command === 'export') exportAllMarkdown()
+    if (command === 'raw') setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' }))
+  }
+
+  const commandItems = [
+    ['today', 'Jump to today'], ['future', 'Show future days'], ['search', 'Search notes'], ['settings', 'Open settings'], ['privacy', 'Privacy center'],
+    ['raw', sourceMode ? 'Use normal editor' : 'Use raw editor'], ['sync', 'Sync now'], ['backup', 'Backup now'], ['import', 'Import backup'], ['export', 'Export all notes'],
+  ].filter(([, label]) => label.toLocaleLowerCase().includes(commandQuery.toLocaleLowerCase()))
 
   const syncPrompt = !firebaseConfigured
     ? 'Cloud sync is not enabled. Configure Firebase to sign in and sync your notes.'
@@ -859,6 +1007,7 @@ function App() {
         <div className="topbar-left" />
         <div className="topbar-right">
           <button className="search-button" type="button" aria-label="Search" aria-expanded={searchOpen} onClick={() => setSearchOpen((open) => !open)}>⌕</button>
+          {!isOnline && <OfflineIndicator />}
           <button className={`filter-button icon-button${filterTags.length || hideMutedLines ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0 || hideMutedLines} /></button>
           <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
           {saveState === 'saving' && <span className="save-spinner" role="status" aria-label="Saving" />}
@@ -866,6 +1015,9 @@ function App() {
         {menuOpen && <nav className="menu-panel" aria-label="Notes menu">
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
+          <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
+          <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
+          <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
@@ -879,11 +1031,15 @@ function App() {
         {filterOpen && <div className="filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </header>}
       {captureMode && <div className="capture-menu">
+        {!isOnline && <OfflineIndicator />}
         <button className={`filter-button icon-button${filterTags.length || hideMutedLines ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0 || hideMutedLines} /></button>
         <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
+          <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
+          <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
+          <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
@@ -899,13 +1055,16 @@ function App() {
       </div>}
 
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
-      {!firebaseConfigured ? <p className="sync-prompt" role="status">{syncPrompt}</p> : !firebaseUser ? <p className="sync-prompt" role="status"><button className="sync-prompt-link" type="button" onClick={() => setSettingsOpen(true)}>Sign in with Google</button> to enable encrypted sync.</p> : syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
+      {futureDateInput && <section className="future-day-panel" role="dialog" aria-label="Open a future day"><label>Future day <input type="date" value={futureDateInput} onChange={(event) => setFutureDateInput(event.target.value)} /></label><button type="button" onClick={() => { openFutureDay(futureDateInput); setFutureDateInput('') }}>Open</button><button type="button" onClick={() => setFutureDateInput('')}>Cancel</button></section>}
+      {futureNotice && <div className="future-notice" role="status">{futureNotice}<button type="button" onClick={() => setFutureNotice(undefined)}>Dismiss</button><button type="button" onClick={() => setFutureNotice(undefined)}>Snooze</button></div>}
+      {importPreview && <div className="modal-backdrop" role="presentation"><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-heading"><div><span className="eyebrow">Data</span><h2 id="import-title">Review backup import</h2></div><button className="modal-close" type="button" onClick={() => setImportPreview(undefined)}>×</button></div><p className="settings-help">{importPreview.documents.length} Markdown days found; {importPreview.invalid.length} files ignored. Importing can change local notes.</p><label className="settings-row"><span className="settings-label">Import mode</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as 'additive' | 'replace')}><option value="additive">Add missing and append collisions</option><option value="replace">Replace all local notes</option></select></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={applyImport}>Import and continue</button><button className="settings-action" type="button" onClick={() => setImportPreview(undefined)}>Cancel</button></div></section></div>}
+      {!firebaseConfigured ? <p className="sync-prompt" role="status">{syncPrompt}</p> : !firebaseUser && !preferences.syncPromptDismissed ? <p className="sync-prompt" role="status"><button className="sync-prompt-link" type="button" onClick={() => { void signIn() }}>Sign in with Google</button> to enable encrypted sync.<button className="sync-prompt-close" type="button" aria-label="Dismiss sync prompt" onClick={() => setPreferences((current) => ({ ...current, syncPromptDismissed: true }))}>×</button></p> : syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
 
       <section className="day-stream" aria-label="Daily notes">
         {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
           const source = documents[documentDay] ?? ''
           const parsed = parseMarkdown(source)
-          return <article className="day-card" data-day={documentDay} key={documentDay}>
+          return <article className="day-card" data-day={documentDay} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
               <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => { const nextSelection = { day: documentDay, from, to }; editorSelectionRef.current = nextSelection; setSelection(nextSelection) }} focusAtStart={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
@@ -917,20 +1076,28 @@ function App() {
         <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
       </section>
 
-      {!sourceMode && loaded && <div className="tag-bar" role="toolbar" aria-label="Formatting and tags" style={{ bottom: `calc(${keyboardOffset}px + env(safe-area-inset-bottom))` }}>
+      {!sourceMode && loaded && <div className={`tag-bar${isTauriEnvironment() ? ' tag-bar-native' : ' tag-bar-browser'}`} role="toolbar" aria-label="Formatting and tags" style={isTauriEnvironment() ? { bottom: `calc(${keyboardOffset}px + env(safe-area-inset-bottom))` } : undefined}>
         <div className="tag-format-actions">
-          <button className={`tag-format-button${activeMarks.bold ? ' format-active' : ''}`} type="button" aria-label="Bold" aria-pressed={activeMarks.bold} title="Bold" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('bold') }} onClick={() => runEditorCommandFromClick('bold')}><strong>B</strong></button>
-          <button className={`tag-format-button${activeMarks.italic ? ' format-active' : ''}`} type="button" aria-label="Italic" aria-pressed={activeMarks.italic} title="Italic" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('italic') }} onClick={() => runEditorCommandFromClick('italic')}><em>I</em></button>
-          <button className={`tag-format-button${activeMarks.strikethrough ? ' format-active' : ''}`} type="button" aria-label="Strikethrough" aria-pressed={activeMarks.strikethrough} title="Strikethrough" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('strikethrough') }} onClick={() => runEditorCommandFromClick('strikethrough')}><span className="strikethrough-label">S</span></button>
-          <button className={`tag-format-button${activeMarks.mute ? ' format-active' : ''}`} type="button" aria-label="Mute or unmute lines" aria-pressed={activeMarks.mute} title="Mute or unmute lines" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('mute') }} onClick={() => runEditorCommandFromClick('mute')}><MuteIcon /></button>
+          {preferences.toolbarControls.bold && <button className={`tag-format-button${activeMarks.bold ? ' format-active' : ''}`} type="button" aria-label="Bold" aria-pressed={activeMarks.bold} title="Bold" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('bold') }} onClick={() => runEditorCommandFromClick('bold')}><strong>B</strong></button>}
+          {preferences.toolbarControls.italic && <button className={`tag-format-button${activeMarks.italic ? ' format-active' : ''}`} type="button" aria-label="Italic" aria-pressed={activeMarks.italic} title="Italic" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('italic') }} onClick={() => runEditorCommandFromClick('italic')}><em>I</em></button>}
+          {preferences.toolbarControls.strikethrough && <button className={`tag-format-button${activeMarks.strikethrough ? ' format-active' : ''}`} type="button" aria-label="Strikethrough" aria-pressed={activeMarks.strikethrough} title="Strikethrough" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('strikethrough') }} onClick={() => runEditorCommandFromClick('strikethrough')}><span className="strikethrough-label">S</span></button>}
+          {preferences.toolbarControls.mute && <button className={`tag-format-button${activeMarks.mute ? ' format-active' : ''}`} type="button" aria-label="Mute or unmute lines" aria-pressed={activeMarks.mute} title="Mute or unmute lines" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('mute') }} onClick={() => runEditorCommandFromClick('mute')}><MuteIcon /></button>}
+          {(['bullet', 'number', 'task', 'indent', 'unindent'] as const).filter((control) => preferences.toolbarControls[control]).map((control) => <button className="tag-format-button" type="button" key={control} aria-label={control} title={control} onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer(control) }} onClick={() => runEditorCommandFromClick(control)}><ListIcon kind={control} /></button>)}
         </div>
         <div className="active-tag-chips">{currentTags.map((tag) => <span className="active-tag-chip" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeSelectedTag(tag)}>×</button></span>)}</div>
-        <span className="popover-label">Tag</span>
+        {preferences.toolbarControls.tag && <>
+        <button className="tag-add-toggle" type="button" onClick={() => setTagBarOpen((open) => !open)} aria-expanded={tagBarOpen}>+ Tag</button>
+        {tagBarOpen && <>
         <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" autoComplete="on" autoCorrect="on" autoCapitalize="none" list="tag-suggestions" />
         <datalist id="tag-suggestions">{allTags.map((tag) => <option value={tag} key={tag} />)}</datalist>
         <button type="button" onPointerDown={(event) => event.preventDefault()} onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
         {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
-        <span className="tag-shortcut">⌘T</span>
+        <span className="tag-shortcut">⌘T</span></>}
+        </>}
+      </div>}
+
+      {commandPaletteOpen && <div className="modal-backdrop command-palette-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setCommandPaletteOpen(false) }}>
+        <section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><input autoFocus value={commandQuery} onChange={(event) => { setCommandQuery(event.target.value); setCommandIndex(0) }} placeholder="Type a command…" onKeyDown={(event) => { if (event.key === 'Escape') setCommandPaletteOpen(false); if (event.key === 'ArrowDown') { event.preventDefault(); setCommandIndex((index) => Math.min(index + 1, commandItems.length - 1)) }; if (event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex((index) => Math.max(index - 1, 0)) }; if (event.key === 'Enter' && commandItems[commandIndex]) executeCommand(commandItems[commandIndex][0]) }} />{commandItems.map(([key, label], index) => <button className={index === commandIndex ? 'command-selected' : ''} type="button" key={key} onClick={() => executeCommand(key)}>{label}</button>)}</section>
       </div>}
 
       {shortcutHelpOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setShortcutHelpOpen(false) }}>
@@ -939,6 +1106,10 @@ function App() {
           <div className="shortcut-help-list">{Object.entries(SHORTCUT_LABELS).map(([name, label]) => <div className="shortcut-help-row" key={name}><span>{label}</span><kbd>{formatShortcut(preferences.shortcuts[name] ?? '')}</kbd></div>)}{BUILTIN_SHORTCUTS.map(([shortcut, label]) => <div className="shortcut-help-row" key={shortcut}><span>{label}</span><kbd>{formatShortcut(shortcut)}</kbd></div>)}</div>
         </section>
       </div>}
+
+      {onboardingOpen && !captureMode && <div className="modal-backdrop" role="presentation"><section className="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><div className="modal-heading"><div><span className="eyebrow">Welcome</span><h2 id="onboarding-title">Set up Notes</h2></div></div><p className="settings-description">Notes works offline first. Your notes stay on this device unless you choose encrypted cloud sync.</p><ol className="onboarding-list"><li>Add Notes to your home screen from your browser’s Share or menu button.</li><li>Sign in with Google in Settings if you want cloud sync.</li><li>Create or enter your recovery phrase to unlock encrypted sync.</li></ol><button className="settings-action" type="button" onClick={() => { setOnboardingOpen(false); setPreferences((current) => ({ ...current, onboardingDismissed: true })) }}>Continue to Notes</button><button className="settings-link" type="button" onClick={() => { setOnboardingOpen(false); setSettingsOpen(true) }}>Open sync settings</button></section></div>}
+
+      {privacyOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setPrivacyOpen(false) }}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-title"><div className="modal-heading"><div><span className="eyebrow">Privacy</span><h2 id="privacy-title">Privacy center</h2></div><button className="modal-close" type="button" aria-label="Close privacy center" onClick={() => setPrivacyOpen(false)}>×</button></div><p className="settings-help">Notes stores your working copy locally in IndexedDB. Cloud notes are encrypted before upload.</p><div className="privacy-status"><strong>Local notes</strong><span>{Object.values(documents).filter(Boolean).length} non-empty days, from {oldestDocumentDay}</span><strong>Cloud sync</strong><span>{!firebaseConfigured ? 'Not configured' : !firebaseUser ? 'Signed out' : dataKey ? 'Unlocked and ready' : 'Signed in, encryption locked'}</span><strong>Backup</strong><span>{preferences.backupFrequency === 'off' ? 'Disabled' : backupState === 'error' ? 'Last backup failed' : lastBackupAt ? `Last saved ${new Date(lastBackupAt).toLocaleString()}` : 'Enabled, not run yet'}</span></div><button className="settings-action" type="button" onClick={() => { exportAllMarkdown(); setPrivacyOpen(false) }}>Export all notes</button><button className="settings-action" type="button" onClick={() => { setPrivacyOpen(false); setSettingsOpen(true) }}>Open privacy settings</button></section></div>}
 
       {settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
@@ -960,22 +1131,30 @@ function App() {
             <label className="settings-row"><span className="settings-label">Compact spacing</span><input type="checkbox" checked={preferences.compactSpacing} onChange={(event) => setPreferences((current) => ({ ...current, compactSpacing: event.target.checked }))} /></label>
           </fieldset>
 
+          <fieldset className="settings-group"><legend>Toolbar</legend>
+            {TOOLBAR_CONTROLS.map(({ key, label }) => <label className="settings-row" key={key}><span className="settings-label">{label}</span><input type="checkbox" checked={preferences.toolbarControls[key]} onChange={(event) => setPreferences((current) => ({ ...current, toolbarControls: { ...current.toolbarControls, [key]: event.target.checked } }))} /></label>)}
+          </fieldset>
+
           <fieldset className="settings-group"><legend>Cloud sync</legend>
             {!firebaseConfigured ? <p className="settings-help">Add the VITE_FIREBASE_* values from FIREBASE_SETUP.md to enable Google sign-in and encrypted sync.</p> : !firebaseUser ? <><button className="settings-action" type="button" onClick={() => { void signIn() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Opening Google…' : 'Sign in with Google'}</button>{syncMessage && <p className="settings-help sync-error">{syncMessage}</p>}</> : <>
               <p className="settings-help">Signed in as {firebaseUser.email || firebaseUser.displayName || 'Google user'}.</p>
               {!dataKey && <><div className="settings-row"><span className="settings-label">Recovery phrase <button className="settings-link" type="button" onClick={() => { void generateRecoveryPhrase() }}>Generate random phrase</button></span><input value={recoveryPhrase} onChange={(event) => setRecoveryPhrase(event.target.value)} placeholder="12 words" autoComplete="off" /></div><button className="settings-action" type="button" onClick={() => { void prepareSync() }}>Unlock encrypted sync</button></>}
-              {recoveryPhrase && <p className="settings-help">Write down the displayed recovery phrase and keep it private. It cannot be reset.</p>}
-              {dataKey && <button className="settings-action" type="button" onClick={() => { void syncNow() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Syncing…' : 'Sync now'}</button>}
+              {!dataKey && recoveryPhrase && <p className="settings-help">Write down the displayed recovery phrase and keep it private. It cannot be reset.</p>}
+              <div className="cloud-actions"><div>{dataKey && <button className="settings-action" type="button" onClick={() => { void syncNow() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Syncing…' : 'Sync now'}</button>}{dataKey && recoveryPhrase && <button className="settings-action" type="button" onClick={() => { void copyRecoveryPhrase() }}>Copy recovery phrase</button>}</div><div>{!deleteCloudDataOpen ? <button className="settings-danger-action" type="button" onClick={() => setDeleteCloudDataOpen(true)}>Delete cloud data</button> : <div className="settings-danger-confirm"><strong>Delete all cloud notes and the encryption key?</strong><p>This cannot be undone. Your local notes will be kept, but they will no longer match the deleted cloud key.</p><div className="settings-danger-actions"><button className="settings-action" type="button" onClick={() => setDeleteCloudDataOpen(false)}>Cancel</button><button className="settings-danger-action" type="button" onClick={() => { void deleteCloudData() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Deleting…' : 'Permanently delete'}</button></div></div>}<button className="settings-action" type="button" onClick={() => { void signOutOfGoogle(); setDataKey(undefined); setRecoveryPhrase(''); setSyncState('idle'); setSyncMessage(''); setDeleteCloudDataOpen(false) }}>Sign out</button></div></div>
               {syncMessage && <p className="settings-help">{syncMessage}</p>}
-              {!deleteCloudDataOpen ? <button className="settings-danger-action" type="button" onClick={() => setDeleteCloudDataOpen(true)}>Delete cloud data</button> : <div className="settings-danger-confirm"><strong>Delete all cloud notes and the encryption key?</strong><p>This cannot be undone. Your local notes will be kept, but they will no longer match the deleted cloud key.</p><div className="settings-danger-actions"><button className="settings-action" type="button" onClick={() => setDeleteCloudDataOpen(false)}>Cancel</button><button className="settings-danger-action" type="button" onClick={() => { void deleteCloudData() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Deleting…' : 'Permanently delete'}</button></div></div>}
-              <button className="settings-action" type="button" onClick={() => { void signOutOfGoogle(); setDataKey(undefined); setRecoveryPhrase(''); setSyncState('idle'); setSyncMessage(''); setDeleteCloudDataOpen(false) }}>Sign out</button>
             </>}
           </fieldset>
 
           <fieldset className="settings-group"><legend>Data &amp; backups</legend>
-            <label className="settings-row"><span className="settings-label">Automatic backup</span><select value={preferences.backupFrequency} onChange={(event) => setPreferences((current) => ({ ...current, backupFrequency: event.target.value as Preferences['backupFrequency'] }))}><option value="off">Off</option><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+            <label className="settings-row"><span className="settings-label">Automatic backup</span><select value={preferences.backupFrequency} onChange={(event) => setPreferences((current) => ({ ...current, backupFrequency: event.target.value as Preferences['backupFrequency'] }))}><option value="off">Off</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+            <label className="settings-row"><span className="settings-label">Delete backups after</span><select value={preferences.backupRetention} onChange={(event) => setPreferences((current) => ({ ...current, backupRetention: event.target.value as Preferences['backupRetention'] }))}><option value="off">Keep all</option><option value="week">1 week</option><option value="month">1 month</option><option value="three-months">3 months</option></select></label>
             {preferences.backupFrequency !== 'off' && <label className="settings-row"><span className="settings-label">Backup folder</span><button className="settings-action" type="button" onClick={() => { void chooseBackupFolder() }}>{preferences.backupFolder || 'Choose folder'}</button></label>}
-            {preferences.backupFrequency !== 'off' && <p className="settings-help">Backups save after every change in the current {preferences.backupFrequency === 'weekly' ? 'week' : preferences.backupFrequency === 'hourly' ? 'hour' : 'day'} folder; previous periods are kept.{backupState === 'saved' ? ' Last backup saved.' : backupState === 'error' ? ' Backup failed.' : ''}</p>}
+            {preferences.backupFrequency !== 'off' && <p className="settings-help" title="A new folder is created each day or week. Changes are written to that folder as they happen, so the current backup stays fresh.">Backups create a new {preferences.backupFrequency === 'weekly' ? 'week' : 'day'} folder and update it after changes; previous periods are kept.{backupState === 'saved' ? ' Last backup saved.' : backupState === 'error' ? ' Backup failed.' : ''}</p>}
+          </fieldset>
+
+          <fieldset className="settings-group"><legend>Notifications</legend>
+            <label className="settings-row"><span className="settings-label">Failure notifications</span><input type="checkbox" checked={preferences.notificationsEnabled} onChange={(event) => setPreferences((current) => ({ ...current, notificationsEnabled: event.target.checked }))} /></label>
+            <p className="settings-help">macOS notifications will be used for sync and backup failures when native notification support is available.</p>
           </fieldset>
 
           <fieldset className="settings-group"><legend>Capture mode</legend>
@@ -1005,7 +1184,7 @@ function App() {
         <section className="settings-modal sync-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="sync-conflict-title">
           <div className="modal-heading"><div><span className="eyebrow">Cloud sync</span><h2 id="sync-conflict-title">Choose which notes to keep</h2></div></div>
           <p className="settings-help">These days were edited both locally and on the server. Choose how to combine each one.</p>
-          {syncConflicts.map((conflict) => <div className="sync-conflict" key={conflict.day}><strong>{formatLogicalDay(conflict.day, preferences.dateFormat)}</strong><div className="sync-conflict-preview"><div><span>On this device</span><p>{conflict.local.markdown || '(empty)'}</p></div><div><span>On server</span><p>{conflict.remote.markdown || '(empty)'}</p></div></div><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'local') }}>Keep local</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'remote') }}>Keep server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'append') }}>Append local to server</button></div></div>)}
+          {syncConflicts.map((conflict) => <div className="sync-conflict" key={conflict.day}><strong>{formatLogicalDay(conflict.day, preferences.dateFormat)}</strong><div className="sync-conflict-preview"><div><span>Changed lines</span><div className="diff-viewer">{diffLines(conflict.local.markdown, conflict.remote.markdown).map((row) => <code className={`diff-row diff-${row.kind}`} key={`${row.kind}-${row.index}`}>{row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '− ' : '  '}{row.text || ' '}</code>)}</div></div></div><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'local') }}>Keep local</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'remote') }}>Keep server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'append') }}>Append local to server</button></div></div>)}
         </section>
       </div>}
 

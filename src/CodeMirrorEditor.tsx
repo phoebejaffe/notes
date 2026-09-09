@@ -5,6 +5,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { findMarkerTagRename, isMutedLine, mutedMarkerPosition, parseMarkdown, renameMatchingTag, toggleMutedLines, type ParsedMarkdown } from './markerEngine'
+import { toggleIndent, toggleList, toggleUnindent, type ListKind } from './editorCommands'
 
 function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<string, string>) {
   if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
@@ -109,6 +110,22 @@ function toggleMutedAtSelection(view: EditorView) {
   const result = toggleMutedLines(view.state.doc.toString(), startLine, endLine)
   if (!result.changes.length) return false
   view.dispatch({ changes: result.changes })
+  return true
+}
+
+function transformSelectedLines(view: EditorView, transform: (source: string, startLine: number, endLine: number) => string) {
+  const selection = view.state.selection.main
+  const start = view.state.doc.lineAt(selection.from)
+  const end = view.state.doc.lineAt(selection.to)
+  const source = view.state.doc.toString()
+  const next = transform(source, start.number - 1, end.number - 1)
+  if (next === source) return false
+  const mapPosition = (position: number) => {
+    const line = view.state.doc.lineAt(position)
+    const nextLine = next.split('\n')[line.number - 1] ?? ''
+    return Math.min(next.length, next.split('\n').slice(0, line.number - 1).reduce((offset, value) => offset + value.length + 1, 0) + Math.min(position - line.from, nextLine.length))
+  }
+  view.dispatch({ changes: { from: 0, to: source.length, insert: next }, selection: { anchor: mapPosition(selection.anchor), head: mapPosition(selection.head) } })
   return true
 }
 
@@ -308,7 +325,7 @@ interface CodeMirrorEditorProps {
   taskToggleShortcut?: string
   filterTags?: string[]
   hideMutedLines?: boolean
-  commandRequest?: { id: number; kind: 'bold' | 'italic' | 'strikethrough' | 'mute'; selection: { from: number; to: number } }
+  commandRequest?: { id: number; kind: 'bold' | 'italic' | 'strikethrough' | 'mute' | ListKind | 'indent' | 'unindent'; selection: { from: number; to: number } }
 }
 
 export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [], hideMutedLines = false, commandRequest }: CodeMirrorEditorProps) {
@@ -415,6 +432,9 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
     if (commandRequest.kind === 'italic') toggleAsteriskMark(view, 'italic')
     if (commandRequest.kind === 'strikethrough') toggleMarkdownMark(view, '~~', '~~')
     if (commandRequest.kind === 'mute') toggleMutedAtSelection(view)
+    if (commandRequest.kind === 'bullet' || commandRequest.kind === 'number' || commandRequest.kind === 'task') transformSelectedLines(view, (source, start, end) => toggleList(source, start, end, commandRequest.kind as ListKind))
+    if (commandRequest.kind === 'indent') transformSelectedLines(view, toggleIndent)
+    if (commandRequest.kind === 'unindent') transformSelectedLines(view, toggleUnindent)
     view.focus()
   }, [commandRequest])
 

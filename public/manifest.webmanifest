@@ -7,6 +7,10 @@
   "display": "standalone",
   "background_color": "#f3f1ed",
   "theme_color": "#29262d",
+  "shortcuts": [
+    { "name": "Today", "short_name": "Today", "url": "./" },
+    { "name": "Quick capture", "short_name": "Capture", "url": "./?mode=capture" }
+  ],
   "icons": [
     {
       "src": "./favicon.svg",
