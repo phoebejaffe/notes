@@ -259,6 +259,9 @@ button { cursor: pointer; font: inherit; }
 .diff-row { display: block; padding: 2px 7px; white-space: pre-wrap; }
 .diff-added { color: #287346; background: #eaf7ee; }
 .diff-removed { color: #a14c38; background: #fff0ec; }
+.merge-editor { display: grid; gap: 5px; margin-top: 10px; color: #756a7d; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.merge-editor textarea { min-height: 120px; padding: 8px; border: 1px solid #e1dbd3; border-radius: 6px; color: #403a42; background: #fff; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.theme-dark .merge-editor textarea { color: #e8e2dc; background: #332f33; border-color: #4d4649; }
 .onboarding-list { padding-left: 22px; color: #625b54; font-size: 13px; line-height: 1.6; }
 .theme-dark .offline-indicator { border-color: #a45d52; color: #f0aaa0; background: #3c2928; }
 .theme-dark .offline-indicator:hover, .theme-dark .offline-indicator:focus-visible { background: #50302e; }

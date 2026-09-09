@@ -352,6 +352,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
         extensions: [
           lineNumbers({ formatNumber: (lineNumber, state) => lineMatchesFilter(parseMarkdown(state.doc.toString()), lineNumber - 1, filterTags, hideMutedLines) ? String(lineNumber) : '' }),
           markdown(),
+          EditorView.contentAttributes.of({ autocomplete: 'on', autocorrect: 'on', autocapitalize: 'sentences', spellcheck: 'true' }),
           syntaxHighlighting(defaultHighlightStyle),
           history(),
           keymap.of([

@@ -6,7 +6,7 @@ import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, markdownMarkState, parseMarkdown, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
-import { listDailyDocuments, saveDailyDocument } from './storage'
+import { listDailyDocuments, replaceDailyDocuments, saveDailyDocument } from './storage'
 import { loadPreferences, savePreferences, TOOLBAR_CONTROLS, type Preferences } from './preferences'
 import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
 import { diffLines, type ListKind } from './editorCommands'
@@ -95,6 +95,10 @@ function storeFutureDay(day: string) {
   localStorage.setItem('notes-future-days', JSON.stringify([...days]))
 }
 
+function futureNoticeText(day: string, dateFormat: Preferences['dateFormat']) {
+  return `Future note opened for ${formatLogicalDay(day, dateFormat)}. You can snooze this reminder.`
+}
+
 function loadTagColors() {
   try {
     return JSON.parse(localStorage.getItem('notes-tag-colors') ?? '{}') as Record<string, string>
@@ -105,6 +109,10 @@ function loadTagColors() {
 
 function loadLastBackupSignature() {
   try { return localStorage.getItem('notes-last-backup-signature') ?? '' } catch { return '' }
+}
+
+function formatDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 function FilterIcon({ active }: { active: boolean }) {
@@ -156,6 +164,11 @@ async function notifyMac(enabled: boolean, title: string, body: string) {
   }
 }
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
 interface Selection { day: string; from: number; to: number }
 type EditorCommandKind = 'bold' | 'italic' | 'strikethrough' | 'mute' | ListKind | 'indent' | 'unindent'
 interface EditorCommand { day: string; id: number; kind: EditorCommandKind; selection: { from: number; to: number } }
@@ -195,11 +208,16 @@ function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(() => !loadPreferences().onboardingDismissed)
   const [commandQuery, setCommandQuery] = useState('')
   const [commandIndex, setCommandIndex] = useState(0)
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent>()
+  const [appInstalled, setAppInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true)
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [futureNotice, setFutureNotice] = useState<string>()
+  const [futureNoticeDay, setFutureNoticeDay] = useState<string>()
   const [futureDateInput, setFutureDateInput] = useState('')
   const [importPreview, setImportPreview] = useState<{ documents: ImportedBackupDocument[]; invalid: string[] }>()
   const [importMode, setImportMode] = useState<'additive' | 'replace'>('additive')
+  const [importChoices, setImportChoices] = useState<Record<string, 'local' | 'imported' | 'append'>>({})
+  const [conflictDrafts, setConflictDrafts] = useState<Record<string, string>>({})
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
   const [tagToRename, setTagToRename] = useState('')
@@ -228,6 +246,7 @@ function App() {
   const [captureFocused, setCaptureFocused] = useState(() => document.hasFocus())
   const [keyboardOffset, setKeyboardOffset] = useState(0)
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(firebaseConfigured)
   const [recoveryPhrase, setRecoveryPhrase] = useState('')
   const [dataKey, setDataKey] = useState<CryptoKey>()
   const [syncState, setSyncState] = useState<'idle' | 'working' | 'ready' | 'error'>('idle')
@@ -239,8 +258,12 @@ function App() {
   const remoteUpdateRef = useRef(false)
   const streamEndRef = useRef<HTMLDivElement>(null)
   const todayRef = useRef<HTMLElement>(null)
+  const recoveryWarningNotifiedRef = useRef(false)
 
-  useEffect(() => watchAuth(setFirebaseUser), [])
+  useEffect(() => {
+    if (!firebaseConfigured) return
+    return watchAuth((user) => { setFirebaseUser(user); setAuthLoading(false) })
+  }, [])
 
   useEffect(() => {
     const update = () => setIsOnline(navigator.onLine)
@@ -248,6 +271,29 @@ function App() {
     window.addEventListener('offline', update)
     return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) }
   }, [])
+
+  useEffect(() => {
+    const handleInstallPrompt = (event: Event) => { event.preventDefault(); setInstallPrompt(event as BeforeInstallPromptEvent) }
+    const handleInstalled = () => { setAppInstalled(true); setInstallPrompt(undefined) }
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt)
+    window.addEventListener('appinstalled', handleInstalled)
+    return () => { window.removeEventListener('beforeinstallprompt', handleInstallPrompt); window.removeEventListener('appinstalled', handleInstalled) }
+  }, [])
+
+  useEffect(() => {
+    if (!loaded || captureMode || onboardingOpen || settingsOpen || commandPaletteOpen || tagsOpen) return
+    const timer = window.setTimeout(() => {
+      const editor = document.querySelector(`[data-day="${today}"] .cm-content`) as HTMLElement | null
+      editor?.focus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [captureMode, commandPaletteOpen, loaded, onboardingOpen, settingsOpen, tagsOpen, today])
+
+  useEffect(() => {
+    if (!firebaseUser || !loaded || authLoading || dataKey || loadStoredRecoveryPhrase(firebaseUser.uid) || recoveryWarningNotifiedRef.current) return
+    recoveryWarningNotifiedRef.current = true
+    void notifyMac(preferences.notificationsEnabled, 'Notes encrypted sync needs setup', 'Sign in to Notes and configure your recovery phrase to unlock encrypted sync.')
+  }, [authLoading, dataKey, firebaseUser, loaded, preferences.notificationsEnabled])
 
   useEffect(() => {
     function handlePaletteShortcut(event: KeyboardEvent) {
@@ -301,9 +347,14 @@ function App() {
   useEffect(() => {
     if (!loaded || !documents[today] || !loadFutureDays().includes(today)) return
     const noticeKey = `notes-future-notice:${today}`
+    const snoozeUntil = Number(localStorage.getItem(`${noticeKey}:snooze`) ?? 0)
+    if (snoozeUntil > Date.now()) {
+      const timer = window.setTimeout(() => { localStorage.removeItem(`${noticeKey}:snooze`); setFutureNoticeDay(today); setFutureNotice(futureNoticeText(today, preferences.dateFormat)) }, snoozeUntil - Date.now())
+      return () => window.clearTimeout(timer)
+    }
     if (localStorage.getItem(noticeKey)) return
     localStorage.setItem(noticeKey, 'shown')
-    queueMicrotask(() => setFutureNotice(`Future note opened for ${formatLogicalDay(today, preferences.dateFormat)}. You can snooze this reminder.`))
+    queueMicrotask(() => { setFutureNoticeDay(today); setFutureNotice(futureNoticeText(today, preferences.dateFormat)) })
   }, [documents, loaded, preferences.dateFormat, today])
 
   useEffect(() => {
@@ -646,6 +697,7 @@ function App() {
     try {
       if (isTauriEnvironment()) {
         await invoke('write_backup', { root: preferences.backupFolder, folderName, documents: dailyDocuments.map(({ day, markdown }) => ({ day, markdown })) })
+        if (preferences.backupRetention !== 'off') await invoke('cleanup_backups', { root: preferences.backupFolder, cutoff: formatDateKey(backupRetentionCutoff(preferences.backupRetention)) })
       } else if (directory) {
         await writeBackup(directory, dailyDocuments, preferences.backupFrequency)
         if (preferences.backupRetention !== 'off') await cleanupBrowserBackups(directory, preferences.backupRetention)
@@ -798,6 +850,7 @@ function App() {
       result.documents.forEach((document) => { documentUpdatedAtRef.current[document.day] = document.updatedAt })
       setDocuments(Object.fromEntries(result.documents.map((document) => [document.day, document.markdown])))
       setSyncConflicts(result.conflicts)
+      setConflictDrafts(Object.fromEntries(result.conflicts.map((conflict) => [conflict.day, conflict.local.markdown])))
       setSyncState('ready')
       setSyncMessage(result.conflicts.length ? `${result.conflicts.length} day${result.conflicts.length === 1 ? '' : 's'} need conflict resolution.` : `Synced ${result.documents.length} day${result.documents.length === 1 ? '' : 's'}.`)
     } catch {
@@ -825,9 +878,9 @@ function App() {
     }
   }
 
-  async function resolveConflict(conflict: SyncConflict, choice: 'local' | 'remote' | 'append') {
+  async function resolveConflict(conflict: SyncConflict, choice: 'local' | 'remote' | 'append' | 'merged') {
     if (!firebaseUser || !dataKey) return
-    const markdown = choice === 'local' ? conflict.local.markdown : choice === 'remote' ? conflict.remote.markdown : `${conflict.remote.markdown}${conflict.remote.markdown.endsWith('\\n') ? '' : '\\n'}${conflict.local.markdown}`
+    const markdown = choice === 'local' ? conflict.local.markdown : choice === 'remote' ? conflict.remote.markdown : choice === 'merged' ? conflictDrafts[conflict.day] ?? conflict.local.markdown : `${conflict.remote.markdown}${conflict.remote.markdown.endsWith('\\n') ? '' : '\\n'}${conflict.local.markdown}`
     const document = { day: conflict.day, markdown, updatedAt: currentTimestamp() }
     setSyncState('working')
     try {
@@ -835,6 +888,7 @@ function App() {
       documentUpdatedAtRef.current[document.day] = document.updatedAt
       setDocuments((current) => ({ ...current, [document.day]: document.markdown }))
       setSyncConflicts((current) => current.filter((currentConflict) => currentConflict.day !== conflict.day))
+      setConflictDrafts((current) => { const next = { ...current }; delete next[conflict.day]; return next })
       setSyncState('ready')
       setSyncMessage('Conflict resolved and synced.')
     } catch (error) {
@@ -946,27 +1000,36 @@ function App() {
     window.location.reload()
   }
 
+  async function installPwa() {
+    if (!installPrompt) return
+    await installPrompt.prompt()
+    await installPrompt.userChoice
+    setInstallPrompt(undefined)
+  }
+
   async function previewImport() {
     try {
-      const directory = await pickBackupDirectory()
-      setImportPreview(await readBackupDirectory(directory))
+      const result = isTauriEnvironment()
+        ? { documents: await invoke<ImportedBackupDocument[]>('read_backup', { root: preferences.backupFolder }), invalid: [] }
+        : await readBackupDirectory(await pickBackupDirectory())
+      setImportChoices(Object.fromEntries(result.documents.filter((document) => document.day in documents).map((document) => [document.day, 'local'])))
+      setImportPreview(result)
     } catch (error) {
       setSyncMessage(error instanceof Error ? error.message : 'Could not read the backup folder.')
     }
   }
 
-  function applyImport() {
+  async function applyImport() {
     if (!importPreview) return
     const imported = new Map(importPreview.documents.map((document) => [document.day, document.markdown]))
-    const next = { ...documents }
-    if (importMode === 'replace') {
-      Object.keys(next).forEach((day) => { delete next[day] })
-    }
+    const next = importMode === 'replace' ? {} : { ...documents }
     imported.forEach((markdown, day) => {
-      if (importMode === 'replace' || !(day in next)) next[day] = markdown
-      else if (next[day] !== markdown && markdown) next[day] = `${next[day]}${next[day].endsWith('\\n') ? '' : '\\n'}\\n${markdown}`
+      const choice = importChoices[day] ?? 'imported'
+      if (importMode === 'replace' || !(day in documents) || choice === 'imported') next[day] = markdown
+      else if (choice === 'append' && next[day] !== markdown && markdown) next[day] = `${next[day]}${next[day].endsWith('\\n') ? '' : '\\n'}\\n${markdown}`
       documentUpdatedAtRef.current[day] = currentTimestamp()
     })
+    await replaceDailyDocuments(Object.entries(next).filter(([, markdown]) => markdown).map(([day, markdown]) => ({ day, markdown, updatedAt: documentUpdatedAtRef.current[day] ?? currentTimestamp() })))
     setDocuments(next)
     setDays((current) => [...new Set([...Object.keys(next), ...current])].sort((left, right) => right.localeCompare(left)))
     setImportPreview(undefined)
@@ -999,7 +1062,7 @@ function App() {
       ? 'You are signed in, but encrypted sync is not enabled on this device. Open Settings to unlock it.'
       : ''
 
-  if (!loaded) return <main className="loading-screen">Opening your notes…</main>
+  if (!loaded || authLoading) return <main className="loading-screen">{!loaded ? 'Opening your notes…' : 'Checking your sign-in…'}</main>
 
   return (
     <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isIOSDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
@@ -1056,8 +1119,8 @@ function App() {
 
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
       {futureDateInput && <section className="future-day-panel" role="dialog" aria-label="Open a future day"><label>Future day <input type="date" value={futureDateInput} onChange={(event) => setFutureDateInput(event.target.value)} /></label><button type="button" onClick={() => { openFutureDay(futureDateInput); setFutureDateInput('') }}>Open</button><button type="button" onClick={() => setFutureDateInput('')}>Cancel</button></section>}
-      {futureNotice && <div className="future-notice" role="status">{futureNotice}<button type="button" onClick={() => setFutureNotice(undefined)}>Dismiss</button><button type="button" onClick={() => setFutureNotice(undefined)}>Snooze</button></div>}
-      {importPreview && <div className="modal-backdrop" role="presentation"><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-heading"><div><span className="eyebrow">Data</span><h2 id="import-title">Review backup import</h2></div><button className="modal-close" type="button" onClick={() => setImportPreview(undefined)}>×</button></div><p className="settings-help">{importPreview.documents.length} Markdown days found; {importPreview.invalid.length} files ignored. Importing can change local notes.</p><label className="settings-row"><span className="settings-label">Import mode</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as 'additive' | 'replace')}><option value="additive">Add missing and append collisions</option><option value="replace">Replace all local notes</option></select></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={applyImport}>Import and continue</button><button className="settings-action" type="button" onClick={() => setImportPreview(undefined)}>Cancel</button></div></section></div>}
+      {futureNotice && futureNoticeDay && <div className="future-notice" role="status">{futureNotice}<button type="button" onClick={() => setFutureNotice(undefined)}>Dismiss</button><button type="button" onClick={() => { localStorage.removeItem(`notes-future-notice:${futureNoticeDay}`); localStorage.setItem(`notes-future-notice:${futureNoticeDay}:snooze`, String(Date.now() + 24 * 60 * 60 * 1000)); setFutureNotice(undefined) }}>Snooze 1 day</button></div>}
+      {importPreview && <div className="modal-backdrop" role="presentation"><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-heading"><div><span className="eyebrow">Data</span><h2 id="import-title">Review backup import</h2></div><button className="modal-close" type="button" onClick={() => setImportPreview(undefined)}>×</button></div><p className="settings-help">{importPreview.documents.length} Markdown days found; {importPreview.invalid.length} files ignored. Importing can change local notes.</p>{importPreview.documents.filter((document) => document.day in documents).map((document) => <label className="settings-row import-collision" key={document.day}><span className="settings-label">{formatLogicalDay(document.day, preferences.dateFormat)} collision</span><select value={importChoices[document.day] ?? 'local'} onChange={(event) => setImportChoices((current) => ({ ...current, [document.day]: event.target.value as 'local' | 'imported' | 'append' }))}><option value="local">Keep local</option><option value="imported">Keep imported</option><option value="append">Append imported</option></select></label>)}<label className="settings-row"><span className="settings-label">Import mode</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as 'additive' | 'replace')}><option value="additive">Add missing and append collisions</option><option value="replace">Replace all local notes</option></select></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={applyImport}>Import and continue</button><button className="settings-action" type="button" onClick={() => setImportPreview(undefined)}>Cancel</button></div></section></div>}
       {!firebaseConfigured ? <p className="sync-prompt" role="status">{syncPrompt}</p> : !firebaseUser && !preferences.syncPromptDismissed ? <p className="sync-prompt" role="status"><button className="sync-prompt-link" type="button" onClick={() => { void signIn() }}>Sign in with Google</button> to enable encrypted sync.<button className="sync-prompt-close" type="button" aria-label="Dismiss sync prompt" onClick={() => setPreferences((current) => ({ ...current, syncPromptDismissed: true }))}>×</button></p> : syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
 
       <section className="day-stream" aria-label="Daily notes">
@@ -1107,7 +1170,7 @@ function App() {
         </section>
       </div>}
 
-      {onboardingOpen && !captureMode && <div className="modal-backdrop" role="presentation"><section className="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><div className="modal-heading"><div><span className="eyebrow">Welcome</span><h2 id="onboarding-title">Set up Notes</h2></div></div><p className="settings-description">Notes works offline first. Your notes stay on this device unless you choose encrypted cloud sync.</p><ol className="onboarding-list"><li>Add Notes to your home screen from your browser’s Share or menu button.</li><li>Sign in with Google in Settings if you want cloud sync.</li><li>Create or enter your recovery phrase to unlock encrypted sync.</li></ol><button className="settings-action" type="button" onClick={() => { setOnboardingOpen(false); setPreferences((current) => ({ ...current, onboardingDismissed: true })) }}>Continue to Notes</button><button className="settings-link" type="button" onClick={() => { setOnboardingOpen(false); setSettingsOpen(true) }}>Open sync settings</button></section></div>}
+      {onboardingOpen && !captureMode && <div className="modal-backdrop" role="presentation"><section className="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><div className="modal-heading"><div><span className="eyebrow">Welcome</span><h2 id="onboarding-title">Set up Notes</h2></div></div><p className="settings-description">Notes works offline first. Your notes stay on this device unless you choose encrypted cloud sync.</p><ol className="onboarding-list"><li>{appInstalled ? 'Notes is installed on this device.' : installPrompt ? 'Install Notes for quick offline access.' : 'On iPhone/iPad, use Safari Share → Add to Home Screen. On desktop, use your browser’s install option when available.'}</li><li>Sign in with Google in Settings if you want cloud sync.</li><li>Create or enter your recovery phrase to unlock encrypted sync.</li></ol>{installPrompt && !appInstalled && <button className="settings-action" type="button" onClick={() => { void installPwa() }}>Install Notes</button>}<button className="settings-action" type="button" onClick={() => { setOnboardingOpen(false); setPreferences((current) => ({ ...current, onboardingDismissed: true })) }}>Continue to Notes</button><button className="settings-link" type="button" onClick={() => { setOnboardingOpen(false); setSettingsOpen(true) }}>Open sync settings</button></section></div>}
 
       {privacyOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setPrivacyOpen(false) }}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-title"><div className="modal-heading"><div><span className="eyebrow">Privacy</span><h2 id="privacy-title">Privacy center</h2></div><button className="modal-close" type="button" aria-label="Close privacy center" onClick={() => setPrivacyOpen(false)}>×</button></div><p className="settings-help">Notes stores your working copy locally in IndexedDB. Cloud notes are encrypted before upload.</p><div className="privacy-status"><strong>Local notes</strong><span>{Object.values(documents).filter(Boolean).length} non-empty days, from {oldestDocumentDay}</span><strong>Cloud sync</strong><span>{!firebaseConfigured ? 'Not configured' : !firebaseUser ? 'Signed out' : dataKey ? 'Unlocked and ready' : 'Signed in, encryption locked'}</span><strong>Backup</strong><span>{preferences.backupFrequency === 'off' ? 'Disabled' : backupState === 'error' ? 'Last backup failed' : lastBackupAt ? `Last saved ${new Date(lastBackupAt).toLocaleString()}` : 'Enabled, not run yet'}</span></div><button className="settings-action" type="button" onClick={() => { exportAllMarkdown(); setPrivacyOpen(false) }}>Export all notes</button><button className="settings-action" type="button" onClick={() => { setPrivacyOpen(false); setSettingsOpen(true) }}>Open privacy settings</button></section></div>}
 
@@ -1184,7 +1247,7 @@ function App() {
         <section className="settings-modal sync-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="sync-conflict-title">
           <div className="modal-heading"><div><span className="eyebrow">Cloud sync</span><h2 id="sync-conflict-title">Choose which notes to keep</h2></div></div>
           <p className="settings-help">These days were edited both locally and on the server. Choose how to combine each one.</p>
-          {syncConflicts.map((conflict) => <div className="sync-conflict" key={conflict.day}><strong>{formatLogicalDay(conflict.day, preferences.dateFormat)}</strong><div className="sync-conflict-preview"><div><span>Changed lines</span><div className="diff-viewer">{diffLines(conflict.local.markdown, conflict.remote.markdown).map((row) => <code className={`diff-row diff-${row.kind}`} key={`${row.kind}-${row.index}`}>{row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '− ' : '  '}{row.text || ' '}</code>)}</div></div></div><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'local') }}>Keep local</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'remote') }}>Keep server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'append') }}>Append local to server</button></div></div>)}
+          {syncConflicts.map((conflict) => <div className="sync-conflict" key={conflict.day}><strong>{formatLogicalDay(conflict.day, preferences.dateFormat)}</strong><div className="sync-conflict-preview"><div><span>Changed lines</span><div className="diff-viewer">{diffLines(conflict.local.markdown, conflict.remote.markdown).map((row) => <code className={`diff-row diff-${row.kind}`} key={`${row.kind}-${row.index}`}>{row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '− ' : '  '}{row.text || ' '}</code>)}</div></div></div><label className="merge-editor"><span>Editable merged version</span><textarea value={conflictDrafts[conflict.day] ?? conflict.local.markdown} onChange={(event) => setConflictDrafts((current) => ({ ...current, [conflict.day]: event.target.value }))} /></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'local') }}>Keep local</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'remote') }}>Keep server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'append') }}>Append local to server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'merged') }}>Save merged version</button></div></div>)}
         </section>
       </div>}
 

@@ -20,7 +20,7 @@ struct SavedGeometry {
 
 struct CaptureShortcut(Arc<Mutex<Shortcut>>);
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct BackupDocument {
     day: String,
     markdown: String,
@@ -246,6 +246,54 @@ fn set_launch_at_login(_app: AppHandle, enabled: bool) -> Result<(), String> {
     }
 }
 
+fn valid_backup_day(name: &str) -> bool {
+    name.len() == 13 && name.ends_with(".md") && name[..10].chars().enumerate().all(|(index, character)| {
+        if index == 4 || index == 7 { character == '-' } else { character.is_ascii_digit() }
+    })
+}
+
+fn generated_backup_folder(name: &str) -> bool {
+    let value = name.strip_prefix("week-").unwrap_or(name);
+    let date = if value.len() >= 10 { &value[..10] } else { return false };
+    date.len() == 10 && date.chars().enumerate().all(|(index, character)| {
+        if index == 4 || index == 7 { character == '-' } else { character.is_ascii_digit() }
+    }) && (value.len() == 10 || value.len() == 13)
+}
+
+#[tauri::command]
+fn cleanup_backups(root: String, cutoff: String) -> Result<Vec<String>, String> {
+    let root_path = PathBuf::from(root);
+    let mut removed = Vec::new();
+    for entry in fs::read_dir(&root_path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if !file_type.is_dir() { continue; }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let value = name.strip_prefix("week-").unwrap_or(&name);
+        let date = value.get(..10).unwrap_or("");
+        if generated_backup_folder(&name) && date < cutoff.as_str() {
+            fs::remove_dir_all(entry.path()).map_err(|error| error.to_string())?;
+            removed.push(name);
+        }
+    }
+    Ok(removed)
+}
+
+#[tauri::command]
+fn read_backup(root: String) -> Result<Vec<BackupDocument>, String> {
+    let mut documents = Vec::new();
+    for entry in fs::read_dir(PathBuf::from(root)).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry.file_type().map_err(|error| error.to_string())?.is_file() { continue; }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !valid_backup_day(&name) { continue; }
+        let day = name[..10].to_string();
+        let markdown = fs::read_to_string(entry.path()).map_err(|error| error.to_string())?;
+        documents.push(BackupDocument { day, markdown });
+    }
+    Ok(documents)
+}
+
 #[tauri::command]
 fn write_backup(root: String, folder_name: String, documents: Vec<BackupDocument>) -> Result<Vec<String>, String> {
     let backup_folder = PathBuf::from(root).join(folder_name);
@@ -391,7 +439,7 @@ pub fn run() {
             app.global_shortcut().register(shortcut)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup])
+        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup, cleanup_backups, read_backup])
         .on_window_event(|window, event| {
             if window.label() == "main"
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))
