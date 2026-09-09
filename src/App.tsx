@@ -8,7 +8,7 @@ import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, markdo
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, saveDailyDocument } from './storage'
 import { loadPreferences, savePreferences, TOOLBAR_CONTROLS, type Preferences } from './preferences'
-import { backupFolderName, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
+import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
 import { diffLines, type ListKind } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
 import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'

@@ -42,3 +42,15 @@ export async function listDailyDocuments() {
     request.onerror = () => reject(request.error)
   })
 }
+
+export async function replaceDailyDocuments(documents: DailyDocument[]) {
+  const database = await openDatabase()
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(storeName, 'readwrite')
+    const store = transaction.objectStore(storeName)
+    store.clear()
+    documents.forEach((document) => store.put(document))
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+}
