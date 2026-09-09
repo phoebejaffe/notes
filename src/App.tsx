@@ -65,8 +65,8 @@ function currentTimestamp() {
   return Date.now()
 }
 
-function isIOSDevice() {
-  return /iPad|iPhone|iPod/u.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/u.test(navigator.userAgent))
+function isMobileKeyboardDevice() {
+  return /Android|iPad|iPhone|iPod|Mobile/u.test(navigator.userAgent) || (navigator.maxTouchPoints > 0 && /Macintosh/u.test(navigator.userAgent))
 }
 
 function recoveryPhraseStorageKey(uid: string) {
@@ -120,12 +120,12 @@ function FilterIcon({ active }: { active: boolean }) {
 }
 
 function MuteIcon() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M22 10.5V12C22 16.714 22 19.071 20.536 20.536C19.071 22 16.714 22 12 22C7.286 22 4.929 22 3.464 20.536C2 19.071 2 16.714 2 12C2 7.286 2 4.929 3.464 3.464C4.929 2 7.286 2 12 2H13.5" /><path d="M22 2L17 7M17 2L22 7" /></svg>
+  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M22 10.5V12C22 16.714 22 19.071 20.536 20.536C19.071 22 16.714 22 12 22C7.286 22 4.929 22 3.464 20.536C2 19.071 2 16.714 2 12C2 7.286 2 4.929 3.464 3.464C4.929 2 7.286 2 12 2H13.5" /><path d="M22 2L17 7M17 2L22 7" /></svg>
 }
 
 function ListIcon({ kind }: { kind: 'bullet' | 'number' | 'task' | 'indent' | 'unindent' }) {
-  if (kind === 'bullet') return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth="3" /></svg>
-  if (kind === 'number') return <span className="list-number-icon">1.<br />2.<br />3.</span>
+  if (kind === 'bullet') return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M8 4h14M8 12h14M8 20h14" /><path d="M3 4h.01M3 12h.01M3 20h.01" strokeWidth="3" /></svg>
+  if (kind === 'number') return <span className="list-number-icon">1.</span>
   if (kind === 'task') return <span className="list-task-icon">☑</span>
   return <span aria-hidden="true">{kind === 'indent' ? '→' : '←'}</span>
 }
@@ -234,6 +234,7 @@ function App() {
   const [editorCommand, setEditorCommand] = useState<EditorCommand | null>(null)
   const [selection, setSelection] = useState<Selection>({ day: today, from: 0, to: 0 })
   const editorSelectionRef = useRef<Selection>({ day: today, from: 0, to: 0 })
+  const hasEditorSelectionRef = useRef(false)
   const editorCommandIdRef = useRef(0)
   const toolbarPointerRef = useRef(false)
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
@@ -598,15 +599,25 @@ function App() {
 
   useEffect(() => {
     if (!captureMode || !loaded) return
+    function focusTodayEditor() {
+      if (settingsOpen || tagsOpen) return
+      window.setTimeout(() => {
+        if (settingsOpen || tagsOpen) return
+        const editorHost = document.querySelector(`[data-day="${today}"] .codemirror-host`) as HTMLElement | null
+        if (!editorHost) return
+        const savedSelection = editorSelectionRef.current
+        if (hasEditorSelectionRef.current && savedSelection.day === today) {
+          editorHost.dispatchEvent(new CustomEvent('notes-restore-selection', { detail: { from: savedSelection.from, to: savedSelection.to } }))
+        } else {
+          editorHost.querySelector<HTMLElement>('.cm-content')?.focus()
+        }
+      }, 0)
+    }
     function focusTodayIfIdle() {
       if (settingsOpen || tagsOpen) return
       const activeElement = document.activeElement
       if (activeElement && activeElement !== document.body && activeElement !== document.documentElement) return
-      window.setTimeout(() => {
-        if (settingsOpen || tagsOpen) return
-        const editor = document.querySelector(`[data-day="${today}"] .cm-content`) as HTMLElement | null
-        editor?.focus()
-      }, 0)
+      focusTodayEditor()
     }
     function handleWindowFocus() {
       setCaptureFocused(true)
@@ -614,14 +625,6 @@ function App() {
     }
     function handleWindowBlur() {
       setCaptureFocused(false)
-    }
-    function focusTodayEditor() {
-      if (settingsOpen || tagsOpen) return
-      window.setTimeout(() => {
-        if (settingsOpen || tagsOpen) return
-        const editor = document.querySelector(`[data-day="${today}"] .cm-content`) as HTMLElement | null
-        editor?.focus()
-      }, 0)
     }
     window.addEventListener('focus', handleWindowFocus)
     window.addEventListener('blur', handleWindowBlur)
@@ -1065,7 +1068,7 @@ function App() {
   if (!loaded || authLoading) return <main className="loading-screen">{!loaded ? 'Opening your notes…' : 'Checking your sign-in…'}</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isIOSDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -1130,7 +1133,7 @@ function App() {
           return <article className="day-card" data-day={documentDay} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => { const nextSelection = { day: documentDay, from, to }; editorSelectionRef.current = nextSelection; setSelection(nextSelection) }} focusAtStart={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => { const nextSelection = { day: documentDay, from, to }; hasEditorSelectionRef.current = true; editorSelectionRef.current = nextSelection; setSelection(nextSelection) }} focusAtStart={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>

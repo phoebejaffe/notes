@@ -412,7 +412,15 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
       view.dispatch({ selection: { anchor: target } })
       view.focus()
     }
+    const restoreSelectionHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ from: number; to: number }>).detail
+      const from = Math.min(Math.max(0, detail.from), view.state.doc.length)
+      const to = Math.min(Math.max(from, detail.to), view.state.doc.length)
+      view.dispatch({ selection: { anchor: from, head: to } })
+      view.focus()
+    }
     editorHost.addEventListener('notes-boundary-focus', boundaryFocusHandler)
+    editorHost.addEventListener('notes-restore-selection', restoreSelectionHandler)
     if (focusAtStart) {
       view.dispatch({ selection: { anchor: 0 } })
       selectionRef.current = { from: 0, to: 0 }
@@ -420,6 +428,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
     }
     return () => {
       editorHost.removeEventListener('notes-boundary-focus', boundaryFocusHandler)
+      editorHost.removeEventListener('notes-restore-selection', restoreSelectionHandler)
       viewRef.current = null
       view.destroy()
     }
