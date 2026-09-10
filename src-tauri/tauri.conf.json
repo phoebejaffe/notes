@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Notes",
+  "productName": "Noteses",
   "version": "0.1.0",
   "identifier": "com.notes.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Notes",
+        "title": "Noteses",
         "url": "index.html?mode=capture",
         "width": 520,
         "height": 180,

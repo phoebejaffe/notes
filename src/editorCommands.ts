@@ -41,6 +41,17 @@ export function toggleUnindent(source: string, startLine: number, endLine: numbe
   return lines.join('\n')
 }
 
+export function continueTaskList(source: string, position: number) {
+  const lineStart = source.lastIndexOf('\n', Math.max(0, position - 1)) + 1
+  const lineEndIndex = source.indexOf('\n', position)
+  const lineEnd = lineEndIndex === -1 ? source.length : lineEndIndex
+  const line = source.slice(lineStart, lineEnd)
+  const match = line.match(/^(\s*)([-*+]|\d+[.)])\s+\[[ xX]\]\s+/u)
+  if (!match) return undefined
+  const insertion = `\n${match[1]}${match[2]} [ ] `
+  return { source: `${source.slice(0, position)}${insertion}${source.slice(position)}`, cursor: position + insertion.length }
+}
+
 export interface DiffRow { kind: 'same' | 'added' | 'removed'; text: string; index: number }
 
 export function diffLines(left: string, right: string): DiffRow[] {

@@ -335,7 +335,7 @@ pub fn run() {
                 hide_standard_window_buttons(&window)?;
             }
 
-            let app_menu = SubmenuBuilder::new(app, "Notes")
+            let app_menu = SubmenuBuilder::new(app, "Noteses")
                 .about(None)
                 .separator()
                 .quit()
@@ -415,7 +415,7 @@ pub fn run() {
             );
             TrayIconBuilder::with_id("notes-tray")
                 .icon(tray_icon)
-                .tooltip("Notes")
+                .tooltip("Noteses")
                 .on_tray_icon_event(move |_tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,

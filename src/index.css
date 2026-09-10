@@ -9,6 +9,8 @@
 
 * { box-sizing: border-box; }
 html, body { background: #fff; }
+html { scroll-padding-bottom: 52px; }
+html:has(.mobile-browser) { scroll-padding-top: 0; scroll-padding-bottom: 0; }
 html:has(.theme-dark), body:has(.theme-dark) { color-scheme: dark; background: #201e21; }
 body { margin: 0; min-width: 320px; }
 button, textarea { font: inherit; }

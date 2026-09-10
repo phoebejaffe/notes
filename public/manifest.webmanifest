@@ -1,6 +1,6 @@
 {
-  "name": "Notes",
-  "short_name": "Notes",
+  "name": "Noteses",
+  "short_name": "Noteses",
   "description": "A calm, source-first daily notes app.",
   "start_url": "./",
   "scope": "./",

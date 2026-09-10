@@ -294,7 +294,7 @@ function App() {
   useEffect(() => {
     if (!firebaseUser || !loaded || authLoading || dataKey || loadStoredRecoveryPhrase(firebaseUser.uid) || recoveryWarningNotifiedRef.current) return
     recoveryWarningNotifiedRef.current = true
-    void notifyMac(preferences.notificationsEnabled, 'Notes encrypted sync needs setup', 'Sign in to Notes and configure your recovery phrase to unlock encrypted sync.')
+    void notifyMac(preferences.notificationsEnabled, 'Noteses encrypted sync needs setup', 'Sign in to Noteses and configure your recovery phrase to unlock encrypted sync.')
   }, [authLoading, dataKey, firebaseUser, loaded, preferences.notificationsEnabled])
 
   useEffect(() => {
@@ -472,6 +472,22 @@ function App() {
     return () => window.removeEventListener('keydown', focusTagInput)
   }, [preferences.shortcuts.tagSelection, selection])
 
+  function focusAdjacentDay(documentDay: string, direction: -1 | 1) {
+    const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
+    const currentIndex = cards.findIndex((card) => card.dataset.day === documentDay)
+    const nextCard = cards[currentIndex + direction]
+    if (!nextCard && direction < 0) {
+      document.querySelector<HTMLElement>('.day-stream')?.scrollTo({ top: 0, behavior: 'smooth' })
+      return true
+    }
+    const nextEditor = nextCard?.querySelector<HTMLElement>('.cm-content')
+    if (!nextEditor) return false
+    const nextDay = nextCard?.dataset.day ?? ''
+    const nextSource = documents[nextDay] ?? ''
+    nextEditor.dispatchEvent(new CustomEvent('notes-boundary-focus', { bubbles: true, detail: { direction, position: direction > 0 ? 0 : nextSource.length } }))
+    return true
+  }
+
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
       if (matchesShortcut(event, preferences.shortcuts.help)) {
@@ -522,26 +538,6 @@ function App() {
         downloadMarkdown(documents[today] ?? '', `${today}.md`)
         return
       }
-      const arrowDirection = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
-      if (arrowDirection && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
-        const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
-        const activeDay = activeCard?.dataset.day
-        const activeSource = activeDay ? documents[activeDay] ?? '' : ''
-        const atBoundary = arrowDirection < 0 ? selection.from === 0 && selection.to === 0 : selection.to === activeSource.length
-        if (!activeCard || !activeDay || selection.day !== activeDay || !atBoundary) return
-        const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
-        const currentIndex = cards.indexOf(activeCard)
-        const nextCard = cards[currentIndex + arrowDirection]
-        const nextEditor = nextCard?.querySelector<HTMLElement>('.cm-content')
-        if (nextEditor) {
-          event.preventDefault()
-          const nextDay = nextCard?.dataset.day ?? ''
-          const nextSource = documents[nextDay] ?? ''
-          nextEditor.dispatchEvent(new CustomEvent('notes-boundary-focus', { detail: { position: arrowDirection > 0 ? 0 : nextSource.length } }))
-          nextEditor.scrollIntoView({ block: 'center' })
-        }
-        return
-      }
       const direction = matchesShortcut(event, preferences.shortcuts.dayPrevious) ? -1 : matchesShortcut(event, preferences.shortcuts.dayNext) ? 1 : 0
       if (!direction) return
       const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
@@ -557,8 +553,8 @@ function App() {
         nextEditor.scrollIntoView({ block: 'center' })
       }
     }
-    window.addEventListener('keydown', handleInterfaceShortcuts)
-    return () => window.removeEventListener('keydown', handleInterfaceShortcuts)
+    window.addEventListener('keydown', handleInterfaceShortcuts, true)
+    return () => window.removeEventListener('keydown', handleInterfaceShortcuts, true)
   }, [documents, preferences.shortcuts, selection, today])
 
   useEffect(() => {
@@ -719,7 +715,7 @@ function App() {
       setBackupState('saved')
     } catch {
       setBackupState('error')
-      void notifyMac(preferences.notificationsEnabled, 'Notes backup failed', 'Automatic backup could not save your latest notes.')
+      void notifyMac(preferences.notificationsEnabled, 'Noteses backup failed', 'Automatic backup could not save your latest notes.')
     }
   }, [documents, loaded, preferences.backupFolder, preferences.backupFrequency, preferences.backupRetention, preferences.notificationsEnabled])
 
@@ -867,7 +863,7 @@ function App() {
     } catch {
       setSyncState('error')
       setSyncMessage('Sync failed. Check your Firebase setup and recovery phrase.')
-      void notifyMac(preferences.notificationsEnabled, 'Notes sync failed', 'Encrypted sync could not complete. Open Notes to retry.')
+      void notifyMac(preferences.notificationsEnabled, 'Noteses sync failed', 'Encrypted sync could not complete. Open Notes to retry.')
     }
   }
 
@@ -1086,7 +1082,7 @@ function App() {
           <button className="icon-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
           {saveState === 'saving' && <span className="save-spinner" role="status" aria-label="Saving" />}
         </div>
-        {menuOpen && <nav className="menu-panel" aria-label="Notes menu">
+        {menuOpen && <nav className="menu-panel" aria-label="Noteses menu">
           <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
@@ -1134,6 +1130,7 @@ function App() {
       {importPreview && <div className="modal-backdrop" role="presentation"><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-heading"><div><span className="eyebrow">Data</span><h2 id="import-title">Review backup import</h2></div><button className="modal-close" type="button" onClick={() => setImportPreview(undefined)}>×</button></div><p className="settings-help">{importPreview.documents.length} Markdown days found; {importPreview.invalid.length} files ignored. Importing can change local notes.</p>{importPreview.documents.filter((document) => document.day in documents).map((document) => <label className="settings-row import-collision" key={document.day}><span className="settings-label">{formatLogicalDay(document.day, preferences.dateFormat)} collision</span><select value={importChoices[document.day] ?? 'local'} onChange={(event) => setImportChoices((current) => ({ ...current, [document.day]: event.target.value as 'local' | 'imported' | 'append' }))}><option value="local">Keep local</option><option value="imported">Keep imported</option><option value="append">Append imported</option></select></label>)}<label className="settings-row"><span className="settings-label">Import mode</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as 'additive' | 'replace')}><option value="additive">Add missing and append collisions</option><option value="replace">Replace all local notes</option></select></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={applyImport}>Import and continue</button><button className="settings-action" type="button" onClick={() => setImportPreview(undefined)}>Cancel</button></div></section></div>}
       {!firebaseConfigured ? <p className="sync-prompt" role="status">{syncPrompt}</p> : !firebaseUser && !preferences.syncPromptDismissed ? <p className="sync-prompt" role="status"><button className="sync-prompt-link" type="button" onClick={() => { void signIn() }}>Sign in with Google</button> to enable encrypted sync.<button className="sync-prompt-close" type="button" aria-label="Dismiss sync prompt" onClick={() => setPreferences((current) => ({ ...current, syncPromptDismissed: true }))}>×</button></p> : syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
 
+      <div className="notes-layout">
       <section className="day-stream" aria-label="Daily notes">
         {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
           const source = documents[documentDay] ?? ''
@@ -1141,7 +1138,7 @@ function App() {
           return <article className="day-card" data-day={documentDay} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => { const nextSelection = { day: documentDay, from, to }; hasEditorSelectionRef.current = true; editorSelectionRef.current = nextSelection; setSelection(nextSelection) }} focusAtStart={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => { const nextSelection = { day: documentDay, from, to }; hasEditorSelectionRef.current = true; editorSelectionRef.current = nextSelection; setSelection(nextSelection) }} focusAtStart={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} onBoundary={(direction) => focusAdjacentDay(documentDay, direction)} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -1169,6 +1166,7 @@ function App() {
         <span className="tag-shortcut">⌘T</span></>}
         </>}
       </div>}
+      </div>
 
       {commandPaletteOpen && <div className="modal-backdrop command-palette-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setCommandPaletteOpen(false) }}>
         <section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><input autoFocus value={commandQuery} onChange={(event) => { setCommandQuery(event.target.value); setCommandIndex(0) }} placeholder="Type a command…" onKeyDown={(event) => { if (event.key === 'Escape') setCommandPaletteOpen(false); if (event.key === 'ArrowDown') { event.preventDefault(); setCommandIndex((index) => Math.min(index + 1, commandItems.length - 1)) }; if (event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex((index) => Math.max(index - 1, 0)) }; if (event.key === 'Enter' && commandItems[commandIndex]) executeCommand(commandItems[commandIndex][0]) }} />{commandItems.map(([key, label], index) => <button className={index === commandIndex ? 'command-selected' : ''} type="button" key={key} onClick={() => executeCommand(key)}>{label}</button>)}</section>

@@ -5,7 +5,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { findMarkerTagRename, isMutedLine, mutedMarkerPosition, parseMarkdown, renameMatchingTag, toggleMutedLines, type ParsedMarkdown } from './markerEngine'
-import { toggleIndent, toggleList, toggleUnindent, type ListKind } from './editorCommands'
+import { continueTaskList, toggleIndent, toggleList, toggleUnindent, type ListKind } from './editorCommands'
 
 function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<string, string>) {
   if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
@@ -31,6 +31,14 @@ function markdownLineStyle(line: string) {
   if (/^\s*#{1,6}\s/u.test(line)) return 'cm-heading-line'
   if (/^\s*(?:[-*+]\s|\d+[.)]\s)/u.test(line)) return 'cm-list-line'
   return ''
+}
+
+function parseMarkdownForDisplay(source: string) {
+  const normalized = source.split('\\n').map((line) => {
+    const muted = mutedMarkerPosition(line)
+    return muted ? `${line.slice(0, muted.start)}${' '.repeat(muted.end - muted.start)}${line.slice(muted.end)}` : line
+  }).join('\\n')
+  return parseMarkdown(normalized)
 }
 
 function lineMatchesFilter(parsed: ParsedMarkdown, lineIndex: number, filterTags: string[], hideMutedLines: boolean) {
@@ -77,7 +85,7 @@ function moveToVisibleLine(view: EditorView, direction: -1 | 1, filterTags: stri
   const selection = view.state.selection.main
   const currentLine = view.state.doc.lineAt(selection.head)
   const currentLineIndex = currentLine.number - 1
-  const parsed = parseMarkdown(view.state.doc.toString())
+  const parsed = parseMarkdownForDisplay(view.state.doc.toString())
   if (isMutedLine(currentLine.text) || parsed.ranges.some((range) => range.startLine < currentLineIndex && currentLineIndex < range.endLine)) return false
   const cursorCoords = view.coordsAtPos(selection.head)
   const lineEndCoords = view.coordsAtPos(currentLine.to)
@@ -103,6 +111,15 @@ function toggleTaskAtSelection(view: EditorView) {
   return true
 }
 
+function continueTaskListAtSelection(view: EditorView) {
+  const selection = view.state.selection.main
+  if (!selection.empty) return false
+  const result = continueTaskList(view.state.doc.toString(), selection.head)
+  if (!result) return false
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: result.source }, selection: { anchor: result.cursor } })
+  return true
+}
+
 function toggleMutedAtSelection(view: EditorView) {
   const selection = view.state.selection.main
   const startLine = view.state.doc.lineAt(selection.from).number - 1
@@ -111,6 +128,15 @@ function toggleMutedAtSelection(view: EditorView) {
   if (!result.changes.length) return false
   view.dispatch({ changes: result.changes })
   return true
+}
+
+function moveToAdjacentDay(view: EditorView, direction: -1 | 1, onBoundary?: (direction: -1 | 1) => boolean) {
+  const selection = view.state.selection.main
+  if (!selection.empty) return false
+  const line = view.state.doc.lineAt(selection.head)
+  const atBoundary = direction < 0 ? line.number === 1 : line.number === view.state.doc.lines
+  if (!atBoundary) return false
+  return onBoundary?.(direction) ?? false
 }
 
 function transformSelectedLines(view: EditorView, transform: (source: string, startLine: number, endLine: number) => string) {
@@ -220,7 +246,7 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
   }
 
   build(view: EditorView) {
-    const parsed = parseMarkdown(view.state.doc.toString())
+    const parsed = parseMarkdownForDisplay(view.state.doc.toString())
     const ranges = []
     const seenLines = new Set<number>()
     for (const { from, to } of view.visibleRanges) {
@@ -236,8 +262,9 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
         seenLines.add(lineIndex)
         const rangeClass = lineStyle(parsed, lineIndex, tagColors)
         const mutedMarker = mutedMarkerPosition(line.text)
-        const className = [rangeClass, markdownLineStyle(line.text), mutedMarker ? 'cm-muted-line' : '', lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
         const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
+        const taggedLine = rangeClass === 'cm-marker-line' || activeTags.length > 0
+        const className = [rangeClass, markdownLineStyle(line.text), mutedMarker && !taggedLine ? 'cm-muted-line' : '', lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
         const customColors = activeTags.slice(0, 4).map((range, index) => tagColors[range.tag] ? `--tag-${['outer', 'inner', 'third', 'fourth'][index]}:${tagColors[range.tag]}` : '').filter(Boolean).join(';')
         const dayInset = Math.min(maxTagDepth(parsed), 4) * 3
         const borderCount = rangeClass.includes('cm-tagged-line') ? Math.min(activeTags.length, 4) : 0
@@ -325,14 +352,16 @@ interface CodeMirrorEditorProps {
   taskToggleShortcut?: string
   filterTags?: string[]
   hideMutedLines?: boolean
+  onBoundary?: (direction: -1 | 1) => boolean
   commandRequest?: { id: number; kind: 'bold' | 'italic' | 'strikethrough' | 'mute' | ListKind | 'indent' | 'unindent'; selection: { from: number; to: number } }
 }
 
-export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [], hideMutedLines = false, commandRequest }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = false, sourceMode = false, tagColors = {}, restoreSelection, hideTagSyntax = true, strikethroughShortcut = 'Mod-Shift-x', taskToggleShortcut = 'Mod-Enter', filterTags = [], hideMutedLines = false, onBoundary, commandRequest }: CodeMirrorEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSelectionRef = useRef(onSelection)
+  const onBoundaryRef = useRef(onBoundary)
   const sourceModeRef = useRef(sourceMode)
   const selectionRef = useRef({ from: 0, to: 0 })
   const pendingLocalValueRef = useRef<string | undefined>(undefined)
@@ -341,6 +370,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
 
   useEffect(() => { onChangeRef.current = onChange }, [onChange])
   useEffect(() => { onSelectionRef.current = onSelection }, [onSelection])
+  useEffect(() => { onBoundaryRef.current = onBoundary }, [onBoundary])
   useEffect(() => { sourceModeRef.current = sourceMode }, [sourceMode])
 
   useEffect(() => {
@@ -350,7 +380,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
       state: EditorState.create({
         doc: initialValue,
         extensions: [
-          lineNumbers({ formatNumber: (lineNumber, state) => lineMatchesFilter(parseMarkdown(state.doc.toString()), lineNumber - 1, filterTags, hideMutedLines) ? String(lineNumber) : '' }),
+          lineNumbers({ formatNumber: (lineNumber, state) => lineMatchesFilter(parseMarkdownForDisplay(state.doc.toString()), lineNumber - 1, filterTags, hideMutedLines) ? String(lineNumber) : '' }),
           markdown(),
           EditorView.contentAttributes.of({ autocomplete: 'on', autocorrect: 'on', autocapitalize: 'sentences', spellcheck: 'true' }),
           syntaxHighlighting(defaultHighlightStyle),
@@ -360,6 +390,9 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
             { key: 'Mod-ArrowRight', run: (view) => moveToLineContentBoundary(view, 1) },
             { key: 'Alt-ArrowLeft', run: (view) => moveByWhitespaceWord(view, -1) },
             { key: 'Alt-ArrowRight', run: (view) => moveByWhitespaceWord(view, 1) },
+            { key: 'Enter', run: continueTaskListAtSelection },
+            { key: 'ArrowUp', run: (view) => moveToAdjacentDay(view, -1, onBoundaryRef.current) },
+            { key: 'ArrowDown', run: (view) => moveToAdjacentDay(view, 1, onBoundaryRef.current) },
             { key: 'ArrowDown', run: (view) => moveToVisibleLine(view, 1, filterTags, hideMutedLines) },
             { key: 'Mod-/', run: toggleMutedAtSelection },
             { key: 'Backspace', run: deleteCharBackwardStrict },
@@ -407,8 +440,11 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
     })
     viewRef.current = view
     const boundaryFocusHandler = (event: Event) => {
-      const position = (event as CustomEvent<{ position: number }>).detail.position
-      const target = Math.min(Math.max(0, position), view.state.doc.length)
+      const detail = (event as CustomEvent<{ direction?: -1 | 1; position?: number }>).detail
+      const direction = detail.direction
+      const target = direction
+        ? direction > 0 ? 0 : view.state.doc.length
+        : Math.min(Math.max(0, detail.position ?? 0), view.state.doc.length)
       view.dispatch({ selection: { anchor: target } })
       view.focus()
     }
@@ -454,7 +490,7 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
     view.focus()
   }, [commandRequest])
 
-  const depthClass = Math.min(maxTagDepth(parseMarkdown(value)), 4)
+  const depthClass = Math.min(maxTagDepth(parseMarkdownForDisplay(value)), 4)
   useEffect(() => {
     const view = viewRef.current
     if (!view) return

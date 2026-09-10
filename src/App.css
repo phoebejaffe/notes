@@ -1,11 +1,13 @@
 #root { min-height: 100vh; }
 .capture-shell, .app-shell { --tag-chip-base: #fff; }
-.capture-shell { min-height: 100vh; padding: 14px 16px; color: #403a42; background: #fff; }
+.capture-shell { height: 100vh; min-height: 0; display: flex; flex-direction: column; padding: 14px 16px; color: #403a42; background: #fff; overflow: hidden; }
 .capture-shell.capture-unfocused { opacity: .9; }
 .capture-shell .editor-card { padding-top: 0; }
 .capture-shell .codemirror-host { border: 0; }
 .capture-shell .cm-editor { min-height: 50px; }
-.app-shell { width: min(980px, 100%); margin: 0 auto; padding: 88px 16px 64px; background: #fff; }
+.app-shell { width: min(980px, 100%); height: 100vh; min-height: 0; display: flex; flex-direction: column; margin: 0 auto; padding: 88px 16px 16px; background: #fff; overflow: hidden; }
+.notes-layout { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.day-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 0; background: transparent; pointer-events: none; }
 .topbar-left, .topbar-right, .topbar > .filter-panel { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
 .topbar > .filter-panel { align-items: stretch; }
@@ -118,7 +120,7 @@ button { cursor: pointer; font: inherit; }
 .codemirror-host.source-mode .cm-marker-line { color: inherit !important; font-style: normal; }
 .codemirror-host.source-mode .cm-marker-syntax, .codemirror-host:not(.hide-tag-syntax) .cm-marker-syntax { font-size: inherit; letter-spacing: normal; }
 .codemirror-host.source-mode .cm-tag-chip { display: inline; margin: 0; padding: 0; border: 0; border-radius: 0; color: inherit; background: transparent; font-size: inherit; }
-.tag-bar { position: fixed; z-index: 12; right: 0; bottom: 0; left: 0; display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-start; gap: 8px; min-width: 0; padding: 7px 12px; border-top: 1px solid #d1c4d8; background: #fff; box-shadow: 0 -8px 24px #392c1f12; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }
+.tag-bar { position: static; z-index: 12; display: flex; flex: 0 0 48px; width: 100%; height: 48px; min-width: 0; min-height: 48px; max-height: 48px; flex-wrap: nowrap; align-items: center; justify-content: flex-start; gap: 8px; padding: 7px 12px; border-top: 1px solid #d1c4d8; background: #fff; box-shadow: 0 -8px 24px #392c1f12; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }
 .tag-bar > * { flex-shrink: 0; }
 .tag-format-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
 .tag-format-button { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 27px; padding: 0; border: 0 !important; border-radius: 5px !important; color: #625b54 !important; background: transparent !important; font-size: 14px !important; line-height: 1; }
@@ -247,8 +249,9 @@ button { cursor: pointer; font: inherit; }
 .offline-tooltip { position: absolute; z-index: 25; top: calc(100% + 8px); right: 0; display: none; width: 270px; padding: 9px 10px; border: 1px solid #d99a91; border-radius: 7px; color: #8f4035; background: #fff5f2; box-shadow: 0 8px 20px #392c1f22; font-size: 11px; line-height: 1.4; text-align: left; white-space: normal; }
 .offline-indicator:hover .offline-tooltip, .offline-indicator:focus-visible .offline-tooltip { display: block; }
 .tag-bar-browser { border-top: 1px solid #d1c4d8; }
-.mobile-browser.app-shell { padding-top: 124px; }
-.mobile-browser .tag-bar-browser { top: calc(48px + env(safe-area-inset-top)); bottom: auto; border-top: 0; border-bottom: 1px solid #d1c4d8; box-shadow: 0 8px 24px #392c1f12; }
+.mobile-browser.app-shell { padding-top: 78px; }
+.mobile-browser .tag-bar-browser { order: -1; border-top: 0; border-bottom: 1px solid #d1c4d8; box-shadow: 0 8px 24px #392c1f12; }
+.mobile-browser .day-stream { order: 1; }
 .tag-bar-browser + .modal-backdrop { z-index: 20; }
 .tag-add-toggle { flex: 0 0 auto; padding: 6px 10px; color: #806790; background: transparent; border: 1px solid #d8cbe0; border-radius: 6px; font-size: 11px; }
 .command-palette { display: flex; width: min(520px, 100%); max-height: min(520px, calc(100vh - 40px)); overflow-y: auto; flex-direction: column; gap: 3px; padding: 12px; border: 1px solid #d9d4cb; background: #fffdf9; box-shadow: 0 18px 48px #392c1f26; }
