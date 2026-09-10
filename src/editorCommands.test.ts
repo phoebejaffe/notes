@@ -15,6 +15,8 @@ describe('editor commands', () => {
   it('continues checklist items on Enter', () => {
     const source = '- [ ] first'
     expect(continueTaskList(source, source.length)).toEqual({ source: '- [ ] first\n- [ ] ', cursor: 18 })
+    const checked = '- [x] done'
+    expect(continueTaskList(checked, checked.length)?.source).toBe('- [x] done\n- [ ] ')
     expect(continueTaskList('plain text', 10)).toBeUndefined()
   })
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Prec } from '@codemirror/state'
 import { defaultKeymap, deleteCharBackwardStrict, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
@@ -7,9 +7,15 @@ import { Decoration, EditorView, keymap, lineNumbers, ViewPlugin, WidgetType, ty
 import { findMarkerTagRename, isMutedLine, mutedMarkerPosition, parseMarkdown, renameMatchingTag, toggleMutedLines, type ParsedMarkdown } from './markerEngine'
 import { continueTaskList, toggleIndent, toggleList, toggleUnindent, type ListKind } from './editorCommands'
 
+function rangesAtLine(parsed: ParsedMarkdown, lineIndex: number) {
+  return parsed.ranges.filter((item) => item.startLine <= lineIndex && lineIndex <= item.endLine).sort((left, right) => left.startLine - right.startLine)
+}
+
 function lineStyle(parsed: ParsedMarkdown, lineIndex: number, tagColors: Record<string, string>) {
-  if (parsed.markers.some((item) => item.line === lineIndex)) return 'cm-marker-line'
-  const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
+  const markerLine = parsed.markers.some((item) => item.line === lineIndex)
+  const activeTags = rangesAtLine(parsed, lineIndex)
+  if (markerLine && !activeTags.length) return 'cm-marker-line'
+  if (!activeTags.length) return markerLine ? 'cm-marker-line' : ''
   if (!activeTags.length) return ''
   const outerColor = tagColors[activeTags[0].tag]
   const innerColor = tagColors[activeTags[1]?.tag ?? activeTags[0].tag]
@@ -34,10 +40,10 @@ function markdownLineStyle(line: string) {
 }
 
 function parseMarkdownForDisplay(source: string) {
-  const normalized = source.split('\\n').map((line) => {
+  const normalized = source.split('\n').map((line) => {
     const muted = mutedMarkerPosition(line)
     return muted ? `${line.slice(0, muted.start)}${' '.repeat(muted.end - muted.start)}${line.slice(muted.end)}` : line
-  }).join('\\n')
+  }).join('\n')
   return parseMarkdown(normalized)
 }
 
@@ -262,7 +268,7 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
         seenLines.add(lineIndex)
         const rangeClass = lineStyle(parsed, lineIndex, tagColors)
         const mutedMarker = mutedMarkerPosition(line.text)
-        const activeTags = parsed.ranges.filter((item) => item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => left.startLine - right.startLine)
+        const activeTags = rangesAtLine(parsed, lineIndex)
         const taggedLine = rangeClass === 'cm-marker-line' || activeTags.length > 0
         const className = [rangeClass, markdownLineStyle(line.text), mutedMarker && !taggedLine ? 'cm-muted-line' : '', lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
         const customColors = activeTags.slice(0, 4).map((range, index) => tagColors[range.tag] ? `--tag-${['outer', 'inner', 'third', 'fourth'][index]}:${tagColors[range.tag]}` : '').filter(Boolean).join(';')
@@ -385,12 +391,12 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
           EditorView.contentAttributes.of({ autocomplete: 'on', autocorrect: 'on', autocapitalize: 'sentences', spellcheck: 'true' }),
           syntaxHighlighting(defaultHighlightStyle),
           history(),
+          Prec.highest(keymap.of([{ key: 'Enter', run: continueTaskListAtSelection }])),
           keymap.of([
             { key: 'Mod-ArrowLeft', run: (view) => moveToLineContentBoundary(view, -1) },
             { key: 'Mod-ArrowRight', run: (view) => moveToLineContentBoundary(view, 1) },
             { key: 'Alt-ArrowLeft', run: (view) => moveByWhitespaceWord(view, -1) },
             { key: 'Alt-ArrowRight', run: (view) => moveByWhitespaceWord(view, 1) },
-            { key: 'Enter', run: continueTaskListAtSelection },
             { key: 'ArrowUp', run: (view) => moveToAdjacentDay(view, -1, onBoundaryRef.current) },
             { key: 'ArrowDown', run: (view) => moveToAdjacentDay(view, 1, onBoundaryRef.current) },
             { key: 'ArrowDown', run: (view) => moveToVisibleLine(view, 1, filterTags, hideMutedLines) },
@@ -405,6 +411,13 @@ export function CodeMirrorEditor({ value, onChange, onSelection, focusAtStart = 
             ...historyKeymap,
             indentWithTab,
           ]),
+          EditorView.domEventHandlers({
+            keydown(event, view) {
+              if (event.key !== 'Enter' || event.defaultPrevented || !continueTaskListAtSelection(view)) return false
+              event.preventDefault()
+              return true
+            },
+          }),
           EditorView.lineWrapping,
           EditorView.baseTheme({ '.cm-marker-line': { color: '#8c8794', fontStyle: 'italic' } }),
           createRangeDecorations(tagColors, filterTags, sourceMode, hideMutedLines),
