@@ -21,6 +21,7 @@
     "@fabianlars/tauri-plugin-oauth": "^2.1.0",
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.7.2",
+    "@mdxeditor/editor": "^4.2.4",
     "@scure/bip39": "^2.4.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.3",

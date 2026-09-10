@@ -14,6 +14,7 @@ import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from
 import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'
 import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
 import type { User } from 'firebase/auth'
+import { MarkdownPrototypePage } from './prototype/MarkdownPrototypePage'
 import './App.css'
 
 const SAMPLE = `<!-- therapy 🧠 -->
@@ -194,7 +195,7 @@ function parseDisplayedShortcut(shortcut: string) {
   return shortcut.replaceAll('⌘', 'Mod-').replaceAll('⌃', 'Ctrl-').replaceAll('⌥', 'Alt-').replaceAll('⇧', 'Shift-').replace('↑', 'ArrowUp').replace('↓', 'ArrowDown').replace('←', 'ArrowLeft').replace('→', 'ArrowRight').replace('Esc', 'Escape').replaceAll(' ', '')
 }
 
-function App() {
+function NotesApp() {
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences)
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const today = useMemo(() => logicalDayKey(currentDate, preferences.rolloverHour), [currentDate, preferences.rolloverHour])
@@ -1269,6 +1270,10 @@ function App() {
       </div>}
     </main>
   )
+}
+
+function App() {
+  return window.location.pathname === '/prototype' ? <MarkdownPrototypePage /> : <NotesApp />
 }
 
 export default App
