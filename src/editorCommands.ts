@@ -46,7 +46,7 @@ export function continueTaskList(source: string, position: number) {
   const lineEndIndex = source.indexOf('\n', position)
   const lineEnd = lineEndIndex === -1 ? source.length : lineEndIndex
   const line = source.slice(lineStart, lineEnd)
-  const match = line.match(/^(\s*)([-*+]|\d+[.)])\s+\[[ xX]\]\s+/u)
+  const match = line.match(/^(\s*)([-*+]|\d+[.)])\s+\[[ xX]\]\s*/u)
   if (!match) return undefined
   const insertion = `\n${match[1]}${match[2]} [ ] `
   return { source: `${source.slice(0, position)}${insertion}${source.slice(position)}`, cursor: position + insertion.length }
