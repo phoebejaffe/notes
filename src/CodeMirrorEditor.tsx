@@ -269,8 +269,7 @@ function createRangeDecorations(tagColors: Record<string, string>, filterTags: s
         const rangeClass = lineStyle(parsed, lineIndex, tagColors)
         const mutedMarker = mutedMarkerPosition(line.text)
         const activeTags = rangesAtLine(parsed, lineIndex)
-        const taggedLine = rangeClass.includes('cm-marker-line') || activeTags.length > 0
-        const className = [rangeClass, markdownLineStyle(line.text), mutedMarker && !taggedLine ? 'cm-muted-line' : '', lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
+        const className = [rangeClass, markdownLineStyle(line.text), mutedMarker ? 'cm-muted-line' : '', lineMatchesFilter(parsed, lineIndex, filterTags, hideMutedLines) ? '' : 'cm-filter-hidden'].filter(Boolean).join(' ')
         const customColors = activeTags.slice(0, 4).map((range, index) => tagColors[range.tag] ? `--tag-${['outer', 'inner', 'third', 'fourth'][index]}:${tagColors[range.tag]}` : '').filter(Boolean).join(';')
         const dayInset = Math.min(maxTagDepth(parsed), 4) * 3
         const borderCount = rangeClass.includes('cm-tagged-line') ? Math.min(activeTags.length, 4) : 0
