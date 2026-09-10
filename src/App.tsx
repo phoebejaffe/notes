@@ -904,8 +904,8 @@ function App() {
     }
   }
 
-  function applyTag() {
-    const tag = tagInput.trim()
+  function applyTag(tagValue = tagInput) {
+    const tag = tagValue.trim()
     const currentSelection = editorSelectionRef.current
     const source = documents[currentSelection.day] ?? ''
     const parsed = parseMarkdown(source)
@@ -971,9 +971,9 @@ function App() {
     setRenamedTag('')
   }
 
-  function submitTag() {
+  function submitTag(tagValue?: string) {
     const previousDay = selection.day
-    applyTag()
+    applyTag(tagValue)
     if (previousDay) {
       window.setTimeout(() => {
         const editor = document.querySelector(`[data-day="${previousDay}"] .cm-content`) as HTMLElement | null
@@ -1159,9 +1159,9 @@ function App() {
         {preferences.toolbarControls.tag && <>
         <button className="tag-add-toggle" type="button" onClick={() => setTagBarOpen((open) => !open)} aria-expanded={tagBarOpen}>+ Tag</button>
         {tagBarOpen && <>
-        <input ref={tagInputRef} value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" autoComplete="on" autoCorrect="on" autoCapitalize="none" list="tag-suggestions" />
+        <input ref={tagInputRef} value={tagInput} onChange={(event) => { const value = event.target.value; setTagInput(value); if (allTags.includes(value.trim().normalize('NFC'))) window.setTimeout(() => submitTag(value), 0) }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" autoComplete="on" autoCorrect="on" autoCapitalize="none" list="tag-suggestions" />
         <datalist id="tag-suggestions">{allTags.map((tag) => <option value={tag} key={tag} />)}</datalist>
-        <button type="button" onPointerDown={(event) => event.preventDefault()} onClick={submitTag} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
+        <button type="button" onPointerDown={(event) => event.preventDefault()} onClick={() => submitTag()} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
         {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
         <span className="tag-shortcut">⌘T</span></>}
         </>}
