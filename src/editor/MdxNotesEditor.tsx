@@ -269,10 +269,10 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       applyTagDecorations(hostRef.current, value, tagColors)
       applyChecklistWidgets(hostRef.current, value, commit)
       attempts += 1
-      if (attempts < 8) frame = window.requestAnimationFrame(apply)
+      if (attempts < 30) frame = window.requestAnimationFrame(apply)
     }
     frame = window.requestAnimationFrame(apply)
-    const retry = window.setTimeout(apply, 150)
+    const retry = window.setTimeout(apply, 600)
     return () => {
       cancelled = true
       window.cancelAnimationFrame(frame)
