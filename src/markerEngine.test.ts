@@ -44,6 +44,17 @@ describe('marker engine', () => {
     expect(sourceMatchesFilter(source, ['other'], false)).toBe(false)
   })
 
+  it('parses muted tag marker lines without changing their muted state', () => {
+    const source = '%% <!-- foo -->\n%% escalation of privilege\n%% <!-- /foo -->\n%% boo\n%% '
+    const parsed = parseMarkdown(source)
+    expect(parsed.markers.map(({ kind, tags }) => ({ kind, tags }))).toEqual([
+      { kind: 'open', tags: ['foo'] },
+      { kind: 'close', tags: ['foo'] },
+    ])
+    expect(parsed.ranges).toEqual([{ tag: 'foo', startLine: 0, endLine: 2, start: 0, end: 43 }])
+    expect(parsed.lines.every(isMutedLine)).toBe(true)
+  })
+
   it('detects bold, italic, and combined asterisk marks', () => {
     expect(markdownMarkState('**bold**', 2, 6)).toEqual({ bold: true, italic: false, strikethrough: false })
     expect(markdownMarkState('*italic*', 1, 7)).toEqual({ bold: false, italic: true, strikethrough: false })

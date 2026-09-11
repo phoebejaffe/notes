@@ -3,13 +3,13 @@ import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
-import { CodeMirrorEditor } from './CodeMirrorEditor'
-import { addTagToRange, formatMarker, isMutedLine, lineRangeForSelection, markdownMarkState, parseMarkdown, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
+import { MdxNotesEditor } from './editor/MdxNotesEditor'
+import { parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, replaceDailyDocuments, saveDailyDocument } from './storage'
-import { loadPreferences, savePreferences, TOOLBAR_CONTROLS, type Preferences } from './preferences'
+import { loadPreferences, savePreferences, type Preferences } from './preferences'
 import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
-import { diffLines, type ListKind } from './editorCommands'
+import { diffLines } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
 import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'
 import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
@@ -37,12 +37,10 @@ const DEFAULT_TAG_COLORS = ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55
 const SHORTCUT_LABELS = {
   search: 'Search',
   settings: 'Settings',
-  rawEditor: 'Raw Editor',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
   jumpToToday: 'Jump to today',
   exportToday: 'Export today',
-  tagSelection: 'Tag selection',
   strikethrough: 'Strikethrough',
   taskToggle: 'Toggle task',
   toggleMuted: 'Hide muted lines',
@@ -68,6 +66,10 @@ function currentTimestamp() {
 
 function isMobileKeyboardDevice() {
   return /Android|iPad|iPhone|iPod|Mobile/u.test(navigator.userAgent) || (navigator.maxTouchPoints > 0 && /Macintosh/u.test(navigator.userAgent))
+}
+
+function isIosPwa() {
+  return /iPad|iPhone|iPod/u.test(navigator.userAgent) && ((window.navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches)
 }
 
 function recoveryPhraseStorageKey(uid: string) {
@@ -120,15 +122,8 @@ function FilterIcon({ active }: { active: boolean }) {
   return <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} aria-hidden="true"><path d="M3 4.6C3 4.03995 3 3.75992 3.10899 3.54601C3.20487 3.35785 3.35785 3.20487 3.54601 3.10899C3.75992 3 4.03995 3 4.6 3H19.4C19.9601 3 20.2401 3 20.454 3.10899C20.6422 3.20487 20.7951 3.35785 20.891 3.54601C21 3.75992 21 4.03995 21 4.6V6.33726C21 6.58185 21 6.70414 20.9724 6.81923C20.9479 6.92127 20.9075 7.01881 20.8526 7.10828C20.7908 7.2092 20.7043 7.29568 20.5314 7.46863L14.4686 13.5314C14.2957 13.7043 14.2092 13.7908 14.1474 13.8917C14.0925 13.9812 14.0521 14.0787 14.0276 14.1808C14 14.2959 14 14.4182 14 14.6627V17L10 21V14.6627C10 14.4182 10 14.2959 9.97237 14.1808C9.94787 14.0787 9.90747 13.9812 9.85264 13.8917C9.7908 13.7908 9.70432 13.7043 9.53137 13.5314L3.46863 7.46863C3.29568 7.29568 3.2092 7.2092 3.14736 7.10828C3.09253 7.01881 3.05213 6.92127 3.02763 6.81923C3 6.70414 3 6.58185 3 6.33726V4.6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 
-function MuteIcon() {
+export function MuteIcon() {
   return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M22 10.5V12C22 16.714 22 19.071 20.536 20.536C19.071 22 16.714 22 12 22C7.286 22 4.929 22 3.464 20.536C2 19.071 2 16.714 2 12C2 7.286 2 4.929 3.464 3.464C4.929 2 7.286 2 12 2H13.5" /><path d="M22 2L17 7M17 2L22 7" /></svg>
-}
-
-function ListIcon({ kind }: { kind: 'bullet' | 'number' | 'task' | 'indent' | 'unindent' }) {
-  if (kind === 'bullet') return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M8 4h14M8 12h14M8 20h14" /><path d="M3 4h.01M3 12h.01M3 20h.01" strokeWidth="3" /></svg>
-  if (kind === 'number') return <span className="list-number-icon">1.</span>
-  if (kind === 'task') return <span className="list-task-icon">☑</span>
-  return <span aria-hidden="true">{kind === 'indent' ? '→' : '←'}</span>
 }
 
 function OfflineIndicator() {
@@ -169,10 +164,6 @@ interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
 }
-
-interface Selection { day: string; from: number; to: number }
-type EditorCommandKind = 'bold' | 'italic' | 'strikethrough' | 'mute' | ListKind | 'indent' | 'unindent'
-interface EditorCommand { day: string; id: number; kind: EditorCommandKind; selection: { from: number; to: number } }
 
 function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const parts = shortcut.toLowerCase().split('-')
@@ -227,27 +218,16 @@ function NotesApp() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterTags, setFilterTags] = useState<string[]>([])
   const [hideMutedLines, setHideMutedLines] = useState(false)
-  const [tagBarOpen, setTagBarOpen] = useState(false)
-  const sourceMode = preferences.editorMode === 'raw'
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
-  const [tagInput, setTagInput] = useState('')
-  const [editorCommand, setEditorCommand] = useState<EditorCommand | null>(null)
-  const [selection, setSelection] = useState<Selection>({ day: today, from: 0, to: 0 })
-  const editorSelectionRef = useRef<Selection>({ day: today, from: 0, to: 0 })
-  const hasEditorSelectionRef = useRef(false)
-  const editorCommandIdRef = useRef(0)
-  const toolbarPointerRef = useRef(false)
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [lastBackupAt, setLastBackupAt] = useState<number>()
   const backupDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null)
   const backupAccessRootRef = useRef('')
   const lastBackupSignatureRef = useRef(loadLastBackupSignature())
-  const tagInputRef = useRef<HTMLInputElement>(null)
   const captureMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'capture', [])
   const [captureFocused, setCaptureFocused] = useState(() => document.hasFocus())
-  const [keyboardOffset, setKeyboardOffset] = useState(0)
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(firebaseConfigured)
   const [recoveryPhrase, setRecoveryPhrase] = useState('')
@@ -286,7 +266,7 @@ function NotesApp() {
   useEffect(() => {
     if (!loaded || captureMode || onboardingOpen || settingsOpen || commandPaletteOpen || tagsOpen) return
     const timer = window.setTimeout(() => {
-      const editor = document.querySelector(`[data-day="${today}"] .cm-content`) as HTMLElement | null
+      const editor = document.querySelector(`[data-day="${today}"] .mdxeditor-root-contenteditable`) as HTMLElement | null
       editor?.focus()
     }, 0)
     return () => window.clearTimeout(timer)
@@ -458,38 +438,6 @@ function NotesApp() {
   }, [appendOlderDay, days.length, filterTags.length, hideMutedLines, loaded])
 
   useEffect(() => {
-    if (tagBarOpen) tagInputRef.current?.focus()
-  }, [tagBarOpen])
-
-  useEffect(() => {
-    function focusTagInput(event: KeyboardEvent) {
-      if (matchesShortcut(event, preferences.shortcuts.tagSelection) && selection.day) {
-        event.preventDefault()
-        setTagBarOpen(true)
-        tagInputRef.current?.focus()
-      }
-    }
-    window.addEventListener('keydown', focusTagInput)
-    return () => window.removeEventListener('keydown', focusTagInput)
-  }, [preferences.shortcuts.tagSelection, selection])
-
-  function focusAdjacentDay(documentDay: string, direction: -1 | 1) {
-    const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
-    const currentIndex = cards.findIndex((card) => card.dataset.day === documentDay)
-    const nextCard = cards[currentIndex + direction]
-    if (!nextCard && direction < 0) {
-      document.querySelector<HTMLElement>('.day-stream')?.scrollTo({ top: 0, behavior: 'smooth' })
-      return true
-    }
-    const nextEditor = nextCard?.querySelector<HTMLElement>('.cm-content')
-    if (!nextEditor) return false
-    const nextDay = nextCard?.dataset.day ?? ''
-    const nextSource = documents[nextDay] ?? ''
-    nextEditor.dispatchEvent(new CustomEvent('notes-boundary-focus', { bubbles: true, detail: { direction, position: direction > 0 ? 0 : nextSource.length } }))
-    return true
-  }
-
-  useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
       if (matchesShortcut(event, preferences.shortcuts.help)) {
         event.preventDefault()
@@ -524,11 +472,6 @@ function NotesApp() {
         setPreferences((current) => ({ ...current, zoomLevel: Math.max(60, current.zoomLevel - 10) }))
         return
       }
-      if (matchesShortcut(event, preferences.shortcuts.rawEditor)) {
-        event.preventDefault()
-        setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' }))
-        return
-      }
       if (matchesShortcut(event, preferences.shortcuts.jumpToToday)) {
         event.preventDefault()
         document.querySelector(`[data-day="${today}"]`)?.scrollIntoView({ block: 'start' })
@@ -542,12 +485,10 @@ function NotesApp() {
       const direction = matchesShortcut(event, preferences.shortcuts.dayPrevious) ? -1 : matchesShortcut(event, preferences.shortcuts.dayNext) ? 1 : 0
       if (!direction) return
       const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
-      const activeDay = activeCard?.dataset.day
-      const activeSource = activeDay ? documents[activeDay] ?? '' : ''
-      if (!activeCard || !activeDay || selection.day !== activeDay || (direction < 0 ? selection.from !== 0 || selection.to !== 0 : selection.to !== activeSource.length)) return
+      if (!activeCard) return
       const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
       const currentIndex = cards.indexOf(activeCard)
-      const nextEditor = cards[currentIndex + direction]?.querySelector<HTMLElement>('.cm-content')
+      const nextEditor = cards[currentIndex + direction]?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
       if (nextEditor) {
         event.preventDefault()
         nextEditor.focus()
@@ -556,7 +497,7 @@ function NotesApp() {
     }
     window.addEventListener('keydown', handleInterfaceShortcuts, true)
     return () => window.removeEventListener('keydown', handleInterfaceShortcuts, true)
-  }, [documents, preferences.shortcuts, selection, today])
+  }, [documents, preferences.shortcuts, today])
 
   useEffect(() => {
     function closeTransientPanels(event: KeyboardEvent) {
@@ -585,37 +526,13 @@ function NotesApp() {
   }, [])
 
   useEffect(() => {
-    const viewport = window.visualViewport
-    if (!viewport) return
-    function updateKeyboardOffset() {
-      const currentViewport = window.visualViewport
-      if (!currentViewport) return
-      setKeyboardOffset(Math.max(0, window.innerHeight - currentViewport.height - currentViewport.offsetTop))
-    }
-    updateKeyboardOffset()
-    viewport.addEventListener('resize', updateKeyboardOffset)
-    viewport.addEventListener('scroll', updateKeyboardOffset)
-    return () => {
-      viewport.removeEventListener('resize', updateKeyboardOffset)
-      viewport.removeEventListener('scroll', updateKeyboardOffset)
-    }
-  }, [])
-
-  useEffect(() => {
     if (!captureMode || !loaded) return
     function focusTodayEditor() {
       if (settingsOpen || tagsOpen) return
       window.setTimeout(() => {
         if (settingsOpen || tagsOpen) return
-        const savedSelection = editorSelectionRef.current
-        const targetDay = hasEditorSelectionRef.current ? savedSelection.day : today
-        const editorHost = document.querySelector(`[data-day="${targetDay}"] .codemirror-host`) as HTMLElement | null
-        if (!editorHost) return
-        if (hasEditorSelectionRef.current) {
-          editorHost.dispatchEvent(new CustomEvent('notes-restore-selection', { detail: { from: savedSelection.from, to: savedSelection.to } }))
-        } else {
-          editorHost.querySelector<HTMLElement>('.cm-content')?.focus()
-        }
+        const editor = document.querySelector(`[data-day="${today}"] .mdxeditor-root-contenteditable`) as HTMLElement | null
+        editor?.focus()
       }, 0)
     }
     function focusTodayIfIdle() {
@@ -743,42 +660,11 @@ function NotesApp() {
     }
   }
 
-  const selectedSource = selection.day ? documents[selection.day] ?? '' : ''
-  const selectedParsed = useMemo(() => parseMarkdown(selectedSource), [selectedSource])
-  const tagAlreadyActive = useMemo(() => {
-    if (!tagInput.trim() || selection.from === selection.to) return false
-    const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
-    return selectedParsed.ranges.some((range) => range.tag === tagInput.trim().normalize('NFC') && range.startLine <= startLine && range.endLine >= endLine)
-  }, [selectedParsed, selectedSource, selection, tagInput])
-  const currentTags = useMemo(() => [...new Set(selectedParsed.ranges.filter((range) => selection.from === selection.to ? range.start < selection.from && selection.from < range.end : range.start < selection.to && range.end > selection.from).sort((left, right) => left.startLine - right.startLine || right.endLine - left.endLine).map((range) => range.tag))], [selectedParsed, selection])
-  const activeMarks = useMemo(() => {
-    const marks = markdownMarkState(selectedSource, selection.from, selection.to)
-    const { startLine, endLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
-    return { ...marks, mute: selectedParsed.lines.slice(startLine, endLine + 1).every(isMutedLine) }
-  }, [selectedParsed.lines, selectedSource, selection])
   const searchResults = useMemo(() => {
     if (!query.trim()) return []
     const needle = query.toLocaleLowerCase()
     return Object.entries(documents).flatMap(([day, markdown]) => parseMarkdown(markdown).lines.flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [{ day, line: index + 1, text: line }] : []))
   }, [documents, query])
-
-  function runEditorCommand(kind: EditorCommandKind) {
-    const currentSelection = editorSelectionRef.current
-    setEditorCommand({ day: currentSelection.day || today, id: ++editorCommandIdRef.current, kind, selection: { from: currentSelection.from, to: currentSelection.to } })
-  }
-
-  function runEditorCommandFromPointer(kind: EditorCommandKind) {
-    toolbarPointerRef.current = true
-    runEditorCommand(kind)
-  }
-
-  function runEditorCommandFromClick(kind: EditorCommandKind) {
-    if (toolbarPointerRef.current) {
-      toolbarPointerRef.current = false
-      return
-    }
-    runEditorCommand(kind)
-  }
 
   function updateSource(day: string, markdown: string) {
     documentUpdatedAtRef.current[day] = currentTimestamp()
@@ -905,60 +791,6 @@ function NotesApp() {
     }
   }
 
-  function applyTag(tagValue = tagInput) {
-    const tag = tagValue.trim()
-    const currentSelection = editorSelectionRef.current
-    const source = documents[currentSelection.day] ?? ''
-    const parsed = parseMarkdown(source)
-    const selectedLines = lineRangeForSelection(source, currentSelection.from, currentSelection.to)
-    const alreadyActive = currentSelection.from !== currentSelection.to && parsed.ranges.some((range) => range.tag === tag.normalize('NFC') && range.startLine <= selectedLines.startLine && range.endLine >= selectedLines.endLine)
-    if (!tag || alreadyActive) return
-    if (currentSelection.from === currentSelection.to) {
-      const { startLine } = lineRangeForSelection(source, currentSelection.from, currentSelection.to)
-      const currentLine = parsed.lines[startLine] ?? ''
-      if (currentLine.trim()) {
-        const result = addTagToRange(source, startLine, startLine, tag)
-        if (!result.error) {
-          const markerShift = formatMarker('open', [tag]).length + 1
-          updateSource(currentSelection.day, result.source)
-          setTagInput('')
-          const nextSelection = { day: currentSelection.day, from: currentSelection.from + markerShift, to: currentSelection.to + markerShift }
-          editorSelectionRef.current = nextSelection
-          setSelection(nextSelection)
-        }
-        return
-      }
-      const openLine = formatMarker('open', [tag])
-      const closeLine = formatMarker('close', [tag])
-      const insertion = `${openLine}\n\n${closeLine}`
-      const nextSource = `${source.slice(0, currentSelection.from)}${insertion}${source.slice(currentSelection.from)}`
-      const cursor = currentSelection.from + openLine.length + 1
-      updateSource(currentSelection.day, nextSource)
-      setTagInput('')
-      const nextSelection = { day: currentSelection.day, from: cursor, to: cursor }
-      editorSelectionRef.current = nextSelection
-      setSelection(nextSelection)
-      return
-    }
-    const { startLine, endLine } = lineRangeForSelection(source, currentSelection.from, currentSelection.to)
-    const result = addTagToRange(source, startLine, endLine, tag)
-    if (!result.error) {
-      const markerShift = formatMarker('open', [tag]).length + 1
-      updateSource(currentSelection.day, result.source)
-      setTagInput('')
-      const nextSelection = { day: currentSelection.day, from: currentSelection.from + markerShift, to: currentSelection.to + markerShift }
-      editorSelectionRef.current = nextSelection
-      setSelection(nextSelection)
-    }
-  }
-
-  function removeSelectedTag(tag: string) {
-    if (!selection.day) return
-    const { startLine } = lineRangeForSelection(selectedSource, selection.from, selection.to)
-    const result = removeTagAtPosition(selectedSource, startLine, tag)
-    if (!result.error) updateSource(selection.day, result.source)
-  }
-
   function updateShortcut(name: string, value: string) {
     setPreferences((current) => ({ ...current, shortcuts: { ...current.shortcuts, [name]: value } }))
   }
@@ -970,17 +802,6 @@ function NotesApp() {
     setDocuments((current) => Object.fromEntries(Object.entries(current).map(([day, markdown]) => [day, renameTagEverywhere(markdown, oldTag, newTag)])))
     setTagToRename('')
     setRenamedTag('')
-  }
-
-  function submitTag(tagValue?: string) {
-    const previousDay = selection.day
-    applyTag(tagValue)
-    if (previousDay) {
-      window.setTimeout(() => {
-        const editor = document.querySelector(`[data-day="${previousDay}"] .cm-content`) as HTMLElement | null
-        editor?.focus()
-      }, 0)
-    }
   }
 
   function exportMarkdown(day: string) {
@@ -1056,12 +877,11 @@ function NotesApp() {
     if (command === 'import') void previewImport()
     if (command === 'future') setFutureDateInput(shiftLogicalDay(today, 1))
     if (command === 'export') exportAllMarkdown()
-    if (command === 'raw') setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' }))
   }
 
   const commandItems = [
     ['today', 'Jump to today'], ['future', 'Show future days'], ['search', 'Search notes'], ['settings', 'Open settings'], ['privacy', 'Privacy center'],
-    ['raw', sourceMode ? 'Use normal editor' : 'Use raw editor'], ['sync', 'Sync now'], ['backup', 'Backup now'], ['import', 'Import backup'], ['export', 'Export all notes'],
+    ['sync', 'Sync now'], ['backup', 'Backup now'], ['import', 'Import backup'], ['export', 'Export all notes'],
   ].filter(([, label]) => label.toLocaleLowerCase().includes(commandQuery.toLocaleLowerCase()))
 
   const syncPrompt = !firebaseConfigured
@@ -1073,7 +893,7 @@ function NotesApp() {
   if (!loaded || authLoading) return <main className="loading-screen">{!loaded ? 'Opening your notes…' : 'Checking your sign-in…'}</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''}${!captureMode && isIosPwa() ? ' ios-pwa' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -1084,7 +904,6 @@ function NotesApp() {
           {saveState === 'saving' && <span className="save-spinner" role="status" aria-label="Saving" />}
         </div>
         {menuOpen && <nav className="menu-panel" aria-label="Noteses menu">
-          <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
           <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
@@ -1106,7 +925,6 @@ function NotesApp() {
         <button className={`filter-button icon-button${filterTags.length || hideMutedLines ? ' filter-active' : ''}`} type="button" aria-label="Filter by tag" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><FilterIcon active={filterTags.length > 0 || hideMutedLines} /></button>
         <button className="icon-button" type="button" aria-label="Open quick entry menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>☰</button>
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
-          <button type="button" onClick={() => { setPreferences((current) => ({ ...current, editorMode: current.editorMode === 'raw' ? 'normal' : 'raw' })); setMenuOpen(false) }}>{sourceMode ? 'Normal editor' : 'Raw Editor'}</button>
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
           <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
@@ -1139,7 +957,7 @@ function NotesApp() {
           return <article className="day-card" data-day={documentDay} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <CodeMirrorEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} onSelection={(from, to) => { const nextSelection = { day: documentDay, from, to }; hasEditorSelectionRef.current = true; editorSelectionRef.current = nextSelection; setSelection(nextSelection) }} focusAtStart={captureMode && documentDay === today} sourceMode={sourceMode} tagColors={tagColors} hideTagSyntax={preferences.hideTagSyntax} strikethroughShortcut={preferences.shortcuts.strikethrough} taskToggleShortcut={preferences.shortcuts.taskToggle} filterTags={filterTags} hideMutedLines={hideMutedLines} onBoundary={(direction) => focusAdjacentDay(documentDay, direction)} commandRequest={editorCommand?.day === documentDay ? editorCommand : undefined} restoreSelection={selection.day === documentDay ? { from: selection.from, to: selection.to } : undefined} />
+              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} showUndoRedo={isMobileKeyboardDevice()} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>
@@ -1147,26 +965,6 @@ function NotesApp() {
         })}
         <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
       </section>
-
-      {!sourceMode && loaded && <div className={`tag-bar${isTauriEnvironment() ? ' tag-bar-native' : ' tag-bar-browser'}`} role="toolbar" aria-label="Formatting and tags" style={isTauriEnvironment() ? { bottom: `calc(${keyboardOffset}px + env(safe-area-inset-bottom))` } : undefined}>
-        <div className="tag-format-actions">
-          {preferences.toolbarControls.bold && <button className={`tag-format-button${activeMarks.bold ? ' format-active' : ''}`} type="button" aria-label="Bold" aria-pressed={activeMarks.bold} title="Bold" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('bold') }} onClick={() => runEditorCommandFromClick('bold')}><strong>B</strong></button>}
-          {preferences.toolbarControls.italic && <button className={`tag-format-button${activeMarks.italic ? ' format-active' : ''}`} type="button" aria-label="Italic" aria-pressed={activeMarks.italic} title="Italic" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('italic') }} onClick={() => runEditorCommandFromClick('italic')}><em>I</em></button>}
-          {preferences.toolbarControls.strikethrough && <button className={`tag-format-button${activeMarks.strikethrough ? ' format-active' : ''}`} type="button" aria-label="Strikethrough" aria-pressed={activeMarks.strikethrough} title="Strikethrough" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('strikethrough') }} onClick={() => runEditorCommandFromClick('strikethrough')}><span className="strikethrough-label">S</span></button>}
-          {preferences.toolbarControls.mute && <button className={`tag-format-button${activeMarks.mute ? ' format-active' : ''}`} type="button" aria-label="Mute or unmute lines" aria-pressed={activeMarks.mute} title="Mute or unmute lines" onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer('mute') }} onClick={() => runEditorCommandFromClick('mute')}><MuteIcon /></button>}
-          {(['bullet', 'number', 'task', 'indent', 'unindent'] as const).filter((control) => preferences.toolbarControls[control]).map((control) => <button className="tag-format-button" type="button" key={control} aria-label={control} title={control} onPointerDown={(event) => { event.preventDefault(); runEditorCommandFromPointer(control) }} onClick={() => runEditorCommandFromClick(control)}><ListIcon kind={control} /></button>)}
-        </div>
-        <div className="active-tag-chips">{currentTags.map((tag) => <span className="active-tag-chip" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeSelectedTag(tag)}>×</button></span>)}</div>
-        {preferences.toolbarControls.tag && <>
-        <button className="tag-add-toggle" type="button" onClick={() => setTagBarOpen((open) => !open)} aria-expanded={tagBarOpen}>+ Tag</button>
-        {tagBarOpen && <>
-        <input ref={tagInputRef} value={tagInput} onChange={(event) => { const value = event.target.value; setTagInput(value); if (allTags.includes(value.trim().normalize('NFC'))) window.setTimeout(() => submitTag(value), 0) }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitTag() } }} placeholder="New tag" aria-label="New tag" autoComplete="on" autoCorrect="on" autoCapitalize="none" list="tag-suggestions" />
-        <datalist id="tag-suggestions">{allTags.map((tag) => <option value={tag} key={tag} />)}</datalist>
-        <button type="button" onPointerDown={(event) => event.preventDefault()} onClick={() => submitTag()} disabled={!tagInput.trim() || tagAlreadyActive}>Add</button>
-        {tagAlreadyActive && <span className="tag-warning">Already active here.</span>}
-        <span className="tag-shortcut">⌘T</span></>}
-        </>}
-      </div>}
       </div>
 
       {commandPaletteOpen && <div className="modal-backdrop command-palette-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setCommandPaletteOpen(false) }}>
@@ -1188,7 +986,6 @@ function NotesApp() {
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
           <div className="modal-heading"><div><span className="eyebrow">Preferences</span><h2 id="settings-modal-title">Settings</h2></div><button className="modal-close" type="button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button></div>
           <fieldset className="settings-group"><legend>Editor</legend>
-            <label className="settings-row"><span className="settings-label">Editor mode</span><select value={preferences.editorMode} onChange={(event) => setPreferences((current) => ({ ...current, editorMode: event.target.value === 'raw' ? 'raw' : 'normal' }))}><option value="normal">Normal editor</option><option value="raw">Raw Editor</option></select></label>
             <label className="settings-row settings-range-row"><span className="settings-label">Zoom</span><span className="settings-range-control"><input type="range" min="60" max="150" step="10" value={preferences.zoomLevel} onChange={(event) => setPreferences((current) => ({ ...current, zoomLevel: Number(event.target.value) }))} /><output>{preferences.zoomLevel}%</output></span></label>
             <label className="settings-row"><span className="settings-label">Font choice</span><select value={preferences.fontChoice} onChange={(event) => setPreferences((current) => ({ ...current, fontChoice: event.target.value as Preferences['fontChoice'] }))}><option value="system">System sans-serif</option><option value="serif">Serif</option><option value="monospace">Monospace</option></select></label>
           </fieldset>
@@ -1202,10 +999,6 @@ function NotesApp() {
           <fieldset className="settings-group"><legend>Appearance</legend>
             <label className="settings-row"><span className="settings-label">Dark/light mode</span><select value={preferences.theme} onChange={(event) => setPreferences((current) => ({ ...current, theme: event.target.value === 'dark' ? 'dark' : 'light' }))}><option value="light">Light</option><option value="dark">Dark</option></select></label>
             <label className="settings-row"><span className="settings-label">Compact spacing</span><input type="checkbox" checked={preferences.compactSpacing} onChange={(event) => setPreferences((current) => ({ ...current, compactSpacing: event.target.checked }))} /></label>
-          </fieldset>
-
-          <fieldset className="settings-group"><legend>Toolbar</legend>
-            {TOOLBAR_CONTROLS.map(({ key, label }) => <label className="settings-row" key={key}><span className="settings-label">{label}</span><input type="checkbox" checked={preferences.toolbarControls[key]} onChange={(event) => setPreferences((current) => ({ ...current, toolbarControls: { ...current.toolbarControls, [key]: event.target.checked } }))} /></label>)}
           </fieldset>
 
           <fieldset className="settings-group"><legend>Cloud sync</legend>
@@ -1248,7 +1041,6 @@ function NotesApp() {
           <fieldset className="settings-group"><legend>Tags</legend>
             <label className="settings-row"><span className="settings-label">Manage known tags</span><button className="settings-action" type="button" onClick={() => { setTagsOpen(true); setSettingsOpen(false) }}>Manage</button></label>
             <p className="settings-help">Rename tags and choose their colors from the known-tags manager.</p>
-            <label className="settings-row"><span className="settings-label">Hide tag syntax</span><input type="checkbox" checked={preferences.hideTagSyntax} onChange={(event) => setPreferences((current) => ({ ...current, hideTagSyntax: event.target.checked }))} /></label>
           </fieldset>
         </section>
       </div>}

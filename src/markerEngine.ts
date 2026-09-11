@@ -30,7 +30,7 @@ export interface ParsedMarkdown {
   diagnostics: MarkerDiagnostic[]
 }
 
-const MARKER_PATTERN = /^\s*<!--([\s\S]*?)-->\s*$/
+const MARKER_PATTERN = /^\s*(?:%%\s+)?<!--([\s\S]*?)-->\s*$/
 
 function normalizeTag(tag: string) {
   return tag.normalize('NFC')
@@ -222,7 +222,7 @@ function removeTagFromMarkerLine(line: string, kind: MarkerKind, tag: string) {
   const target = markerTagSpans(line).find((span) => span.kind === kind && span.tag === normalizeTag(tag))
   if (!target) return line
   const remaining = `${line.slice(0, target.start)}${line.slice(target.end)}`
-  if (/^\s*<!--\s*-->\s*$/u.test(remaining)) return ''
+  if (/^\s*(?:%%\s+)?<!--\s*-->\s*$/u.test(remaining)) return ''
   return remaining.replace(/<!--\s+/u, '<!-- ').replace(/\s+-->\s*$/u, ' -->')
 }
 

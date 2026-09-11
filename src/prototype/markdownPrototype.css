@@ -44,22 +44,23 @@
 .prototype-panel-heading > span { color: #988f86; font-size: 11px; }
 .prototype-editor-shell { min-height: 330px; }
 
-.prototype-mdx-editor .mdxeditor { min-height: 330px; border: 0; border-radius: 0; background: #fff; }
-.prototype-mdx-editor .mdxeditor-toolbar { border-top: 0; border-right: 0; border-left: 0; background: #fbf8f5; }
-.prototype-mdx-editor .mdxeditor-root-contenteditable { padding: 20px 22px 28px; }
-.prototype-mdx-editor [data-prototype-tag] { padding: 1px 5px; border-bottom: 2px solid #8975aa; color: #6d587e; background: #f4f1f8; }
-.prototype-mdx-editor [data-prototype-callout] { margin: 14px 0; padding: 12px 14px; border-left: 4px solid #c88968; border-radius: 5px; color: #704936; background: #fbf2ee; }
-.prototype-mdx-editor [data-prototype-muted='true'] { color: #988f86; opacity: .65; }
-.prototype-mdx-editor.prototype-hide-muted [data-prototype-muted='true'] { display: none; }
-.prototype-mdx-editor u { text-decoration-thickness: 2px; text-underline-offset: 3px; text-decoration-color: #806790; }
-.prototype-mdx-editor .prototype-directive-card { margin: 14px 0; padding: 12px 14px; border: 1px dashed #8975aa; border-radius: 7px; color: #62506f; background: #f8f5fa; }
-.prototype-mdx-editor .prototype-directive-card strong { margin-right: 8px; }
-.prototype-mdx-editor .prototype-directive-card span { color: #988f86; font-size: 11px; }
-.prototype-mdx-editor .prototype-directive-card p { margin: 6px 0 0; color: #817970; font-size: 12px; }
-.prototype-mdx-editor .prototype-directive-card [contenteditable] { min-height: 20px; }
-.prototype-mdx-editor .mdxeditor-toolbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.prototype-mdx-editor .prototype-toolbar-button { min-height: 28px; padding: 4px 8px; border: 1px solid #d8cbe0; border-radius: 5px; color: #62506f; background: #fff; font-size: 11px; }
-.prototype-mdx-editor .prototype-toolbar-button:hover { background: #f4eff7; }
+.notes-mdx-editor { min-height: 0; }
+.notes-mdx-editor .mdxeditor { min-height: 0; border: 0; border-radius: 0; background: #fff; }
+.notes-mdx-editor .mdxeditor-toolbar { border-top: 0; border-right: 0; border-left: 0; background: #fbf8f5; }
+.notes-mdx-editor .mdxeditor-root-contenteditable { padding: 4px 6px; }
+.notes-mdx-editor [data-prototype-tag] { padding: 1px 5px; border-bottom: 2px solid #8975aa; color: #6d587e; background: #f4f1f8; }
+.notes-mdx-editor [data-prototype-callout] { margin: 14px 0; padding: 12px 14px; border-left: 4px solid #c88968; border-radius: 5px; color: #704936; background: #fbf2ee; }
+.notes-mdx-editor [data-prototype-muted='true'] { color: #988f86; opacity: .65; }
+.notes-mdx-editor.prototype-hide-muted [data-prototype-muted='true'] { display: none; }
+.notes-mdx-editor u { text-decoration-thickness: 2px; text-underline-offset: 3px; text-decoration-color: #806790; }
+.notes-mdx-editor .prototype-directive-card { margin: 14px 0; padding: 12px 14px; border: 1px dashed #8975aa; border-radius: 7px; color: #62506f; background: #f8f5fa; }
+.notes-mdx-editor .prototype-directive-card strong { margin-right: 8px; }
+.notes-mdx-editor .prototype-directive-card span { color: #988f86; font-size: 11px; }
+.notes-mdx-editor .prototype-directive-card p { margin: 6px 0 0; color: #817970; font-size: 12px; }
+.notes-mdx-editor .prototype-directive-card [contenteditable] { min-height: 20px; }
+.notes-mdx-editor .mdxeditor-toolbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.notes-mdx-editor .prototype-toolbar-button { min-height: 28px; padding: 4px 8px; border: 1px solid #d8cbe0; border-radius: 5px; color: #62506f; background: #fff; font-size: 11px; }
+.notes-mdx-editor .prototype-toolbar-button:hover { background: #f4eff7; }
 .prototype-tag-control { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
 .prototype-tag-control input { width: 92px; padding: 5px 6px; border: 1px solid #d8cbe0; border-radius: 5px; color: #50455a; background: #fff; font-size: 11px; }
 .prototype-tag-control button { min-height: 28px; padding: 4px 8px; border: 1px solid #8975aa; border-radius: 5px; color: #fff; background: #806790; font-size: 11px; }

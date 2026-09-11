@@ -6,8 +6,7 @@ describe('preferences defaults', () => {
     expect(defaultPreferences.showEmptyDays).toBe(true)
   })
 
-  it('enables toolbar controls and monthly backup retention by default', () => {
-    expect(Object.values(defaultPreferences.toolbarControls).every(Boolean)).toBe(true)
+  it('uses monthly backup retention by default', () => {
     expect(defaultPreferences.backupRetention).toBe('month')
   })
 })
