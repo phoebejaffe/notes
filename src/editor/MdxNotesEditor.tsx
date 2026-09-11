@@ -368,24 +368,23 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   function caretAtEditorEdge(direction: 'up' | 'down'): boolean {
     const selection = window.getSelection()
-    if (!selection || !selection.isCollapsed) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: selection'); return false }
+    if (!selection || !selection.isCollapsed) return false
     const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
-    if (!content || !content.contains(selection.anchorNode)) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: content', !!content, content?.contains(selection.anchorNode)); return false }
+    if (!content || !content.contains(selection.anchorNode)) return false
     const blockSelector = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
     const blocks = [...content.querySelectorAll<HTMLElement>(blockSelector)]
-    if (!blocks.length) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: no blocks'); return false }
+    if (!blocks.length) return false
     const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
     const currentBlock = anchor?.closest<HTMLElement>(blockSelector)
-    if (!currentBlock) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: no currentBlock'); return false }
+    if (!currentBlock) return false
     const index = blocks.indexOf(currentBlock)
-    if (index < 0) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: index<0', currentBlock.className); return false }
-    if (direction === 'up' ? index !== 0 : index !== blocks.length - 1) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: not edge', direction, index, blocks.length); return false }
+    if (index < 0) return false
+    if (direction === 'up' ? index !== 0 : index !== blocks.length - 1) return false
+    // Empty blocks have a zero-size caret rect; treat them as being at both edges
+    if (currentBlock.textContent.length === 0) return true
     const caretRect = selection.getRangeAt(0).getBoundingClientRect()
     const blockRect = currentBlock.getBoundingClientRect()
     const lineHeight = parseFloat(getComputedStyle(currentBlock).lineHeight) || caretRect.height || 20
-    if (window.location.search.includes('multi')) {
-      console.log('[nav-edge]', direction, 'idx=', index, 'blocks=', blocks.length, 'caretBottom=', caretRect.bottom, 'blockBottom=', blockRect.bottom, 'lineHeight=', lineHeight, 'threshold=', blockRect.bottom - lineHeight * 0.5, 'class=', currentBlock.className)
-    }
     if (direction === 'up') return caretRect.top <= blockRect.top + lineHeight * 0.5
     return caretRect.bottom >= blockRect.bottom - lineHeight * 0.5
   }
@@ -446,10 +445,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       event.preventDefault()
       actions.toggleMute()
       return
-    }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const edge = caretAtEditorEdge(event.key === 'ArrowUp' ? 'up' : 'down')
-      console.log('[nav]', event.key, 'edge=', edge, 'firstBlockIsTag=', firstBlockIsTag(), 'caretAtTagStart=', caretAtTagStart())
     }
     if (event.key === 'ArrowUp' && caretAtEditorEdge('up')) {
       event.preventDefault()

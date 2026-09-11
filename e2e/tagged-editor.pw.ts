@@ -61,8 +61,6 @@ test('arrow keys navigate across tag boundaries', async ({ page }) => {
 })
 
 test('arrow down crosses into a day that starts with a tag', async ({ page }) => {
-  const logs: string[] = []
-  page.on('console', (msg) => { if (msg.text().includes('[nav')) logs.push(msg.text()) })
   await page.goto('/prototype?multi')
 
   const cards = page.locator('.day-card')
@@ -78,7 +76,6 @@ test('arrow down crosses into a day that starts with a tag', async ({ page }) =>
 
   // Type to verify the caret landed in the first editable line of day2
   await page.keyboard.type('!')
-  console.log('DEBUG LOGS:', logs)
   await expect(day2Editor).toContainText('This day starts with a tag!')
 })
 
