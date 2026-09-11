@@ -2,7 +2,10 @@ import { createContext, useContext } from 'react'
 import type { Provider } from 'react'
 
 export interface EditorActions {
+  activeTags: string[]
   addTag: (tag: string) => void
+  removeTag: (tag: string) => void
+  recentTags: string[]
   toggleMute: () => void
   showUndoRedo: boolean
 }

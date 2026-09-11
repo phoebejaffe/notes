@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
-import { parseMarkdown, toggleMutedLines } from '../markerEngine'
+import { parseMarkdown, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { preserveMarkerLines } from './markdownSourcePreservation'
@@ -59,7 +59,7 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
     const blockText = block.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
     const lineIndex = lines.findIndex((line, index) => {
       if (index < sourceSearchStart || !line.trim() || /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line)) return false
-      const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
+      const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/^\[[ xX]\]\s+/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
       return sourceText && (blockText.includes(sourceText) || sourceText.includes(blockText))
     })
     if (lineIndex < 0) return
@@ -109,8 +109,74 @@ function sourceLineForRenderedText(source: string, renderedText: string) {
   const normalized = renderedText.replace(/\s+/gu, ' ').trim()
   if (!normalized) return -1
   return source.split('\n').findIndex((line) => {
-    const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
+    const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/^\[[ xX]\]\s+/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
     return sourceText && (sourceText.includes(normalized) || normalized.includes(sourceText))
+  })
+}
+
+function restoreEditorSelection(root: HTMLElement | null, selectedText: string, blockText: string) {
+  const content = root?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+  if (!content || (!selectedText && !blockText)) return
+  const target = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')].find((element) => {
+    const text = element.textContent ?? ''
+    return selectedText ? text.includes(selectedText) : text.includes(blockText)
+  })
+  if (!target) return
+  const selection = window.getSelection()
+  if (!selection) return
+  const range = document.createRange()
+  range.selectNodeContents(target)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  target.closest<HTMLElement>('[contenteditable="true"]')?.focus()
+}
+
+function sourceLineRange(source: string, selectedText: string, caretBlockText: string) {
+  const range = selectedSourceRange(source, selectedText)
+  if (range) {
+    return {
+      startLine: source.slice(0, range.from).split('\n').length - 1,
+      endLine: source.slice(0, range.to).split('\n').length - 1,
+    }
+  }
+  const line = sourceLineForRenderedText(source, caretBlockText)
+  return line < 0 ? undefined : { startLine: line, endLine: line }
+}
+
+const RECENT_TAGS_KEY = 'notes-recent-tags'
+
+function loadRecentTags() {
+  try {
+    const value = JSON.parse(localStorage.getItem(RECENT_TAGS_KEY) ?? '[]')
+    return Array.isArray(value) ? value.filter((tag): tag is string => typeof tag === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function applyChecklistWidgets(root: HTMLElement | null, source: string, commit: (markdown: string) => void) {
+  if (!root) return
+  root.querySelectorAll<HTMLElement>('.notes-checklist-checkbox').forEach((input) => input.remove())
+  const lines = source.split('\n')
+  let searchStart = 0
+  root.querySelectorAll<HTMLElement>('li').forEach((item) => {
+    const lineIndex = lines.findIndex((line, index) => index >= searchStart && /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+/u.test(line) && sourceLineForRenderedText(line, item.textContent ?? '') >= 0)
+    if (lineIndex < 0) return
+    searchStart = lineIndex + 1
+    const match = lines[lineIndex].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/u)
+    if (!match) return
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.className = 'notes-checklist-checkbox'
+    input.checked = match[2].toLowerCase() === 'x'
+    input.contentEditable = 'false'
+    input.setAttribute('aria-label', input.checked ? 'Mark task incomplete' : 'Mark task complete')
+    input.addEventListener('change', () => {
+      const nextLines = [...lines]
+      nextLines[lineIndex] = `${match[1]}[${input.checked ? 'x' : ' '}]${nextLines[lineIndex].slice(match[0].length)}`
+      commit(nextLines.join('\n'))
+    })
+    item.insertBefore(input, item.firstChild)
   })
 }
 
@@ -123,13 +189,20 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const caretBlockTextRef = useRef('')
   const userInteractedRef = useRef(false)
   const suppressChangeRef = useRef(false)
+  const [selectionState, setSelectionState] = useState({ text: '', blockText: '' })
+  const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
 
   const commit = useMemo(() => (markdown: string) => {
+    const selectedText = selectedTextRef.current
+    const blockText = caretBlockTextRef.current
     valueRef.current = markdown
     suppressChangeRef.current = true
     editorRef.current?.setMarkdown(markdown)
     onChangeRef.current(markdown)
-    window.requestAnimationFrame(() => { suppressChangeRef.current = false })
+    window.requestAnimationFrame(() => {
+      suppressChangeRef.current = false
+      restoreEditorSelection(hostRef.current, selectedText, blockText)
+    })
   }, [])
 
   useEffect(() => {
@@ -142,15 +215,21 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const markInteraction = (event: Event) => {
       if (host.contains(event.target as Node)) userInteractedRef.current = true
     }
+    const preserveEditorSelection = (event: globalThis.MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (target.closest('.mdxeditor-toolbar button')) event.preventDefault()
+    }
     host.addEventListener('beforeinput', markInteraction)
     host.addEventListener('keydown', markInteraction)
     host.addEventListener('paste', markInteraction)
     host.addEventListener('click', markInteraction)
+    host.addEventListener('mousedown', preserveEditorSelection)
     return () => {
       host.removeEventListener('beforeinput', markInteraction)
       host.removeEventListener('keydown', markInteraction)
       host.removeEventListener('paste', markInteraction)
       host.removeEventListener('click', markInteraction)
+      host.removeEventListener('mousedown', preserveEditorSelection)
     }
   }, [])
 
@@ -166,10 +245,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   useEffect(() => {
     const updateSelection = () => {
       const selection = window.getSelection()
-      if (!selection || !hostRef.current?.contains(selection.anchorNode)) return
-      selectedTextRef.current = selection.toString()
+      const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+      if (!selection || !content?.contains(selection.anchorNode)) return
+      const selectedText = selection.toString()
       const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
-      caretBlockTextRef.current = anchor?.closest('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')?.textContent ?? ''
+      const blockText = anchor?.closest('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')?.textContent ?? ''
+      selectedTextRef.current = selectedText
+      caretBlockTextRef.current = blockText
+      setSelectionState({ text: selectedText, blockText })
     }
     document.addEventListener('selectionchange', updateSelection)
     return () => document.removeEventListener('selectionchange', updateSelection)
@@ -183,6 +266,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (cancelled) return
       applyMutedVisibility(hostRef.current, hideMutedLines)
       applyTagDecorations(hostRef.current, value, tagColors)
+      applyChecklistWidgets(hostRef.current, value, commit)
       attempts += 1
       if (attempts < 8) frame = window.requestAnimationFrame(apply)
     }
@@ -193,35 +277,56 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       window.cancelAnimationFrame(frame)
       window.clearTimeout(retry)
     }
-  }, [hideMutedLines, tagColors, value])
+  }, [commit, hideMutedLines, tagColors, value])
+
+  const selectionLines = useMemo(() => sourceLineRange(value, selectionState.text, selectionState.blockText), [selectionState, value])
+  const activeTags = useMemo(() => {
+    if (!selectionLines) return []
+    const parsed = parseMarkdown(value)
+    return [...new Set(parsed.ranges.filter((range) => range.startLine <= selectionLines.endLine && range.endLine >= selectionLines.startLine).map((range) => range.tag))]
+  }, [selectionLines, value])
 
   const actions = useMemo(() => ({
+    activeTags,
+    recentTags,
     showUndoRedo,
     addTag: (tagValue: string) => {
       const tag = tagValue.trim()
-      const range = selectedSourceRange(valueRef.current, selectedTextRef.current)
-      if (!tag || !range) return
       const source = valueRef.current
+      const selectedRange = selectedSourceRange(source, selectionState.text)
+      const caretLine = selectedRange ? -1 : sourceLineForRenderedText(source, selectionState.blockText)
+      const caretLineStart = caretLine >= 0 ? source.split('\n').slice(0, caretLine).reduce((offset, line) => offset + line.length + 1, 0) : -1
+      const caretLineEnd = caretLine >= 0 ? caretLineStart + source.split('\n')[caretLine].length : -1
+      const range = selectedRange ?? (caretLine >= 0 ? { from: caretLineStart, to: caretLineEnd } : undefined)
+      if (!tag || !range) return
       const startLine = source.lastIndexOf('\n', range.from - 1) + 1
       const endLineIndex = source.indexOf('\n', range.to)
       const endLine = endLineIndex < 0 ? source.length : endLineIndex
       const open = `<!-- ${tag} -->`
       const close = `<!-- /${tag} -->`
       commit(`${source.slice(0, startLine)}${open}\n${source.slice(startLine, endLine)}\n${close}${source.slice(endLine)}`)
+      const nextRecentTags = [tag, ...recentTags.filter((recent) => recent !== tag)].slice(0, 12)
+      setRecentTags(nextRecentTags)
+      localStorage.setItem(RECENT_TAGS_KEY, JSON.stringify(nextRecentTags))
+    },
+    removeTag: (tag: string) => {
+      if (!selectionLines) return
+      const result = removeTagAtPosition(valueRef.current, selectionLines.startLine, tag)
+      if (!result.error) commit(result.source)
     },
     toggleMute: () => {
       const source = valueRef.current
-      const range = selectedSourceRange(source, selectedTextRef.current)
+      const range = selectedSourceRange(source, selectionState.text)
       if (range) {
         const startLine = source.slice(0, range.from).split('\n').length - 1
         const endLine = source.slice(0, range.to).split('\n').length - 1
         commit(toggleMutedLines(source, startLine, endLine).source)
         return
       }
-      const line = sourceLineForRenderedText(source, caretBlockTextRef.current)
+      const line = sourceLineForRenderedText(source, selectionState.blockText)
       if (line >= 0) commit(toggleMutedLines(source, line, line).source)
     },
-  }), [commit, showUndoRedo])
+  }), [activeTags, commit, recentTags, selectionLines, selectionState, showUndoRedo])
 
   function focusEditor(event: MouseEvent<HTMLDivElement>) {
     if ((event.target as HTMLElement).closest('.mdxeditor-toolbar')) return

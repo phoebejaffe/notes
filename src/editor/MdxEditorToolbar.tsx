@@ -7,19 +7,35 @@ function MuteIcon() {
 }
 
 function AddTagControl() {
-  const [tag, setTag] = useState('therapy')
-  const { addTag } = useEditorActions()
+  const [tag, setTag] = useState('')
+  const [open, setOpen] = useState(false)
+  const { addTag, recentTags } = useEditorActions()
 
-  return <span className="notes-editor-tag-control"><input value={tag} onChange={(event) => setTag(event.target.value)} aria-label="Tag name" placeholder="Tag name" /><button className="notes-editor-toolbar-button" type="button" onClick={() => addTag(tag)}>+ Tag</button></span>
+  function submit(value = tag) {
+    const normalized = value.trim()
+    if (!normalized) return
+    addTag(normalized)
+    setTag('')
+    setOpen(false)
+  }
+
+  return <span className="notes-editor-tag-control">
+    <span className="notes-editor-tag-input-wrap">
+      <input value={tag} onChange={(event) => { setTag(event.target.value); setOpen(true) }} onFocus={() => setOpen(true)} onBlur={() => window.setTimeout(() => setOpen(false), 120)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submit() } }} aria-label="Tag name" placeholder="Add tag" />
+      {open && recentTags.length > 0 && <span className="notes-editor-tag-suggestions" role="listbox">{recentTags.filter((recent) => !tag || recent.toLocaleLowerCase().includes(tag.toLocaleLowerCase())).map((recent) => <button type="button" key={recent} onMouseDown={(event) => event.preventDefault()} onClick={() => submit(recent)}>{recent}</button>)}</span>}
+    </span>
+    <button className="notes-editor-toolbar-button" type="button" onClick={() => submit()}>+ Tag</button>
+  </span>
 }
 
 export function MdxEditorToolbar() {
-  const { toggleMute, showUndoRedo } = useEditorActions()
+  const { activeTags, removeTag, toggleMute, showUndoRedo } = useEditorActions()
   return <>
     {showUndoRedo && <UndoRedo />}
     <BoldItalicUnderlineToggles />
     <ListsToggle options={['bullet', 'number', 'check']} />
     <button className="notes-editor-toolbar-button notes-editor-mute-button" type="button" aria-label="Mute selected lines" title="Mute selected lines" onClick={toggleMute}><MuteIcon /></button>
+    {activeTags.length > 0 && <span className="notes-editor-active-tags" aria-label="Active tags">{activeTags.map((tag) => <span className="notes-editor-active-tag" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => removeTag(tag)}>×</button></span>)}</span>}
     <AddTagControl />
   </>
 }

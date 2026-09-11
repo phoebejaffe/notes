@@ -893,7 +893,7 @@ function NotesApp() {
   if (!loaded || authLoading) return <main className="loading-screen">{!loaded ? 'Opening your notes…' : 'Checking your sign-in…'}</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''}${!captureMode && isIosPwa() ? ' ios-pwa' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!isTauriEnvironment() ? ' web-shell' : ''}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''}${!captureMode && isIosPwa() ? ' ios-pwa' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
