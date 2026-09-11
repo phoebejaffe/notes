@@ -348,7 +348,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (!currentBlock) return false
     const index = blocks.indexOf(currentBlock)
     if (index < 0) return false
-    return direction === 'up' ? index === 0 : index === blocks.length - 1
+    if (direction === 'up' ? index !== 0 : index !== blocks.length - 1) return false
+    const caretRect = selection.getRangeAt(0).getBoundingClientRect()
+    const blockRect = currentBlock.getBoundingClientRect()
+    const lineHeight = parseFloat(getComputedStyle(currentBlock).lineHeight) || caretRect.height || 20
+    if (direction === 'up') return caretRect.top <= blockRect.top + lineHeight * 0.5
+    return caretRect.bottom >= blockRect.bottom - lineHeight * 0.5
   }
 
   function focusAdjacentEditor(direction: 'up' | 'down') {
