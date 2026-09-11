@@ -166,7 +166,7 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .tag-format-button { color: #f5f1ed !important; }
 .theme-dark .tag-format-button:hover { background: #48434a !important; }
 .theme-dark .tag-bar .popover-label, .theme-dark .tag-bar .tag-shortcut { color: #d9d1d5; }
-.theme-dark .active-tag-chip { border-color: #625965; background: #48434a; }
+.theme-dark .active-tag-chip { color: #fff; border-color: #4a464c; background: #2f2c31; }
 .theme-dark .settings-group legend, .theme-dark .settings-help, .theme-dark .settings-description, .theme-dark .day-title { color: #b8aeb0; }
 .theme-dark .settings-row, .theme-dark .color-row, .theme-dark .tag-rename-form { border-color: #403b3f; }
 .theme-dark .tag-rename-form select, .theme-dark .tag-rename-form input { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
