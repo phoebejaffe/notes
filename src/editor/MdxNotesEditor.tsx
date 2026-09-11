@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
+import { $createParagraphNode, $getRoot } from 'lexical'
 import { parseMarkdown, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { commentsToTagDirectives } from './tagSyntax'
+import { $isTagBlockNode } from './TagBlockNode'
 import type { MdxNotesEditorProps } from './editorTypes'
 
 function suppressMutedPrefix(element: HTMLElement) {
@@ -220,17 +222,45 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const target = event.target as HTMLElement
       if (target.closest('.mdxeditor-toolbar button')) event.preventDefault()
     }
+    const handleFocusEdge = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { direction: 'up' | 'down' } | undefined
+      const direction = detail?.direction ?? 'down'
+      userInteractedRef.current = true
+      const textarea = host.querySelector<HTMLTextAreaElement>('.notes-raw-editor')
+      if (textarea) {
+        textarea.focus()
+        textarea.setSelectionRange(direction === 'up' ? textarea.value.length : 0, direction === 'up' ? textarea.value.length : 0)
+        return
+      }
+      editorRef.current?.focus(() => {
+        const root = $getRoot()
+        const target = direction === 'up' ? root.getLastChild() : root.getFirstChild()
+        if (!target) return
+        if ($isTagBlockNode(target)) {
+          const child = direction === 'up' ? target.getLastChild() : target.getFirstChild()
+          if (!child) return
+          if (direction === 'up') child.selectEnd()
+          else child.selectStart()
+        } else if (direction === 'up') {
+          target.selectEnd()
+        } else {
+          target.selectStart()
+        }
+      })
+    }
     host.addEventListener('beforeinput', markInteraction)
     host.addEventListener('keydown', markInteraction)
     host.addEventListener('paste', markInteraction)
     host.addEventListener('click', markInteraction)
     host.addEventListener('mousedown', preserveEditorSelection)
+    host.addEventListener('notes-focus-edge', handleFocusEdge)
     return () => {
       host.removeEventListener('beforeinput', markInteraction)
       host.removeEventListener('keydown', markInteraction)
       host.removeEventListener('paste', markInteraction)
       host.removeEventListener('click', markInteraction)
       host.removeEventListener('mousedown', preserveEditorSelection)
+      host.removeEventListener('notes-focus-edge', handleFocusEdge)
     }
   }, [])
 
@@ -338,22 +368,64 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   function caretAtEditorEdge(direction: 'up' | 'down'): boolean {
     const selection = window.getSelection()
-    if (!selection || !selection.isCollapsed) return false
+    if (!selection || !selection.isCollapsed) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: selection'); return false }
     const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
-    if (!content || !content.contains(selection.anchorNode)) return false
-    const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
-    if (!blocks.length) return false
+    if (!content || !content.contains(selection.anchorNode)) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: content', !!content, content?.contains(selection.anchorNode)); return false }
+    const blockSelector = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
+    const blocks = [...content.querySelectorAll<HTMLElement>(blockSelector)]
+    if (!blocks.length) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: no blocks'); return false }
     const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
-    const currentBlock = anchor?.closest<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')
-    if (!currentBlock) return false
+    const currentBlock = anchor?.closest<HTMLElement>(blockSelector)
+    if (!currentBlock) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: no currentBlock'); return false }
     const index = blocks.indexOf(currentBlock)
-    if (index < 0) return false
-    if (direction === 'up' ? index !== 0 : index !== blocks.length - 1) return false
+    if (index < 0) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: index<0', currentBlock.className); return false }
+    if (direction === 'up' ? index !== 0 : index !== blocks.length - 1) { if (window.location.search.includes('multi')) console.log('[nav-edge] early: not edge', direction, index, blocks.length); return false }
     const caretRect = selection.getRangeAt(0).getBoundingClientRect()
     const blockRect = currentBlock.getBoundingClientRect()
     const lineHeight = parseFloat(getComputedStyle(currentBlock).lineHeight) || caretRect.height || 20
+    if (window.location.search.includes('multi')) {
+      console.log('[nav-edge]', direction, 'idx=', index, 'blocks=', blocks.length, 'caretBottom=', caretRect.bottom, 'blockBottom=', blockRect.bottom, 'lineHeight=', lineHeight, 'threshold=', blockRect.bottom - lineHeight * 0.5, 'class=', currentBlock.className)
+    }
     if (direction === 'up') return caretRect.top <= blockRect.top + lineHeight * 0.5
     return caretRect.bottom >= blockRect.bottom - lineHeight * 0.5
+  }
+
+  function firstBlockIsTag(): boolean {
+    const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+    if (!content) return false
+    const firstChild = content.firstElementChild
+    return !!firstChild?.classList.contains('notes-tag-directive')
+  }
+
+  function caretAtTagStart(): boolean {
+    const selection = window.getSelection()
+    if (!selection || !selection.isCollapsed) return false
+    const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+    if (!content || !content.contains(selection.anchorNode)) return false
+    const tagDiv = content.querySelector<HTMLElement>('.notes-tag-directive')
+    if (!tagDiv) return false
+    const tagParagraph = tagDiv.querySelector<HTMLElement>('p')
+    if (!tagParagraph) return false
+    const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
+    if (!anchor) return false
+    const block = anchor.closest<HTMLElement>('p')
+    if (block !== tagParagraph) return false
+    const range = document.createRange()
+    range.selectNodeContents(tagParagraph)
+    range.setEnd(selection.anchorNode ?? tagParagraph, selection.anchorOffset)
+    return range.toString().length === 0
+  }
+
+  function focusBeforeTag() {
+    editorRef.current?.focus(() => {
+      const root = $getRoot()
+      const firstChild = root.getFirstChild()
+      if ($isTagBlockNode(firstChild)) {
+        const paragraph = $createParagraphNode()
+        firstChild.insertBefore(paragraph)
+        paragraph.selectStart()
+      }
+    })
   }
 
   function focusAdjacentEditor(direction: 'up' | 'down') {
@@ -366,22 +438,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (!targetCard) return
     const targetEditor = targetCard.querySelector<HTMLElement>('.notes-mdx-editor')
     if (!targetEditor) return
-    const targetContent = targetEditor.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
-    if (!targetContent) {
-      targetEditor.click()
-      return
-    }
-    targetContent.focus()
-    const blocks = [...targetContent.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
-    if (!blocks.length) return
-    const targetBlock = direction === 'up' ? blocks[blocks.length - 1] : blocks[0]
-    const selection = window.getSelection()
-    if (!selection) return
-    const range = document.createRange()
-    range.selectNodeContents(targetBlock)
-    range.collapse(direction === 'up')
-    selection.removeAllRanges()
-    selection.addRange(range)
+    targetEditor.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction }, bubbles: false }))
   }
 
   function handleEditorKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -390,9 +447,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       actions.toggleMute()
       return
     }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const edge = caretAtEditorEdge(event.key === 'ArrowUp' ? 'up' : 'down')
+      console.log('[nav]', event.key, 'edge=', edge, 'firstBlockIsTag=', firstBlockIsTag(), 'caretAtTagStart=', caretAtTagStart())
+    }
     if (event.key === 'ArrowUp' && caretAtEditorEdge('up')) {
       event.preventDefault()
-      focusAdjacentEditor('up')
+      if (firstBlockIsTag() && caretAtTagStart()) {
+        focusBeforeTag()
+      } else {
+        focusAdjacentEditor('up')
+      }
       return
     }
     if (event.key === 'ArrowDown' && caretAtEditorEdge('down')) {
@@ -411,6 +476,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     event.preventDefault()
     focusAdjacentEditor(event.key === 'ArrowUp' ? 'up' : 'down')
   }} onChange={(event) => { valueRef.current = event.target.value; onChangeRef.current(event.target.value) }} /></div>
+
 
   return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor} onKeyDownCapture={handleEditorKeyDown}>
     <EditorActionsProvider value={actions}>

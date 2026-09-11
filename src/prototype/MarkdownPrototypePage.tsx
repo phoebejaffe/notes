@@ -25,9 +25,56 @@ Second tagged
 - [ ] A checklist item
 - [x] A completed item`
 
+const MULTI_DAY_MARKDOWN: Record<string, string> = {
+  day1: `First day top line
+
+Some untagged content here that wraps across multiple lines when the editor is narrow enough to test visual line boundary detection for cross-editor navigation.
+
+<!-- tag -->
+Tagged content in day one
+<!-- /tag -->`,
+  day2: `<!-- leading -->
+This day starts with a tag
+<!-- /leading -->
+
+Untagged content after the leading tag`,
+  day3: `Plain day with only untagged content.
+
+Second paragraph here.`,
+}
+
+function MultiEditorPrototype() {
+  const [day1, setDay1] = useState(MULTI_DAY_MARKDOWN.day1)
+  const [day2, setDay2] = useState(MULTI_DAY_MARKDOWN.day2)
+  const [day3, setDay3] = useState(MULTI_DAY_MARKDOWN.day3)
+  const docs: Record<string, [string, (markdown: string) => void]> = {
+    day1: [day1, setDay1],
+    day2: [day2, setDay2],
+    day3: [day3, setDay3],
+  }
+  return <section className="day-stream" aria-label="Multi-editor prototype">
+    {Object.entries(docs).map(([day, [source, setSource]]) => (
+      <article className="day-card" data-day={day} key={day}>
+        <div className="editor-card">
+          <h1 className="day-title">{day}</h1>
+          <MdxNotesEditor value={source} onChange={setSource} />
+        </div>
+      </article>
+    ))}
+  </section>
+}
+
 export function MarkdownPrototypePage() {
   const [markdown, setMarkdown] = useState(SAMPLE_MARKDOWN)
   const [hideMuted, setHideMuted] = useState(false)
+  const multiMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('multi')
+
+  if (multiMode) {
+    return <main className="markdown-prototype-page">
+      <header className="prototype-header"><div><span className="prototype-eyebrow">Editor lab</span><h1>Multi-editor</h1></div></header>
+      <MultiEditorPrototype />
+    </main>
+  }
 
   return <main className="markdown-prototype-page">
     <header className="prototype-header">
