@@ -376,6 +376,7 @@ function NotesApp() {
         savedDocuments[today] = ''
       }
       setDocuments(savedDocuments)
+      setDays([...new Set([today, shiftLogicalDay(today, -1), ...stored.map((document) => document.day)])].sort((left, right) => right.localeCompare(left)))
       setLoaded(true)
     }).catch(() => setLoaded(true))
   }, [today])

@@ -34,7 +34,8 @@ The current day is calculated using a configurable rollover hour, from midnight 
 ## 4. Main notes experience
 
 - The main view is a scrollable daily stream.
-- Today is always available. Existing saved days are loaded into the stream, and empty days may be shown when `showEmptyDays` is enabled.
+- Today is always available. All existing saved days are loaded into the stream, and empty days may be shown when `showEmptyDays` is enabled.
+- When the logical day changes at the configured rollover hour, the new day is added automatically without requiring an application restart.
 - A future date can be selected explicitly. Opening a future day creates a local empty day and records it for future-day behavior.
 - Opening a future note displays a reminder that can be dismissed or snoozed for one day.
 - Each day card contains a Markdown editor and marker diagnostics when tag syntax is malformed or unbalanced.
