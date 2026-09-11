@@ -11,4 +11,9 @@ describe('Markdown source preservation', () => {
     const source = '<!-- therapy -->\nnote\n<!-- /therapy -->'
     expect(preserveMarkerLines(source, source)).toBe(source)
   })
+
+  it('keeps a newly inserted trailing line inside a closing tag', () => {
+    const previous = '<!-- therapy -->\nlast line\n<!-- /therapy -->'
+    expect(preserveMarkerLines(previous, 'last line\n')).toBe('<!-- therapy -->\nlast line\n\n<!-- /therapy -->')
+  })
 })
