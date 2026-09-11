@@ -31,9 +31,16 @@ export interface ParsedMarkdown {
 }
 
 const MARKER_PATTERN = /^\s*(?:%%\s+)?<!--([\s\S]*?)-->\s*$/
+const DIRECTIVE_OPEN_PATTERN = /^\s*:::tag\s*\{([^}]*)\}\s*$/u
+const DIRECTIVE_CLOSE_PATTERN = /^\s*:::\s*$/u
 
 function normalizeTag(tag: string) {
   return tag.normalize('NFC')
+}
+
+function directiveTag(attributes: string) {
+  const match = attributes.match(/(?:^|\s)name\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s}]+))/u)
+  return normalizeTag(match?.[1] ?? match?.[2] ?? match?.[3] ?? '')
 }
 
 export function markdownMarkState(source: string, from: number, to: number) {
@@ -110,13 +117,35 @@ export function parseMarkdown(source: string): ParsedMarkdown {
   const markers: MarkerToken[] = []
   const diagnostics: MarkerDiagnostic[] = []
   const active = new Map<string, { line: number; start: number }>()
+  const directiveStack: string[] = []
   const ranges: TaggedRange[] = []
   let offset = 0
 
   lines.forEach((line, lineIndex) => {
     const match = line.match(MARKER_PATTERN)
-    if (match) {
-      const tokenized = tokenizeTags(match[1].trim())
+    const directiveOpen = line.match(DIRECTIVE_OPEN_PATTERN)
+    const directiveClose = DIRECTIVE_CLOSE_PATTERN.test(line)
+    let markerBody = match?.[1]?.trim()
+    let directiveKind: MarkerKind | undefined
+    let directiveTags: string[] | undefined
+    if (directiveOpen) {
+      const tag = directiveTag(directiveOpen[1])
+      if (tag) {
+        markerBody = tag.includes(' ') ? `"${tag.replaceAll('"', '\\"')}"` : tag
+        directiveKind = 'open'
+        directiveTags = [tag]
+        directiveStack.push(tag)
+      } else diagnostics.push({ line: lineIndex, message: 'Tag directives require a name attribute.', severity: 'error' })
+    } else if (directiveClose) {
+      const tag = directiveStack.pop()
+      if (tag) {
+        markerBody = tag.includes(' ') ? `/"${tag.replaceAll('"', '\\"')}"` : `/${tag}`
+        directiveKind = 'close'
+        directiveTags = [tag]
+      } else diagnostics.push({ line: lineIndex, message: 'No open tag directive found.', severity: 'error' })
+    }
+    if (markerBody !== undefined) {
+      const tokenized = directiveTags ? { tags: directiveTags, malformed: false } : tokenizeTags(markerBody)
       const tags = tokenized.tags
       const hasOpen = tags.some((tag) => !tag.startsWith('/'))
       const hasClose = tags.some((tag) => tag.startsWith('/'))
@@ -127,7 +156,7 @@ export function parseMarkdown(source: string): ParsedMarkdown {
           severity: 'error',
         })
       } else {
-        const kind: MarkerKind = hasClose ? 'close' : 'open'
+        const kind: MarkerKind = directiveKind ?? (hasClose ? 'close' : 'open')
         const cleanTags = tags.map((tag) => tag.replace(/^\//u, ''))
         markers.push({ kind, tags: cleanTags, line: lineIndex, start: offset, end: offset + line.length, raw: line })
         cleanTags.forEach((tag) => {
@@ -231,6 +260,11 @@ export function removeTagAtPosition(source: string, lineIndex: number, tag: stri
   const range = parsed.ranges.filter((item) => item.tag === normalizeTag(tag) && item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => right.startLine - left.startLine)[0]
   if (!range) return { source, error: `No active “${tag}” tag at this position.` }
   const lines = [...parsed.lines]
+  if (DIRECTIVE_OPEN_PATTERN.test(lines[range.startLine]) && DIRECTIVE_CLOSE_PATTERN.test(lines[range.endLine])) {
+    lines.splice(range.endLine, 1)
+    lines.splice(range.startLine, 1)
+    return { source: lines.join('\n') }
+  }
   lines[range.endLine] = removeTagFromMarkerLine(lines[range.endLine], 'close', tag)
   lines[range.startLine] = removeTagFromMarkerLine(lines[range.startLine], 'open', tag)
   if (!lines[range.endLine]) lines.splice(range.endLine, 1)
@@ -361,6 +395,10 @@ export function renameTagEverywhere(source: string, oldTag: string, newTag: stri
   const normalizedOldTag = normalizeTag(oldTag)
   const lines = source.split('\n')
   lines.forEach((line, lineIndex) => {
+    const directive = line.match(DIRECTIVE_OPEN_PATTERN)
+    if (directive && directiveTag(directive[1]) === normalizedOldTag) {
+      lines[lineIndex] = line.replace(/(name\s*=\s*)("[^"]*"|'[^']*'|[^\s}]+)/u, `$1"${newTag.replaceAll('"', '&quot;')}"`)
+    }
     const matches = markerTagSpans(line).filter((span) => span.tag === normalizedOldTag).sort((left, right) => right.start - left.start)
     matches.forEach((span) => { lines[lineIndex] = replaceMarkerTag(lines[lineIndex], span, newTag) })
   })

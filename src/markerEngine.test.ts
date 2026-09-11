@@ -55,6 +55,22 @@ describe('marker engine', () => {
     expect(parsed.lines.every(isMutedLine)).toBe(true)
   })
 
+  it('parses nested tag directives', () => {
+    const source = ':::tag{name="therapy"}\ncontent\n:::tag{name="private"}\nsecret\n:::\n:::'
+    const parsed = parseMarkdown(source)
+    expect(parsed.diagnostics).toEqual([])
+    expect(parsed.ranges.map(({ tag, startLine, endLine }) => ({ tag, startLine, endLine }))).toEqual([
+      { tag: 'private', startLine: 2, endLine: 4 },
+      { tag: 'therapy', startLine: 0, endLine: 5 },
+    ])
+  })
+
+  it('parses directive tag names containing spaces', () => {
+    const parsed = parseMarkdown(':::tag{name="spring launch"}\ncontent\n:::')
+    expect(parsed.diagnostics).toEqual([])
+    expect(parsed.ranges[0].tag).toBe('spring launch')
+  })
+
   it('detects bold, italic, and combined asterisk marks', () => {
     expect(markdownMarkState('**bold**', 2, 6)).toEqual({ bold: true, italic: false, strikethrough: false })
     expect(markdownMarkState('*italic*', 1, 7)).toEqual({ bold: false, italic: true, strikethrough: false })

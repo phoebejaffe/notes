@@ -11,4 +11,5 @@ export interface MdxNotesEditorProps {
   hideMutedLines?: boolean
   tagColors?: Record<string, string>
   showUndoRedo?: boolean
+  rawTextMode?: boolean
 }

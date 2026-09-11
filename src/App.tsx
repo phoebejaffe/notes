@@ -4,6 +4,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { MdxNotesEditor } from './editor/MdxNotesEditor'
+import { commentsToTagDirectives } from './editor/tagSyntax'
 import { parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { listDailyDocuments, replaceDailyDocuments, saveDailyDocument } from './storage'
@@ -218,6 +219,7 @@ function NotesApp() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterTags, setFilterTags] = useState<string[]>([])
   const [hideMutedLines, setHideMutedLines] = useState(false)
+  const [rawTextMode, setRawTextMode] = useState(false)
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
@@ -423,17 +425,23 @@ function NotesApp() {
 
   useEffect(() => {
     if (!loaded) return
+    const sentinel = streamEndRef.current
+    const stream = sentinel?.closest<HTMLElement>('.day-stream')
+    if (!sentinel || !stream) return
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting && !filterTags.length && !hideMutedLines) appendOlderDay()
-    }, { rootMargin: '0px 0px 800px 0px' })
-    if (streamEndRef.current) observer.observe(streamEndRef.current)
+    }, { root: stream, rootMargin: '0px 0px 800px 0px' })
+    observer.observe(sentinel)
     return () => observer.disconnect()
   }, [appendOlderDay, filterTags.length, hideMutedLines, loaded])
 
   useEffect(() => {
     if (!loaded || filterTags.length || hideMutedLines) return
     const sentinel = streamEndRef.current
-    if (!sentinel || sentinel.getBoundingClientRect().top > window.innerHeight + 800) return
+    const stream = sentinel?.closest<HTMLElement>('.day-stream')
+    if (!sentinel || !stream) return
+    const distanceFromTop = sentinel.getBoundingClientRect().top - stream.getBoundingClientRect().top
+    if (distanceFromTop > stream.clientHeight + 800) return
     appendOlderDay()
   }, [appendOlderDay, days.length, filterTags.length, hideMutedLines, loaded])
 
@@ -893,7 +901,7 @@ function NotesApp() {
   if (!loaded || authLoading) return <main className="loading-screen">{!loaded ? 'Opening your notes…' : 'Checking your sign-in…'}</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!isTauriEnvironment() ? ' web-shell' : ''}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''}${!captureMode && isIosPwa() ? ' ios-pwa' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ zoom: isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!isTauriEnvironment() ? ' web-shell' : ''}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''}${!captureMode && isIosPwa() ? ' ios-pwa' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}${rawTextMode ? ' raw-mode' : ''}`} style={{ zoom: isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 }}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -908,6 +916,7 @@ function NotesApp() {
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
           <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
           <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
+          <button type="button" onClick={() => { setRawTextMode((raw) => !raw); setMenuOpen(false) }}>{rawTextMode ? 'Rich editor' : 'Raw text mode'}</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
@@ -929,6 +938,7 @@ function NotesApp() {
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
           <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
           <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
+          <button type="button" onClick={() => { setRawTextMode((raw) => !raw); setMenuOpen(false) }}>{rawTextMode ? 'Rich editor' : 'Raw text mode'}</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
@@ -942,6 +952,7 @@ function NotesApp() {
         </nav>}
         {filterOpen && <div className="filter-panel capture-filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </div>}
+      {rawTextMode && <div className="raw-mode-banner" role="status">Raw text mode is on <button type="button" onClick={() => setRawTextMode(false)}>turn off</button></div>}
 
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
       {futureDateInput && <section className="future-day-panel" role="dialog" aria-label="Open a future day"><label>Future day <input type="date" value={futureDateInput} onChange={(event) => setFutureDateInput(event.target.value)} /></label><button type="button" onClick={() => { openFutureDay(futureDateInput); setFutureDateInput('') }}>Open</button><button type="button" onClick={() => setFutureDateInput('')}>Cancel</button></section>}
@@ -954,10 +965,13 @@ function NotesApp() {
         {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
           const source = documents[documentDay] ?? ''
           const parsed = parseMarkdown(source)
+          const migratedSource = commentsToTagDirectives(source)
+          const hasLegacyTags = migratedSource !== source
           return <article className="day-card" data-day={documentDay} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} showUndoRedo={isMobileKeyboardDevice()} />
+              {hasLegacyTags && <button className="tag-migration-button" type="button" onClick={() => { if (window.confirm('Migrate this day’s legacy comment tags to Markdown directives?')) updateSource(documentDay, migratedSource) }}>Migrate legacy tags</button>}
+              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} showUndoRedo={isMobileKeyboardDevice()} rawTextMode={rawTextMode} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>

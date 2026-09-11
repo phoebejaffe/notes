@@ -3,7 +3,7 @@ import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
 import { parseMarkdown, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
-import { preserveMarkerLines } from './markdownSourcePreservation'
+import { commentsToTagDirectives } from './tagSyntax'
 import type { MdxNotesEditorProps } from './editorTypes'
 
 function suppressMutedPrefix(element: HTMLElement) {
@@ -58,7 +58,7 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
   blocks.forEach((block) => {
     const blockText = block.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
     const lineIndex = lines.findIndex((line, index) => {
-      if (index < sourceSearchStart || !line.trim() || /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line)) return false
+      if (index < sourceSearchStart || !line.trim() || /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line) || /^\s*:::tag\s*\{[^}]*\}\s*$/u.test(line) || /^\s*:::\s*$/u.test(line)) return false
       const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/^\[[ xX]\]\s+/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
       return sourceText && (blockText.includes(sourceText) || sourceText.includes(blockText))
     })
@@ -180,10 +180,10 @@ function applyChecklistWidgets(root: HTMLElement | null, source: string, commit:
   })
 }
 
-export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, showUndoRedo = false }: MdxNotesEditorProps) {
+export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, showUndoRedo = false, rawTextMode = false }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const hostRef = useRef<HTMLDivElement>(null)
-  const valueRef = useRef(value)
+  const valueRef = useRef(commentsToTagDirectives(value))
   const onChangeRef = useRef(onChange)
   const selectedTextRef = useRef('')
   const caretBlockTextRef = useRef('')
@@ -234,10 +234,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }, [])
 
   useEffect(() => {
-    if (valueRef.current === value) return
-    valueRef.current = value
+    const editorValue = commentsToTagDirectives(value)
+    if (valueRef.current === editorValue) return
+    valueRef.current = editorValue
     suppressChangeRef.current = true
-    editorRef.current?.setMarkdown(value)
+    editorRef.current?.setMarkdown(editorValue)
     const frame = window.requestAnimationFrame(() => { suppressChangeRef.current = false })
     return () => window.cancelAnimationFrame(frame)
   }, [value])
@@ -302,8 +303,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const startLine = source.lastIndexOf('\n', range.from - 1) + 1
       const endLineIndex = source.indexOf('\n', range.to)
       const endLine = endLineIndex < 0 ? source.length : endLineIndex
-      const open = `<!-- ${tag} -->`
-      const close = `<!-- /${tag} -->`
+      const open = `:::tag{name="${tag.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"}`
+      const close = ':::'
       commit(`${source.slice(0, startLine)}${open}\n${source.slice(startLine, endLine)}\n${close}${source.slice(endLine)}`)
       const nextRecentTags = [tag, ...recentTags.filter((recent) => recent !== tag)].slice(0, 12)
       setRecentTags(nextRecentTags)
@@ -329,7 +330,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }), [activeTags, commit, recentTags, selectionLines, selectionState, showUndoRedo])
 
   function focusEditor(event: MouseEvent<HTMLDivElement>) {
-    if ((event.target as HTMLElement).closest('.mdxeditor-toolbar')) return
+    const target = event.target as HTMLElement
+    if (target.closest('.mdxeditor-toolbar, [contenteditable="true"]')) return
     editorRef.current?.focus()
   }
 
@@ -340,17 +342,18 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
   }
 
+  if (rawTextMode) return <div className="notes-mdx-editor notes-raw-mode" ref={hostRef}><textarea className="notes-raw-editor" value={value} autoFocus={autoFocus} spellCheck={false} onChange={(event) => { valueRef.current = event.target.value; onChangeRef.current(event.target.value) }} /></div>
+
   return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor} onKeyDown={handleEditorKeyDown}>
     <EditorActionsProvider value={actions}>
       <MDXEditor
         ref={editorRef}
-        markdown={value}
+        markdown={commentsToTagDirectives(value)}
         autoFocus={autoFocus}
         onChange={(markdown) => {
           if (!userInteractedRef.current || suppressChangeRef.current) return
-          const preserved = preserveMarkerLines(valueRef.current, markdown)
-          valueRef.current = preserved
-          onChangeRef.current(preserved)
+          valueRef.current = markdown
+          onChangeRef.current(markdown)
         }}
         plugins={mdxEditorPlugins()}
       />

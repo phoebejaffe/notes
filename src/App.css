@@ -173,6 +173,16 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .modal-backdrop { background: #00000088; }
 .notes-mdx-editor { position: relative; min-width: 0; cursor: text; overflow: hidden; border: 1px solid #e1dbd3; border-radius: 5px; font: 14px/1.65 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 .notes-mdx-editor:focus-within { border-color: #e1dbd3; outline: none; box-shadow: none; }
+.notes-raw-editor { display: block; width: 100%; min-height: 50px; resize: vertical; padding: 4px 6px; border: 0; outline: none; color: inherit; background: transparent; font: inherit; line-height: inherit; white-space: pre-wrap; }
+.raw-mode-banner { position: fixed; z-index: 11; top: 42px; right: 0; left: 0; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; padding: 4px 10px; color: #62506f; background: #f4eff7; border-bottom: 1px solid #d8cbe0; font-size: 11px; }
+.raw-mode-banner button { padding: 0; border: 0; color: #806790; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+.app-shell:not(.web-shell) .raw-mode-banner { top: 80px; }
+.capture-shell .raw-mode-banner { top: 0; }
+.raw-mode .day-stream { padding-top: 128px; }
+.raw-mode.web-shell .day-stream { padding-top: 88px; }
+.raw-mode.ios-pwa .day-stream { padding-top: 136px; }
+.raw-mode.capture-shell .day-stream { padding-top: 28px; }
+.tag-migration-button { margin: 0 0 6px 6px; padding: 3px 7px; border: 1px solid #d8cbe0; border-radius: 5px; color: #62506f; background: #f8f5fa; font-size: 10px; }
 .notes-mdx-editor .mdxeditor { min-height: 0 !important; height: auto !important; border: 0; border-radius: 0; background: #fff; }
 .notes-mdx-editor .mdxeditor-root-contenteditable { min-height: 50px !important; height: auto !important; padding: 4px 6px !important; outline: none !important; box-shadow: none !important; }
 .notes-mdx-editor .mdxeditor:focus-within, .notes-mdx-editor .mdxeditor-root-contenteditable:focus, .notes-mdx-editor .mdxeditor-root-contenteditable:focus-visible, .notes-mdx-editor [contenteditable='true']:focus { outline: none !important; box-shadow: none !important; }

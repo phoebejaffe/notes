@@ -38,7 +38,7 @@ The current day is calculated using a configurable rollover hour, from midnight 
 - A future date can be selected explicitly. Opening a future day creates a local empty day and records it for future-day behavior.
 - Opening a future note displays a reminder that can be dismissed or snoozed for one day.
 - Each day card contains a Markdown editor and marker diagnostics when tag syntax is malformed or unbalanced.
-- The current day can be exported independently. All non-empty notes can be exported as one Markdown file with date headings and separators.
+- The current day can be exported independently. All non-empty notes can be exported as one Markdown file with date headings and separators. The menu can enable a persistent raw-text mode that replaces each rich editor with its exact Markdown source; a fixed banner provides the way to turn raw mode off.
 - A sample-note reset command exists for the current day and is intended as a development/demo affordance, not as a general data-management workflow.
 
 ## 5. Markdown editor
@@ -59,7 +59,15 @@ A line may be muted by adding a `%%` marker after its list or heading prefix. Mu
 
 ### Tag markers
 
-Tags are represented by paired HTML-comment marker lines around Markdown content:
+Tags are represented by nested Markdown container directives around Markdown content:
+
+```markdown
+:::tag{name="tag"}
+Content belonging to the tag.
+:::
+```
+
+Legacy paired HTML-comment markers remain readable and can be migrated per day through an explicit confirmation action. They are converted to directives for editor changes:
 
 ```markdown
 <!-- tag -->
@@ -67,7 +75,7 @@ Content belonging to the tag.
 <!-- /tag -->
 ```
 
-Tags containing spaces are quoted, for example `<!-- "spring launch" -->`. Multiple tags may be opened or closed on one marker line, but opening and closing markers must be on separate lines. Tags are normalized to Unicode NFC form.
+Tag names containing spaces are quoted in directive attributes. Tags are normalized to Unicode NFC form, and tags are now required to be properly nested rather than crossing.
 
 The marker engine:
 
