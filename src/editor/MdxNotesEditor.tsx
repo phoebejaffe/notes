@@ -348,18 +348,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (!currentBlock) return false
     const index = blocks.indexOf(currentBlock)
     if (index < 0) return false
-    if (direction === 'up') {
-      if (index !== 0) return false
-      const range = document.createRange()
-      range.selectNodeContents(currentBlock)
-      range.setEnd(selection.anchorNode ?? currentBlock, selection.anchorOffset)
-      return range.toString().length === 0
-    }
-    if (index !== blocks.length - 1) return false
-    const range = document.createRange()
-    range.selectNodeContents(currentBlock)
-    range.setStart(selection.anchorNode ?? currentBlock, selection.anchorOffset)
-    return range.toString().length === 0
+    return direction === 'up' ? index === 0 : index === blocks.length - 1
   }
 
   function focusAdjacentEditor(direction: 'up' | 'down') {
