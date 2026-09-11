@@ -4,7 +4,7 @@
 
 Noteses is a local-first daily notes application for writing, organizing, and revisiting Markdown notes. The primary workflow is a vertically browsable stream of day-based documents, with lightweight tags, muted lines, search, formatting, export, backup, and optional encrypted cloud synchronization.
 
-The implementation is a React/TypeScript application built with Vite. It runs in a browser/PWA and in a Tauri desktop application. The current product name in the Tauri configuration and UI is **Noteses**. The repository README is still the original Vite starter documentation; this specification reflects the implemented application in `src/` and the Tauri shell in `src-tauri/`.
+The implementation is a React/TypeScript application built with Vite. It runs in a browser/PWA and in a Tauri desktop application. The current product name in the Tauri configuration and UI is **Noteses**. The README provides user-facing setup and product documentation; this specification reflects the implemented application in `src/` and the Tauri shell in `src-tauri/`.
 
 ## 2. Supported runtimes
 
@@ -240,7 +240,7 @@ Tests currently cover backup behavior, encrypted sync behavior, editor Markdown 
 - Tag colors and recent-tag ordering are local UI metadata and are not synchronized as part of encrypted documents.
 - Browser backup functionality depends on File System Access API support.
 - Native launch-at-login, opacity, menu-bar, and dock behaviors are platform-specific.
-- The README should be brought into alignment with this application specification in a separate documentation change if desired; this spec is the current product reference.
+- The README is a user-facing summary and setup guide; this spec remains the more detailed product reference.
 
 ## 17. Future improvements
 
