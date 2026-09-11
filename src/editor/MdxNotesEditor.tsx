@@ -336,14 +336,87 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     editorRef.current?.focus()
   }
 
+  function caretAtEditorEdge(direction: 'up' | 'down'): boolean {
+    const selection = window.getSelection()
+    if (!selection || !selection.isCollapsed) return false
+    const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+    if (!content || !content.contains(selection.anchorNode)) return false
+    const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
+    if (!blocks.length) return false
+    const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
+    const currentBlock = anchor?.closest<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')
+    if (!currentBlock) return false
+    const index = blocks.indexOf(currentBlock)
+    if (index < 0) return false
+    if (direction === 'up') {
+      if (index !== 0) return false
+      const range = document.createRange()
+      range.selectNodeContents(currentBlock)
+      range.setEnd(selection.anchorNode ?? currentBlock, selection.anchorOffset)
+      return range.toString().length === 0
+    }
+    if (index !== blocks.length - 1) return false
+    const range = document.createRange()
+    range.selectNodeContents(currentBlock)
+    range.setStart(selection.anchorNode ?? currentBlock, selection.anchorOffset)
+    return range.toString().length === 0
+  }
+
+  function focusAdjacentEditor(direction: 'up' | 'down') {
+    const card = hostRef.current?.closest<HTMLElement>('.day-card')
+    if (!card) return
+    const cards = [...card.parentElement?.querySelectorAll<HTMLElement>('.day-card') ?? []]
+    const index = cards.indexOf(card)
+    if (index < 0) return
+    const targetCard = direction === 'up' ? cards[index - 1] : cards[index + 1]
+    if (!targetCard) return
+    const targetEditor = targetCard.querySelector<HTMLElement>('.notes-mdx-editor')
+    if (!targetEditor) return
+    const targetContent = targetEditor.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+    if (!targetContent) {
+      targetEditor.click()
+      return
+    }
+    targetContent.focus()
+    const blocks = [...targetContent.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
+    if (!blocks.length) return
+    const targetBlock = direction === 'up' ? blocks[blocks.length - 1] : blocks[0]
+    const selection = window.getSelection()
+    if (!selection) return
+    const range = document.createRange()
+    range.selectNodeContents(targetBlock)
+    range.collapse(direction === 'up')
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
   function handleEditorKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if ((event.metaKey || event.ctrlKey) && event.key === '/') {
       event.preventDefault()
       actions.toggleMute()
+      return
+    }
+    if (event.key === 'ArrowUp' && caretAtEditorEdge('up')) {
+      event.preventDefault()
+      focusAdjacentEditor('up')
+      return
+    }
+    if (event.key === 'ArrowDown' && caretAtEditorEdge('down')) {
+      event.preventDefault()
+      focusAdjacentEditor('down')
+      return
     }
   }
 
-  if (rawTextMode) return <div className="notes-mdx-editor notes-raw-mode" ref={hostRef}><textarea className="notes-raw-editor" value={value} autoFocus={autoFocus} spellCheck={false} onChange={(event) => { valueRef.current = event.target.value; onChangeRef.current(event.target.value) }} /></div>
+  if (rawTextMode) return <div className="notes-mdx-editor notes-raw-mode" ref={hostRef}><textarea className="notes-raw-editor" value={value} autoFocus={autoFocus} spellCheck={false} onKeyDown={(event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    const target = event.currentTarget
+    const atFirstLine = event.key === 'ArrowUp' && target.selectionStart === 0
+    const atLastLine = event.key === 'ArrowDown' && target.selectionStart === target.value.length
+    if (!atFirstLine && !atLastLine) return
+    event.preventDefault()
+    focusAdjacentEditor(event.key === 'ArrowUp' ? 'up' : 'down')
+  }} onChange={(event) => { valueRef.current = event.target.value; onChangeRef.current(event.target.value) }} /></div>
 
   return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor} onKeyDownCapture={handleEditorKeyDown}>
     <EditorActionsProvider value={actions}>
