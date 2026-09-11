@@ -136,13 +136,11 @@ export function parseMarkdown(source: string): ParsedMarkdown {
         directiveTags = [tag]
         directiveStack.push(tag)
       } else diagnostics.push({ line: lineIndex, message: 'Tag directives require a name attribute.', severity: 'error' })
-    } else if (directiveClose) {
-      const tag = directiveStack.pop()
-      if (tag) {
-        markerBody = tag.includes(' ') ? `/"${tag.replaceAll('"', '\\"')}"` : `/${tag}`
-        directiveKind = 'close'
-        directiveTags = [tag]
-      } else diagnostics.push({ line: lineIndex, message: 'No open tag directive found.', severity: 'error' })
+    } else if (directiveClose && directiveStack.length) {
+      const tag = directiveStack.pop()!
+      markerBody = tag.includes(' ') ? `/"${tag.replaceAll('"', '\\"')}"` : `/${tag}`
+      directiveKind = 'close'
+      directiveTags = [tag]
     }
     if (markerBody !== undefined) {
       const tokenized = directiveTags ? { tags: directiveTags, malformed: false } : tokenizeTags(markerBody)

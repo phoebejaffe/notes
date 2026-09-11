@@ -46,6 +46,8 @@ The current day is calculated using a configurable rollover hour, from midnight 
 
 The editor is based on MDXEditor and supports headings, lists, quotes, links, tables, thematic breaks, Markdown shortcuts, directives, and an application toolbar. Existing Markdown source is preserved around editor changes where possible so application marker lines are not silently lost. The formatting bar is fixed to the viewport, with web/PWA-specific placement and responsive spacing.
 
+Tags are rendered as a custom Lexical `ElementNode` (`TagBlockNode`) inside the same editor instance, rather than as nested editors. This means arrow-key navigation, typing, and selection cross tag boundaries naturally without any custom boundary-handling logic. The tag block renders the tag tag and left border through CSS pseudo-elements on a container `<div class="notes-tag-directive">`.
+
 Supported editing actions include:
 
 - Bold, italic, underline, and strikethrough formatting.

@@ -1,11 +1,14 @@
-import { NestedLexicalEditor, type DirectiveEditorProps } from '@mdxeditor/editor'
+import { NESTED_EDITOR_UPDATED_COMMAND, NestedLexicalEditor, useNestedEditorContext, type DirectiveEditorProps } from '@mdxeditor/editor'
 
-export function DirectiveContentEditor({ mdastNode }: DirectiveEditorProps<any>) {
-  const isTag = mdastNode.name === 'tag'
-  const tagName = typeof mdastNode.attributes?.name === 'string' ? mdastNode.attributes.name : ''
-  return <div className={isTag ? 'notes-tag-directive' : 'notes-custom-directive'} data-tag-tag={isTag ? tagName : undefined}>
+export function DirectiveContentEditor(_props: DirectiveEditorProps<any>) {
+  const { parentEditor } = useNestedEditorContext()
+
+  return <div className="notes-custom-directive">
     <NestedLexicalEditor<any>
       block
+      contentEditableProps={{ onInput: () => {
+        parentEditor.dispatchCommand(NESTED_EDITOR_UPDATED_COMMAND, undefined)
+      } }}
       getContent={(node) => (node as any).children as any}
       getUpdatedMdastNode={(node, children) => ({ ...(node as any), children })}
     />

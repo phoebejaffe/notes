@@ -332,7 +332,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   function focusEditor(event: MouseEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement
-    if (target.closest('.mdxeditor-toolbar, [contenteditable="true"]')) return
+    if (target.closest('.mdxeditor-toolbar, [contenteditable]:not([contenteditable="false"])')) return
     editorRef.current?.focus()
   }
 
@@ -345,7 +345,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   if (rawTextMode) return <div className="notes-mdx-editor notes-raw-mode" ref={hostRef}><textarea className="notes-raw-editor" value={value} autoFocus={autoFocus} spellCheck={false} onChange={(event) => { valueRef.current = event.target.value; onChangeRef.current(event.target.value) }} /></div>
 
-  return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor} onKeyDown={handleEditorKeyDown}>
+  return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor} onKeyDownCapture={handleEditorKeyDown}>
     <EditorActionsProvider value={actions}>
       <MDXEditor
         ref={editorRef}

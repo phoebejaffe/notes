@@ -10,19 +10,17 @@ This document includes **bold**, *italic*, and <u>underlined</u> text.
 
 <div data-prototype-callout="warning">Custom rendered content can be represented by an HTML attribute or a Markdown extension.</div>
 
-%% This is muted content. Use the filter button above to hide or show it.
+Untagged before
 
-<!-- therapy -->
-The existing application uses HTML comments for tag ranges, so this syntax must remain safe.
-<!-- /therapy -->
+<!-- first -->
+First tagged
+<!-- /first -->
 
-## Arbitrary syntax
+Untagged between
 
-Unknown constructs should remain visible and editable rather than silently disappearing:
-
-:::custom-block{kind="diagram"}
-This is an application-specific directive.
-:::
+<!-- second -->
+Second tagged
+<!-- /second -->
 
 - [ ] A checklist item
 - [x] A completed item`
@@ -50,6 +48,7 @@ export function MarkdownPrototypePage() {
         <MdxNotesEditor value={markdown} onChange={setMarkdown} hideMutedLines={hideMuted} />
       </article>
     </section>
+    <pre data-testid="prototype-source" hidden>{markdown}</pre>
     <aside className="prototype-notes"><strong>Prototype notes</strong><span>Try the formatting, list, checklist, mute, and tag controls, then edit the Markdown directly to evaluate how well the document model fits the existing notes editor.</span></aside>
   </main>
 }
