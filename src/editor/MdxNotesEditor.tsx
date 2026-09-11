@@ -49,7 +49,7 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
     element.style.removeProperty('--notes-tag-color')
     element.removeAttribute('data-notes-tag-chip')
   })
-  const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')]
+  const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
   const lines = source.split('\n')
   const parsed = parseMarkdown(source)
   let previousTags = ''
