@@ -1,4 +1,5 @@
-import { GenericDirectiveEditor, directivesPlugin, headingsPlugin, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
+import { directivesPlugin, headingsPlugin, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
+import { DirectiveContentEditor } from './DirectiveContentEditor'
 import { MdxEditorToolbar } from './MdxEditorToolbar'
 
 const directive = (name: string, attributes: string[] = []): DirectiveDescriptor => ({
@@ -6,7 +7,7 @@ const directive = (name: string, attributes: string[] = []): DirectiveDescriptor
   testNode: (node) => node.name === name,
   attributes,
   hasChildren: true,
-  Editor: GenericDirectiveEditor,
+  Editor: DirectiveContentEditor,
 })
 
 export const mdxDirectiveDescriptors = [directive('tag', ['name']), directive('muted'), directive('custom-block', ['kind'])]

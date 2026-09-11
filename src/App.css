@@ -201,6 +201,10 @@ button { cursor: pointer; font: inherit; }
 .notes-editor-tag-control .notes-editor-toolbar-button { width: auto; flex-basis: auto; padding-inline: 6px; }
 .notes-mdx-editor [data-prototype-tag] { padding: 1px 5px; border-bottom: 2px solid #8975aa; color: #6d587e; background: #f4f1f8; }
 .notes-mdx-editor [data-prototype-callout] { margin: 14px 0; padding: 12px 14px; border-left: 4px solid #c88968; border-radius: 5px; color: #704936; background: #fbf2ee; }
+.notes-tag-directive { position: relative; margin: 0; padding: 24px 0 0; border-left: 3px solid transparent; }
+.notes-tag-directive::before { position: absolute; top: 12px; left: -3px; display: block; max-width: calc(100% - 8px); padding: 2px 8px; border: 1px solid #d8cbe0; border-left: 0; border-radius: 0 999px 999px 0; color: #62506f; background: #f4f1f8; content: attr(data-tag-tag); font-size: 10px; line-height: 1.45; }
+.notes-tag-directive::after { position: absolute; top: 12px; bottom: 0; left: -5px; width: 3px; border-radius: 2px; background: #8975aa; content: ''; }
+.notes-custom-directive { margin: 0; }
 .notes-checklist-checkbox { display: inline-block !important; width: 14px; height: 14px; margin: 0 7px 0 0; padding: 0; appearance: auto !important; vertical-align: -2px; accent-color: #806790; cursor: pointer; }
 .notes-mdx-editor [data-prototype-muted='true'], .notes-mdx-editor .notes-muted-block { color: #988f86; opacity: .65; }
 .notes-mdx-editor [data-notes-tagged] { --notes-tag-color: var(--tag-color, #8975aa); position: relative; padding-left: 0; border-left: 0; }
