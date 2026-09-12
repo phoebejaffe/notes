@@ -94,22 +94,20 @@ test('arrow up moves below tag → into tag → above tag → previous day', asy
 
   // Up 1: caret moves into the tag
   await page.keyboard.press('ArrowUp')
-  const inTag = await page.evaluate(() => {
+  await expect.poll(() => page.evaluate(() => {
     const node = window.getSelection()?.anchorNode
     const el = node instanceof Element ? node : node?.parentElement
     return !!el?.closest('.notes-tag-directive')
-  })
-  expect(inTag).toBe(true)
+  })).toBe(true)
 
   // Up 2: caret moves above the tag — a new paragraph at position 0
   await page.keyboard.press('ArrowUp')
-  const aboveTag = await day2Editor.evaluate((el, blockSelector) => {
+  await expect.poll(() => day2Editor.evaluate((el, blockSelector) => {
     const first = el.querySelector(blockSelector)
     const node = window.getSelection()?.anchorNode
     const anchorEl = node instanceof Element ? node : node?.parentElement
     return !!first && first.tagName === 'P' && !first.classList.contains('notes-tag-directive') && first.contains(anchorEl ?? null)
-  }, BLOCK_SELECTOR)
-  expect(aboveTag).toBe(true)
+  }, BLOCK_SELECTOR)).toBe(true)
 
   // Up 3: caret crosses into the previous day's last line
   await page.keyboard.press('ArrowUp')
@@ -117,8 +115,7 @@ test('arrow up moves below tag → into tag → above tag → previous day', asy
   await expect(day1Editor).toContainText('Tagged content in day one!')
 
   // The empty boundary paragraph should be cleaned up, not left in day2
-  const day2FirstIsTag = await day2Editor.evaluate((el, blockSelector) => el.querySelector(blockSelector)?.classList.contains('notes-tag-directive'), BLOCK_SELECTOR)
-  expect(day2FirstIsTag).toBe(true)
+  await expect.poll(() => day2Editor.evaluate((el, blockSelector) => el.querySelector(blockSelector)?.classList.contains('notes-tag-directive'), BLOCK_SELECTOR)).toBe(true)
 })
 
 test('typing in the paragraph above a leading tag keeps it', async ({ page }) => {

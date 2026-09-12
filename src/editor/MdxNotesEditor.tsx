@@ -41,63 +41,92 @@ function tagColor(tag: string, colors: Record<string, string>) {
   return palette[[...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % palette.length]
 }
 
+function setAttr(element: HTMLElement, name: string, value: string | undefined) {
+  if (value === undefined) {
+    if (element.hasAttribute(name)) element.removeAttribute(name)
+  } else if (element.getAttribute(name) !== value) element.setAttribute(name, value)
+}
+
+function setTagColorStyle(element: HTMLElement, color: string | undefined) {
+  const current = element.style.getPropertyValue('--notes-tag-color')
+  if (color === undefined) {
+    if (current) element.style.removeProperty('--notes-tag-color')
+  } else if (current !== color) element.style.setProperty('--notes-tag-color', color)
+}
+
 function applyTagDecorations(root: HTMLElement | null, source: string, colors: Record<string, string>) {
   const content = root?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
   if (!root || !content) return
   root.querySelectorAll<HTMLElement>('.notes-tag-border-overlay').forEach((element) => element.remove())
-  content.querySelectorAll<HTMLElement>('[data-notes-tagged], [data-notes-tag-chip]').forEach((element) => {
-    if (element.hasAttribute('data-notes-tagged')) element.removeAttribute('data-notes-tagged')
-    if (element.hasAttribute('data-notes-tag-color')) element.removeAttribute('data-notes-tag-color')
-    if (element.style.getPropertyValue('--notes-tag-color')) element.style.removeProperty('--notes-tag-color')
-    if (element.hasAttribute('data-notes-tag-chip')) element.removeAttribute('data-notes-tag-chip')
-  })
-  if (content.querySelector('.notes-tag-directive')) return
-  const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
-  const lines = source.split('\n')
-  const parsed = parseMarkdown(source)
-  let previousTags = ''
-  let sourceSearchStart = 0
-  const blockLines = new Map<HTMLElement, number>()
-  blocks.forEach((block) => {
-    const blockText = block.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
-    const lineIndex = lines.findIndex((line, index) => {
-      if (index < sourceSearchStart || !line.trim() || /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line) || /^\s*:::tag\s*\{[^}]*\}\s*$/u.test(line) || /^\s*:::\s*$/u.test(line)) return false
-      const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/^\[[ xX]\]\s+/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
-      return sourceText && (blockText.includes(sourceText) || sourceText.includes(blockText))
+  const desired = new Map<HTMLElement, { tagged?: string; chip?: string; color?: string }>()
+  const want = (element: HTMLElement) => {
+    const entry = desired.get(element) ?? {}
+    desired.set(element, entry)
+    return entry
+  }
+  if (!content.querySelector('.notes-tag-directive')) {
+    const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
+    const lines = source.split('\n')
+    const parsed = parseMarkdown(source)
+    let previousTags = ''
+    let sourceSearchStart = 0
+    const blockLines = new Map<HTMLElement, number>()
+    blocks.forEach((block) => {
+      const blockText = block.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
+      const lineIndex = lines.findIndex((line, index) => {
+        if (index < sourceSearchStart || !line.trim() || /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line) || /^\s*:::tag\s*\{[^}]*\}\s*$/u.test(line) || /^\s*:::\s*$/u.test(line)) return false
+        const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/^\[[ xX]\]\s+/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
+        return sourceText && (blockText.includes(sourceText) || sourceText.includes(blockText))
+      })
+      if (lineIndex < 0) return
+      sourceSearchStart = lineIndex + 1
+      blockLines.set(block, lineIndex)
+      const tags = parsed.ranges.filter((range) => range.startLine < lineIndex && lineIndex < range.endLine).map((range) => range.tag)
+      if (!tags.length) { previousTags = ''; return }
+      const tagValue = tags.join(', ')
+      const color = tagColor(tags[0], colors)
+      const entry = want(block)
+      entry.tagged = tagValue
+      entry.color = color
+      if (tagValue !== previousTags) {
+        const chipTarget = block.tagName === 'LI' ? block.closest<HTMLElement>('ul,ol') ?? block : block
+        const chipEntry = want(chipTarget)
+        chipEntry.chip = tagValue
+        chipEntry.color = color
+      }
+      previousTags = tagValue
     })
-    if (lineIndex < 0) return
-    sourceSearchStart = lineIndex + 1
-    blockLines.set(block, lineIndex)
-    const tags = parsed.ranges.filter((range) => range.startLine < lineIndex && lineIndex < range.endLine).map((range) => range.tag)
-    if (!tags.length) { previousTags = ''; return }
-    const tagValue = tags.join(', ')
-    const color = tagColor(tags[0], colors)
-    if (block.dataset.notesTagged !== tagValue) block.dataset.notesTagged = tagValue
-    if (block.dataset.notesTagColor !== color) block.dataset.notesTagColor = color
-    if (block.style.getPropertyValue('--notes-tag-color') !== color) block.style.setProperty('--notes-tag-color', color)
-    if (tagValue !== previousTags) {
-      const chipTarget = block.tagName === 'LI' ? block.closest<HTMLElement>('ul,ol') ?? block : block
-      if (chipTarget.dataset.notesTagChip !== tagValue) chipTarget.dataset.notesTagChip = tagValue
-      if (chipTarget.style.getPropertyValue('--notes-tag-color') !== color) chipTarget.style.setProperty('--notes-tag-color', color)
-    }
-    previousTags = tagValue
-  })
 
-  const rootRect = root.getBoundingClientRect()
-  parsed.ranges.forEach((range) => {
-    const taggedBlocks = [...blockLines.entries()].filter(([, lineIndex]) => range.startLine < lineIndex && lineIndex < range.endLine).map(([block]) => block)
-    if (!taggedBlocks.length) return
-    const firstBlock = taggedBlocks[0]
-    const lastBlock = taggedBlocks[taggedBlocks.length - 1]
-    const firstRect = (firstBlock.tagName === 'LI' ? firstBlock.closest<HTMLElement>('ul,ol') : firstBlock)?.getBoundingClientRect() ?? firstBlock.getBoundingClientRect()
-    const lastRect = (lastBlock.tagName === 'LI' ? lastBlock.closest<HTMLElement>('ul,ol') : lastBlock)?.getBoundingClientRect() ?? lastBlock.getBoundingClientRect()
-    const overlay = document.createElement('span')
-    overlay.className = 'notes-tag-border-overlay'
-    overlay.style.left = '0px'
-    overlay.style.top = `${firstRect.top - rootRect.top}px`
-    overlay.style.height = `${lastRect.bottom - firstRect.top}px`
-    overlay.style.backgroundColor = tagColor(range.tag, colors)
-    root.appendChild(overlay)
+    const rootRect = root.getBoundingClientRect()
+    parsed.ranges.forEach((range) => {
+      const taggedBlocks = [...blockLines.entries()].filter(([, lineIndex]) => range.startLine < lineIndex && lineIndex < range.endLine).map(([block]) => block)
+      if (!taggedBlocks.length) return
+      const firstBlock = taggedBlocks[0]
+      const lastBlock = taggedBlocks[taggedBlocks.length - 1]
+      const firstRect = (firstBlock.tagName === 'LI' ? firstBlock.closest<HTMLElement>('ul,ol') : firstBlock)?.getBoundingClientRect() ?? firstBlock.getBoundingClientRect()
+      const lastRect = (lastBlock.tagName === 'LI' ? lastBlock.closest<HTMLElement>('ul,ol') : lastBlock)?.getBoundingClientRect() ?? lastBlock.getBoundingClientRect()
+      const overlay = document.createElement('span')
+      overlay.className = 'notes-tag-border-overlay'
+      overlay.style.left = '0px'
+      overlay.style.top = `${firstRect.top - rootRect.top}px`
+      overlay.style.height = `${lastRect.bottom - firstRect.top}px`
+      overlay.style.backgroundColor = tagColor(range.tag, colors)
+      root.appendChild(overlay)
+    })
+  }
+  const decorated = new Set(content.querySelectorAll<HTMLElement>('[data-notes-tagged], [data-notes-tag-chip]'))
+  desired.forEach((entry, element) => {
+    decorated.delete(element)
+    setAttr(element, 'data-notes-tagged', entry.tagged)
+    setAttr(element, 'data-notes-tag-color', entry.tagged ? entry.color : undefined)
+    setAttr(element, 'data-notes-tag-chip', entry.chip)
+    setTagColorStyle(element, entry.color)
+  })
+  decorated.forEach((element) => {
+    setAttr(element, 'data-notes-tagged', undefined)
+    setAttr(element, 'data-notes-tag-color', undefined)
+    setAttr(element, 'data-notes-tag-chip', undefined)
+    setTagColorStyle(element, undefined)
   })
 }
 
@@ -182,7 +211,7 @@ function applyChecklistWidgets(root: HTMLElement | null, getSource: () => string
     const checked = match[2].toLowerCase() === 'x'
     managedItems.add(item)
     if (existing) {
-      existing.dataset.checklistLine = String(lineIndex)
+      if (existing.dataset.checklistLine !== String(lineIndex)) existing.dataset.checklistLine = String(lineIndex)
       if (existing.checked !== checked) existing.checked = checked
       return
     }
@@ -321,7 +350,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         const anchor = window.getSelection()?.anchorNode
         if (!first || !anchor || !first.contains(anchor)) {
           boundaryParagraphRef.current = null
-          const selectionLeftEditor = !content?.contains(anchor)
+          const selectionLeftEditor = !anchor || !content?.contains(anchor)
           lexicalEditor?.update(() => {
             const node = $getNodeByKey(boundary.key)
             if (!node || node.getTextContent().length !== 0) return
