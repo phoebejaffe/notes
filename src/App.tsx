@@ -561,8 +561,8 @@ function NotesApp() {
       if (settingsOpen || tagsOpen) return
       window.setTimeout(() => {
         if (settingsOpen || tagsOpen) return
-        const editor = document.querySelector(`[data-day="${today}"] .mdxeditor-root-contenteditable`) as HTMLElement | null
-        editor?.focus()
+        const editorHost = document.querySelector<HTMLElement>(`[data-day="${today}"] .notes-mdx-editor`)
+        editorHost?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction: 'down' }, bubbles: false }))
       }, 0)
     }
     function focusTodayIfIdle() {
