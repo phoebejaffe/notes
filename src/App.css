@@ -144,7 +144,7 @@ button { cursor: pointer; font: inherit; }
 .menu-panel button:disabled { color: #aaa19a; cursor: not-allowed; }
 .compact-spacing.app-shell { padding: 0; }
 .compact-spacing .editor-card { padding-bottom: 2px; }
-.theme-dark.app-shell, .theme-dark.capture-shell { --tag-chip-base: #000; color: #e8e2dc; background: #201e21; }
+.theme-dark.app-shell, .theme-dark.capture-shell { --tag-chip-base: #000; --tag-chip-text: #e8e2dc; color: #e8e2dc; background: #201e21; }
 .theme-dark .topbar { color: #e8e2dc; border-bottom-color: #403b3f; background: #201e21; box-shadow: 0 4px 14px #00000030; }
 .theme-dark .search-panel, .theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: #201e21; }
 .theme-dark .sync-prompt { border-color: #4d4659; color: #cbbbd0; background: #332f3b; }
@@ -211,7 +211,7 @@ button { cursor: pointer; font: inherit; }
 .notes-mdx-editor [data-notes-tagged] { --notes-tag-color: var(--tag-color, #8975aa); position: relative; padding-left: 0; border-left: 0; }
 .notes-mdx-editor [data-notes-tagged]::after { display: none; }
 .notes-tag-border-overlay { position: absolute; z-index: 1; width: 3px; pointer-events: none; border-radius: 2px; }
-.notes-mdx-editor [data-notes-tag-chip]::before { display: block; width: max-content; max-width: calc(100% + 18px); margin: 0 8px 4px -6px; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--notes-tag-color) 35%, #fff); border-left: 0; border-radius: 0 999px 999px 0; color: #77727b; background: color-mix(in srgb, var(--notes-tag-color) 12%, #fff); content: attr(data-notes-tag-chip); font-size: 10px; line-height: 1.45; }
+.notes-mdx-editor [data-notes-tag-chip]::before { display: block; width: max-content; max-width: calc(100% + 18px); margin: 0 8px 4px -6px; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--notes-tag-color) 35%, var(--tag-chip-base)); border-left: 0; border-radius: 0 999px 999px 0; color: var(--tag-chip-text, #77727b); background: color-mix(in srgb, var(--notes-tag-color) 12%, var(--tag-chip-base)); content: attr(data-notes-tag-chip); font-size: 10px; line-height: 1.45; }
 .notes-mdx-editor ul[data-notes-tag-chip], .notes-mdx-editor ol[data-notes-tag-chip] { position: relative; padding-top: 24px; }
 .notes-mdx-editor ul[data-notes-tag-chip]::before, .notes-mdx-editor ol[data-notes-tag-chip]::before { position: absolute; top: 0; left: 0; margin: 0; }
 .notes-muted-prefix { display: none; }
