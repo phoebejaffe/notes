@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
-import { $createParagraphNode, $getRoot } from 'lexical'
+import { $createParagraphNode, $getNodeByKey, $getRoot, $setSelection, type LexicalEditor } from 'lexical'
 import { parseMarkdown, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
@@ -30,7 +30,7 @@ function applyMutedVisibility(root: HTMLElement | null, hidden: boolean) {
     element.classList.toggle('notes-muted-block', muted)
     if (muted) {
       suppressMutedPrefix(element)
-      element.hidden = hidden
+      if (element.hidden !== hidden) element.hidden = hidden
     }
   })
 }
@@ -46,10 +46,10 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
   if (!root || !content) return
   root.querySelectorAll<HTMLElement>('.notes-tag-border-overlay').forEach((element) => element.remove())
   content.querySelectorAll<HTMLElement>('[data-notes-tagged], [data-notes-tag-chip]').forEach((element) => {
-    element.removeAttribute('data-notes-tagged')
-    element.removeAttribute('data-notes-tag-color')
-    element.style.removeProperty('--notes-tag-color')
-    element.removeAttribute('data-notes-tag-chip')
+    if (element.hasAttribute('data-notes-tagged')) element.removeAttribute('data-notes-tagged')
+    if (element.hasAttribute('data-notes-tag-color')) element.removeAttribute('data-notes-tag-color')
+    if (element.style.getPropertyValue('--notes-tag-color')) element.style.removeProperty('--notes-tag-color')
+    if (element.hasAttribute('data-notes-tag-chip')) element.removeAttribute('data-notes-tag-chip')
   })
   if (content.querySelector('.notes-tag-directive')) return
   const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p)')]
@@ -71,14 +71,14 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
     const tags = parsed.ranges.filter((range) => range.startLine < lineIndex && lineIndex < range.endLine).map((range) => range.tag)
     if (!tags.length) { previousTags = ''; return }
     const tagValue = tags.join(', ')
-    block.dataset.notesTagged = tagValue
     const color = tagColor(tags[0], colors)
-    block.dataset.notesTagColor = color
-    block.style.setProperty('--notes-tag-color', color)
+    if (block.dataset.notesTagged !== tagValue) block.dataset.notesTagged = tagValue
+    if (block.dataset.notesTagColor !== color) block.dataset.notesTagColor = color
+    if (block.style.getPropertyValue('--notes-tag-color') !== color) block.style.setProperty('--notes-tag-color', color)
     if (tagValue !== previousTags) {
       const chipTarget = block.tagName === 'LI' ? block.closest<HTMLElement>('ul,ol') ?? block : block
-      chipTarget.dataset.notesTagChip = tagValue
-      chipTarget.style.setProperty('--notes-tag-color', color)
+      if (chipTarget.dataset.notesTagChip !== tagValue) chipTarget.dataset.notesTagChip = tagValue
+      if (chipTarget.style.getPropertyValue('--notes-tag-color') !== color) chipTarget.style.setProperty('--notes-tag-color', color)
     }
     previousTags = tagValue
   })
@@ -148,6 +148,14 @@ function sourceLineRange(source: string, selectedText: string, caretBlockText: s
 
 const RECENT_TAGS_KEY = 'notes-recent-tags'
 
+// Top-level editable blocks. Paragraphs nested in list items, blockquotes, or
+// tag directives are part of their container block, so they're excluded.
+const TOP_LEVEL_BLOCK_SELECTOR = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
+
+function topLevelBlocks(content: HTMLElement | null | undefined) {
+  return [...content?.querySelectorAll<HTMLElement>(TOP_LEVEL_BLOCK_SELECTOR) ?? []]
+}
+
 function loadRecentTags() {
   try {
     const value = JSON.parse(localStorage.getItem(RECENT_TAGS_KEY) ?? '[]')
@@ -157,34 +165,52 @@ function loadRecentTags() {
   }
 }
 
-function applyChecklistWidgets(root: HTMLElement | null, source: string, commit: (markdown: string) => void) {
+function applyChecklistWidgets(root: HTMLElement | null, getSource: () => string, commit: (markdown: string) => void) {
   if (!root) return
-  root.querySelectorAll<HTMLElement>('.notes-checklist-checkbox').forEach((input) => input.remove())
-  const lines = source.split('\n')
+  const lines = getSource().split('\n')
   let searchStart = 0
+  const managedItems = new Set<HTMLElement>()
   root.querySelectorAll<HTMLElement>('li').forEach((item) => {
+    const existing = item.querySelector<HTMLInputElement>(':scope > .notes-checklist-checkbox')
     const lineIndex = lines.findIndex((line, index) => index >= searchStart && /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+/u.test(line) && sourceLineForRenderedText(line, item.textContent ?? '') >= 0)
-    if (lineIndex < 0) return
+    const match = lineIndex < 0 ? null : lines[lineIndex].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/u)
+    if (lineIndex < 0 || !match) {
+      existing?.remove()
+      return
+    }
     searchStart = lineIndex + 1
-    const match = lines[lineIndex].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/u)
-    if (!match) return
+    const checked = match[2].toLowerCase() === 'x'
+    managedItems.add(item)
+    if (existing) {
+      existing.dataset.checklistLine = String(lineIndex)
+      if (existing.checked !== checked) existing.checked = checked
+      return
+    }
     const input = document.createElement('input')
     input.type = 'checkbox'
     input.className = 'notes-checklist-checkbox'
-    input.checked = match[2].toLowerCase() === 'x'
+    input.checked = checked
+    input.dataset.checklistLine = String(lineIndex)
     input.contentEditable = 'false'
-    input.setAttribute('aria-label', input.checked ? 'Mark task incomplete' : 'Mark task complete')
+    input.setAttribute('aria-label', checked ? 'Mark task incomplete' : 'Mark task complete')
     input.addEventListener('change', () => {
-      const nextLines = [...lines]
-      nextLines[lineIndex] = `${match[1]}[${input.checked ? 'x' : ' '}]${nextLines[lineIndex].slice(match[0].length)}`
+      const nextLines = getSource().split('\n')
+      const line = nextLines[Number(input.dataset.checklistLine)]
+      const current = line?.match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[[ xX]\]/u)
+      if (!current) return
+      nextLines[Number(input.dataset.checklistLine)] = `${current[1]}[${input.checked ? 'x' : ' '}]${line.slice(current[0].length)}`
       commit(nextLines.join('\n'))
     })
     item.insertBefore(input, item.firstChild)
+  })
+  root.querySelectorAll<HTMLElement>('.notes-checklist-checkbox').forEach((input) => {
+    if (input.parentElement && !managedItems.has(input.parentElement)) input.remove()
   })
 }
 
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, showUndoRedo = false, rawTextMode = false }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
+  const [lexicalEditor, setLexicalEditor] = useState<LexicalEditor | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const valueRef = useRef(commentsToTagDirectives(value))
   const onChangeRef = useRef(onChange)
@@ -194,6 +220,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const suppressChangeRef = useRef(false)
   const [selectionState, setSelectionState] = useState({ text: '', blockText: '' })
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
+  const boundaryParagraphRef = useRef<{ key: string; armed: boolean } | null>(null)
 
   const commit = useMemo(() => (markdown: string) => {
     const selectedText = selectedTextRef.current
@@ -232,21 +259,32 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         textarea.setSelectionRange(direction === 'up' ? textarea.value.length : 0, direction === 'up' ? textarea.value.length : 0)
         return
       }
-      editorRef.current?.focus(() => {
+      const editor = lexicalEditor
+      if (!editor) return
+      editor.update(() => {
         const root = $getRoot()
-        const target = direction === 'up' ? root.getLastChild() : root.getFirstChild()
+        // ArrowUp lands on the last non-empty child — the last visible line —
+        // skipping the empty trailing paragraph Lexical appends after
+        // directives and other non-paragraph blocks.
+        const children = root.getChildren()
+        const target = direction === 'up'
+          ? children.findLast((child) => child.getTextContent().length) ?? children[children.length - 1]
+          : children[0]
         if (!target) return
         if ($isTagBlockNode(target)) {
-          const child = direction === 'up' ? target.getLastChild() : target.getFirstChild()
-          if (!child) return
-          if (direction === 'up') child.selectEnd()
-          else child.selectStart()
+          const tagChildren = target.getChildren()
+          const child = direction === 'up'
+            ? tagChildren.findLast((nested) => nested.getTextContent().length) ?? tagChildren[tagChildren.length - 1]
+            : tagChildren[0]
+          if (direction === 'up') child?.selectEnd()
+          else child?.selectStart()
         } else if (direction === 'up') {
           target.selectEnd()
         } else {
           target.selectStart()
         }
-      }, { defaultSelection: direction === 'up' ? 'rootEnd' : 'rootStart' })
+      })
+      editor.focus()
     }
     host.addEventListener('beforeinput', markInteraction)
     host.addEventListener('keydown', markInteraction)
@@ -262,7 +300,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('mousedown', preserveEditorSelection)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
     }
-  }, [])
+  }, [lexicalEditor])
 
   useEffect(() => {
     const editorValue = commentsToTagDirectives(value)
@@ -276,6 +314,25 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   useEffect(() => {
     const updateSelection = () => {
+      const boundary = boundaryParagraphRef.current
+      if (boundary?.armed) {
+        const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+        const first = topLevelBlocks(content)[0]
+        const anchor = window.getSelection()?.anchorNode
+        if (!first || !anchor || !first.contains(anchor)) {
+          boundaryParagraphRef.current = null
+          const selectionLeftEditor = !content?.contains(anchor)
+          lexicalEditor?.update(() => {
+            const node = $getNodeByKey(boundary.key)
+            if (!node || node.getTextContent().length !== 0) return
+            // If the caret moved to another editor, the lexical selection is
+            // stale (pointing at this paragraph). Clear it first so removing
+            // the node doesn't drag the DOM selection back into this editor.
+            if (selectionLeftEditor) $setSelection(null)
+            node.remove()
+          })
+        }
+      }
       const selection = window.getSelection()
       const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
       if (!selection || !content?.contains(selection.anchorNode)) return
@@ -288,7 +345,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
     document.addEventListener('selectionchange', updateSelection)
     return () => document.removeEventListener('selectionchange', updateSelection)
-  }, [])
+  }, [lexicalEditor])
 
   useEffect(() => {
     let cancelled = false
@@ -298,7 +355,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (cancelled) return
       applyMutedVisibility(hostRef.current, hideMutedLines)
       applyTagDecorations(hostRef.current, value, tagColors)
-      applyChecklistWidgets(hostRef.current, value, commit)
+      applyChecklistWidgets(hostRef.current, () => valueRef.current, commit)
       attempts += 1
       if (attempts < 30) frame = window.requestAnimationFrame(apply)
     }
@@ -318,6 +375,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     return [...new Set(parsed.ranges.filter((range) => range.startLine <= selectionLines.endLine && range.endLine >= selectionLines.startLine).map((range) => range.tag))]
   }, [selectionLines, value])
 
+  const plugins = useMemo(() => mdxEditorPlugins(setLexicalEditor), [])
   const actions = useMemo(() => ({
     activeTags,
     recentTags,
@@ -371,58 +429,59 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (!selection || !selection.isCollapsed) return false
     const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
     if (!content || !content.contains(selection.anchorNode)) return false
-    const blockSelector = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
-    const blocks = [...content.querySelectorAll<HTMLElement>(blockSelector)]
+    const blocks = topLevelBlocks(content)
     if (!blocks.length) return false
     const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
-    const currentBlock = anchor?.closest<HTMLElement>(blockSelector)
+    const currentBlock = anchor?.closest<HTMLElement>(TOP_LEVEL_BLOCK_SELECTOR)
     if (!currentBlock) return false
     const index = blocks.indexOf(currentBlock)
     if (index < 0) return false
-    if (direction === 'up' ? index !== 0 : index !== blocks.length - 1) return false
+    // The caret is only at the editor edge when every block beyond it in that
+    // direction is empty — e.g. the trailing paragraph Lexical appends after a
+    // directive or other non-paragraph block.
+    const beyond = direction === 'up' ? blocks.slice(0, index) : blocks.slice(index + 1)
+    if (beyond.some((block) => block.textContent.length)) return false
+    // Container blocks (tag directives, blockquotes) may have padding or extra
+    // children, so the edge line lives in the first/last non-empty child.
+    let edgeBlock: HTMLElement = currentBlock
+    if (currentBlock.matches('.notes-tag-directive, blockquote')) {
+      const children = [...currentBlock.children] as HTMLElement[]
+      const childIndex = children.findIndex((child) => child.contains(selection.anchorNode))
+      if (childIndex < 0) return false
+      const innerBeyond = direction === 'up' ? children.slice(0, childIndex) : children.slice(childIndex + 1)
+      if (innerBeyond.some((child) => child.textContent.length)) return false
+      edgeBlock = children[childIndex]
+    }
     // Empty blocks have a zero-size caret rect; treat them as being at both edges
-    if (currentBlock.textContent.length === 0) return true
+    if (edgeBlock.textContent.length === 0) return true
     const caretRect = selection.getRangeAt(0).getBoundingClientRect()
-    const blockRect = currentBlock.getBoundingClientRect()
-    const lineHeight = parseFloat(getComputedStyle(currentBlock).lineHeight) || caretRect.height || 20
+    const blockRect = edgeBlock.getBoundingClientRect()
+    const lineHeight = parseFloat(getComputedStyle(edgeBlock).lineHeight) || caretRect.height || 20
     if (direction === 'up') return caretRect.top <= blockRect.top + lineHeight * 0.5
     return caretRect.bottom >= blockRect.bottom - lineHeight * 0.5
   }
 
   function firstBlockIsTag(): boolean {
     const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
-    if (!content) return false
-    const firstChild = content.firstElementChild
-    return !!firstChild?.classList.contains('notes-tag-directive')
-  }
-
-  function caretAtTagStart(): boolean {
-    const selection = window.getSelection()
-    if (!selection || !selection.isCollapsed) return false
-    const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
-    if (!content || !content.contains(selection.anchorNode)) return false
-    const tagDiv = content.querySelector<HTMLElement>('.notes-tag-directive')
-    if (!tagDiv) return false
-    const tagParagraph = tagDiv.querySelector<HTMLElement>('p')
-    if (!tagParagraph) return false
-    const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
-    if (!anchor) return false
-    const block = anchor.closest<HTMLElement>('p')
-    if (block !== tagParagraph) return false
-    const range = document.createRange()
-    range.selectNodeContents(tagParagraph)
-    range.setEnd(selection.anchorNode ?? tagParagraph, selection.anchorOffset)
-    return range.toString().length === 0
+    return !!topLevelBlocks(content)[0]?.classList.contains('notes-tag-directive')
   }
 
   function focusBeforeTag() {
-    editorRef.current?.focus(() => {
+    lexicalEditor?.update(() => {
       const root = $getRoot()
       const firstChild = root.getFirstChild()
       if ($isTagBlockNode(firstChild)) {
         const paragraph = $createParagraphNode()
         firstChild.insertBefore(paragraph)
         paragraph.selectStart()
+        const key = paragraph.getKey()
+        boundaryParagraphRef.current = { key, armed: false }
+        // Lexical commits the new selection asynchronously; a selectionchange
+        // can fire with the pre-insert anchor first. Arm the cleanup only after
+        // the caret has had a frame to settle inside the boundary paragraph.
+        window.requestAnimationFrame(() => {
+          if (boundaryParagraphRef.current?.key === key) boundaryParagraphRef.current.armed = true
+        })
       }
     })
   }
@@ -470,23 +529,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         }
       }
     }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const dir = event.key === 'ArrowUp' ? 'up' : 'down'
-      const edge = caretAtEditorEdge(dir)
-      const fbit = firstBlockIsTag()
-      const cats = caretAtTagStart()
-      if (window.location.search.includes('multi')) console.log('[nav]', event.key, 'edge=', edge, 'firstBlockIsTag=', fbit, 'caretAtTagStart=', cats)
-    }
-    if (event.key === 'ArrowUp' && caretAtEditorEdge('up')) {
+    const plainArrow = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+    if (event.key === 'ArrowUp' && plainArrow && caretAtEditorEdge('up')) {
       event.preventDefault()
-      if (firstBlockIsTag() && caretAtTagStart()) {
+      if (firstBlockIsTag()) {
         focusBeforeTag()
       } else {
         focusAdjacentEditor('up')
       }
       return
     }
-    if (event.key === 'ArrowDown' && caretAtEditorEdge('down')) {
+    if (event.key === 'ArrowDown' && plainArrow && caretAtEditorEdge('down')) {
       event.preventDefault()
       focusAdjacentEditor('down')
       return
@@ -507,6 +560,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       return
     }
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
     const target = event.currentTarget
     const atFirstLine = event.key === 'ArrowUp' && target.selectionStart === 0
     const atLastLine = event.key === 'ArrowDown' && target.selectionStart === target.value.length
@@ -527,7 +581,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
           valueRef.current = markdown
           onChangeRef.current(markdown)
         }}
-        plugins={mdxEditorPlugins()}
+        plugins={plugins}
       />
     </EditorActionsProvider>
   </div>

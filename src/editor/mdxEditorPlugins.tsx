@@ -1,4 +1,5 @@
-import { directivesPlugin, headingsPlugin, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
+import { directivesPlugin, headingsPlugin, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, realmPlugin, rootEditor$, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
+import type { LexicalEditor } from 'lexical'
 import { DirectiveContentEditor } from './DirectiveContentEditor'
 import { MdxEditorToolbar } from './MdxEditorToolbar'
 import { tagBlockPlugin } from './tagBlockPlugin'
@@ -13,7 +14,13 @@ const directive = (name: string, attributes: string[] = []): DirectiveDescriptor
 
 export const mdxDirectiveDescriptors = [directive('muted'), directive('custom-block', ['kind'])]
 
-export function mdxEditorPlugins() {
+const lexicalEditorPlugin = (assign: (editor: LexicalEditor | null) => void) => realmPlugin({
+  init(realm) {
+    realm.sub(rootEditor$, assign)
+  },
+})()
+
+export function mdxEditorPlugins(assignLexicalEditor: (editor: LexicalEditor | null) => void) {
   return [
     headingsPlugin(),
     listsPlugin(),
@@ -24,6 +31,7 @@ export function mdxEditorPlugins() {
     markdownShortcutPlugin(),
     directivesPlugin({ directiveDescriptors: mdxDirectiveDescriptors }),
     tagBlockPlugin(),
+    lexicalEditorPlugin(assignLexicalEditor),
     toolbarPlugin({ toolbarContents: () => <MdxEditorToolbar /> }),
   ]
 }

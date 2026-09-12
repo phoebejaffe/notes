@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+const BLOCK_SELECTOR = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
+
 test('types inside tagged and untagged content in a single editor', async ({ page }) => {
   await page.goto('/prototype')
 
@@ -74,29 +76,52 @@ test('arrow down crosses into a day that starts with a tag', async ({ page }) =>
   await page.keyboard.press('Meta+ArrowDown')
   await page.keyboard.press('ArrowDown')
 
-  // Type to verify the caret landed in the first editable line of day2
+  // Type to verify the caret landed at the start of the first editable line of day2
   await page.keyboard.type('!')
-  await expect(day2Editor).toContainText('This day starts with a tag!')
+  await expect(day2Editor).toContainText('!This day starts with a tag')
 })
 
-test('arrow up from a leading tag crosses to the previous day', async ({ page }) => {
+test('arrow up moves below tag → into tag → above tag → previous day', async ({ page }) => {
   await page.goto('/prototype?multi')
 
   const cards = page.locator('.day-card')
   const day1Editor = cards.nth(0).locator('.mdxeditor-root-contenteditable')
   const day2Editor = cards.nth(1).locator('.mdxeditor-root-contenteditable')
 
-  // Place caret at the start of the leading tag in day2
-  await day2Editor.locator('p', { hasText: 'This day starts with a tag' }).click()
-  await page.keyboard.press('Home')
+  // Caret starts below the leading tag in day2
+  await day2Editor.locator('p', { hasText: 'Untagged content after the leading tag' }).click()
+  await page.keyboard.press('End')
 
-  // ArrowUp should cross back into day1's last line
+  // Up 1: caret moves into the tag
+  await page.keyboard.press('ArrowUp')
+  const inTag = await page.evaluate(() => {
+    const node = window.getSelection()?.anchorNode
+    const el = node instanceof Element ? node : node?.parentElement
+    return !!el?.closest('.notes-tag-directive')
+  })
+  expect(inTag).toBe(true)
+
+  // Up 2: caret moves above the tag — a new paragraph at position 0
+  await page.keyboard.press('ArrowUp')
+  const aboveTag = await day2Editor.evaluate((el, blockSelector) => {
+    const first = el.querySelector(blockSelector)
+    const node = window.getSelection()?.anchorNode
+    const anchorEl = node instanceof Element ? node : node?.parentElement
+    return !!first && first.tagName === 'P' && !first.classList.contains('notes-tag-directive') && first.contains(anchorEl ?? null)
+  }, BLOCK_SELECTOR)
+  expect(aboveTag).toBe(true)
+
+  // Up 3: caret crosses into the previous day's last line
   await page.keyboard.press('ArrowUp')
   await page.keyboard.type('!')
   await expect(day1Editor).toContainText('Tagged content in day one!')
+
+  // The empty boundary paragraph should be cleaned up, not left in day2
+  const day2FirstIsTag = await day2Editor.evaluate((el, blockSelector) => el.querySelector(blockSelector)?.classList.contains('notes-tag-directive'), BLOCK_SELECTOR)
+  expect(day2FirstIsTag).toBe(true)
 })
 
-test('arrow up inserts a paragraph before a leading tag', async ({ page }) => {
+test('typing in the paragraph above a leading tag keeps it', async ({ page }) => {
   await page.goto('/prototype?multi')
 
   const cards = page.locator('.day-card')
@@ -113,4 +138,8 @@ test('arrow up inserts a paragraph before a leading tag', async ({ page }) => {
   await page.keyboard.type('before tag')
   await expect(day2Editor).toContainText('before tag')
   await expect(day2Editor.locator('.notes-tag-directive')).toBeVisible()
+
+  // The typed paragraph stays before the tag in the DOM
+  const firstText = await day2Editor.evaluate((el, blockSelector) => el.querySelector(blockSelector)?.textContent, BLOCK_SELECTOR)
+  expect(firstText).toBe('before tag')
 })
