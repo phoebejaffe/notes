@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { BoldItalicUnderlineToggles, ListsToggle, UndoRedo } from '@mdxeditor/editor'
 import { useEditorActions } from './editorActions'
 
@@ -10,6 +10,28 @@ function AddTagControl() {
   const [tag, setTag] = useState('')
   const [open, setOpen] = useState(false)
   const { addTag, recentTags } = useEditorActions()
+  const preservedRangeRef = useRef<Range | null>(null)
+
+  function captureEditorSelection() {
+    const selection = window.getSelection()
+    const anchor = selection?.anchorNode
+    const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
+    preservedRangeRef.current = selection && selection.rangeCount > 0 && !selection.isCollapsed && anchorElement?.closest('.mdxeditor-root-contenteditable')
+      ? selection.getRangeAt(0).cloneRange()
+      : null
+  }
+
+  function showPreservedSelection() {
+    const range = preservedRangeRef.current
+    preservedRangeRef.current = null
+    if (range && typeof Highlight !== 'undefined') {
+      CSS.highlights.set('notes-preserved-selection', new Highlight(range))
+    }
+  }
+
+  function clearPreservedSelection() {
+    CSS.highlights?.delete('notes-preserved-selection')
+  }
 
   function submit(value = tag) {
     const normalized = value.trim()
@@ -21,7 +43,7 @@ function AddTagControl() {
 
   return <span className="notes-editor-tag-control">
     <span className="notes-editor-tag-input-wrap">
-      <input value={tag} onChange={(event) => { setTag(event.target.value); setOpen(true) }} onFocus={() => setOpen(true)} onBlur={() => window.setTimeout(() => setOpen(false), 120)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submit() } }} aria-label="Tag name" placeholder="Add tag" />
+      <input value={tag} onChange={(event) => { setTag(event.target.value); setOpen(true) }} onMouseDown={captureEditorSelection} onFocus={() => { setOpen(true); showPreservedSelection() }} onBlur={() => { window.setTimeout(() => setOpen(false), 120); clearPreservedSelection() }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submit() } }} aria-label="Tag name" placeholder="Add tag" />
       {open && recentTags.length > 0 && <span className="notes-editor-tag-suggestions" role="listbox">{recentTags.filter((recent) => !tag || recent.toLocaleLowerCase().includes(tag.toLocaleLowerCase())).map((recent) => <button type="button" key={recent} onMouseDown={(event) => event.preventDefault()} onClick={() => submit(recent)}>{recent}</button>)}</span>}
     </span>
     <button className="notes-editor-toolbar-button" type="button" onClick={() => submit()}>+ Tag</button>

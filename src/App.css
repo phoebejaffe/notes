@@ -199,6 +199,7 @@ button { cursor: pointer; font: inherit; }
 .notes-editor-tag-suggestions button:hover { background: #f4eff7 !important; }
 .notes-editor-tag-control input { width: 92px; padding: 5px 6px; border: 1px solid #d8cbe0; border-radius: 5px; color: #50455a; background: #fff; font-size: 11px; }
 .notes-editor-tag-control .notes-editor-toolbar-button { width: auto; flex-basis: auto; padding-inline: 6px; }
+::highlight(notes-preserved-selection) { background-color: #8975aa66; }
 .notes-mdx-editor [data-prototype-tag] { padding: 1px 5px; border-bottom: 2px solid #8975aa; color: #6d587e; background: #f4f1f8; }
 .notes-mdx-editor [data-prototype-callout] { margin: 14px 0; padding: 12px 14px; border-left: 4px solid #c88968; border-radius: 5px; color: #704936; background: #fbf2ee; }
 .notes-tag-directive { position: relative; margin: 0; padding: 24px 0 0; border-left: 3px solid transparent; }
@@ -225,6 +226,7 @@ button { cursor: pointer; font: inherit; }
 .notes-mdx-editor:not(:focus-within) .mdxeditor-toolbar { display: none; }
 .ios-pwa .notes-mdx-editor .mdxeditor-toolbar { top: 42px; right: 0; bottom: auto; left: 0; width: 100%; border-right: 0; border-left: 0; border-radius: 0; box-shadow: 0 4px 14px #392c1f10; }
 .theme-dark .notes-mdx-editor, .theme-dark .notes-mdx-editor .mdxeditor { color: #e8e2dc; border-color: #4d4649; background: #201e21; }
+.theme-dark .notes-mdx-editor [data-notes-tag-chip]::before { color: #e8e2dc; border-color: color-mix(in srgb, var(--notes-tag-color) 35%, #2f2c31); background: color-mix(in srgb, var(--notes-tag-color) 15%, #2f2c31); }
 .diagnostics {  margin-top: 12px; color: #a14c38; font-size: 12px; }
 .app-footer { display: flex; justify-content: space-between; padding-top: 18px; color: #988f86; font-size: 11px; }
 .loading-screen { display: grid; min-height: 100vh; place-items: center; color: #817970; font: 14px Georgia, serif; }

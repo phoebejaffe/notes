@@ -53,6 +53,7 @@ const BUILTIN_SHORTCUTS = [
   ['Mod-b', 'Bold'],
   ['Mod-i', 'Italic'],
   ['Mod-u', 'Underline'],
+  ['Mod-t', 'Focus tag input'],
   ['Backspace', 'Delete one character'],
 ] as const
 
@@ -463,6 +464,26 @@ function NotesApp() {
       if (matchesShortcut(event, preferences.shortcuts.toggleMuted)) {
         event.preventDefault()
         setHideMutedLines((hidden) => !hidden)
+        return
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') {
+        const selectionAnchor = window.getSelection()?.anchorNode
+        const anchorElement = selectionAnchor instanceof Element ? selectionAnchor : selectionAnchor?.parentElement
+        const editorHost = (document.activeElement instanceof Element ? document.activeElement.closest('.notes-mdx-editor') : null)
+          ?? anchorElement?.closest('.notes-mdx-editor')
+          ?? document.querySelector(`[data-day="${today}"] .notes-mdx-editor`)
+          ?? document.querySelector('.notes-mdx-editor')
+        const tagInput = editorHost?.querySelector<HTMLInputElement>('.notes-editor-tag-input-wrap input')
+        if (!tagInput) return
+        event.preventDefault()
+        const selection = window.getSelection()
+        const range = selection && selection.rangeCount > 0 && !selection.isCollapsed && anchorElement?.closest('.mdxeditor-root-contenteditable')
+          ? selection.getRangeAt(0).cloneRange()
+          : null
+        tagInput.focus()
+        if (range && typeof Highlight !== 'undefined') {
+          CSS.highlights.set('notes-preserved-selection', new Highlight(range))
+        }
         return
       }
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
