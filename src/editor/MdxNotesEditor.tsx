@@ -246,7 +246,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         } else {
           target.selectStart()
         }
-      })
+      }, { defaultSelection: direction === 'up' ? 'rootEnd' : 'rootStart' })
     }
     host.addEventListener('beforeinput', markInteraction)
     host.addEventListener('keydown', markInteraction)
@@ -446,6 +446,37 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       actions.toggleMute()
       return
     }
+    if (event.key === '"' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed && selection.rangeCount > 0) {
+        const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+        if (content?.contains(selection.anchorNode)) {
+          event.preventDefault()
+          const selectedText = selection.toString()
+          document.execCommand('insertText', false, '"' + selectedText + '"')
+          const updated = window.getSelection()
+          if (updated && updated.rangeCount > 0) {
+            const range = updated.getRangeAt(0)
+            const node = range.endContainer
+            const offset = range.endOffset
+            if (node.nodeType === Node.TEXT_NODE && offset >= selectedText.length + 2) {
+              range.setStart(node, offset - selectedText.length - 1)
+              range.setEnd(node, offset - 1)
+              updated.removeAllRanges()
+              updated.addRange(range)
+            }
+          }
+          return
+        }
+      }
+    }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const dir = event.key === 'ArrowUp' ? 'up' : 'down'
+      const edge = caretAtEditorEdge(dir)
+      const fbit = firstBlockIsTag()
+      const cats = caretAtTagStart()
+      if (window.location.search.includes('multi')) console.log('[nav]', event.key, 'edge=', edge, 'firstBlockIsTag=', fbit, 'caretAtTagStart=', cats)
+    }
     if (event.key === 'ArrowUp' && caretAtEditorEdge('up')) {
       event.preventDefault()
       if (firstBlockIsTag() && caretAtTagStart()) {
@@ -463,6 +494,18 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }
 
   if (rawTextMode) return <div className="notes-mdx-editor notes-raw-mode" ref={hostRef}><textarea className="notes-raw-editor" value={value} autoFocus={autoFocus} spellCheck={false} onKeyDown={(event) => {
+    if (event.key === '"' && !event.metaKey && !event.ctrlKey && !event.altKey && event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) {
+      event.preventDefault()
+      const target = event.currentTarget
+      const start = target.selectionStart
+      const end = target.selectionEnd
+      const selectedText = target.value.slice(start, end)
+      const newValue = target.value.slice(0, start) + '"' + selectedText + '"' + target.value.slice(end)
+      valueRef.current = newValue
+      onChangeRef.current(newValue)
+      window.requestAnimationFrame(() => target.setSelectionRange(start + 1, start + 1 + selectedText.length))
+      return
+    }
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
     const target = event.currentTarget
     const atFirstLine = event.key === 'ArrowUp' && target.selectionStart === 0
