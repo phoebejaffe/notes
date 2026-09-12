@@ -122,11 +122,24 @@ fn focus_main_window(app: &AppHandle) {
     }
 }
 
+fn hide_app(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.hide();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+    }
+}
+
 fn toggle_shortcut_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_focused().unwrap_or(false) {
             save_window_geometry(app);
-            let _ = window.hide();
+            hide_app(app);
         } else {
             focus_main_window(app);
         }
@@ -137,7 +150,7 @@ fn toggle_tray_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) {
             save_window_geometry(app);
-            let _ = window.hide();
+            hide_app(app);
         } else {
             focus_main_window(app);
         }
