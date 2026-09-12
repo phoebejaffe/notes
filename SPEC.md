@@ -55,6 +55,7 @@ Supported editing actions include:
 - Undo/redo controls on mobile keyboard devices.
 - Zoom and font-choice preferences.
 - Keyboard shortcuts for common formatting and deleting one character.
+- Pressing the `"` key with an active text selection wraps the selection in quotes while keeping the inner text selected, in both the rich editor and raw text mode.
 
 ### Muted lines
 
@@ -91,7 +92,7 @@ The marker engine:
 
 Tagged blocks receive a colored border/decorative treatment. Colors are selected per known tag in the tag manager, with a deterministic five-color fallback palette for tags without an explicit color. The first active tag determines the primary color for a block when multiple tags overlap.
 
-The editor maintains up to twelve recently used tags for the tag autocomplete/action menu. The formatting bar shows tags surrounding the caret or selection and provides removal controls. Known tags are also derived from all parsed local documents.
+The editor maintains up to twelve recently used tags for the tag autocomplete/action menu. The formatting bar shows tags surrounding the caret or selection and provides removal controls. Focusing the toolbar tag input (by clicking it, or with Mod-T — Cmd-T on macOS, Ctrl-T on web) preserves the editor's current selection so it remains visibly highlighted while the tag name is typed; the selection is painted through the CSS Custom Highlight API until the input loses focus. Known tags are also derived from all parsed local documents.
 
 ## 6. Search and filtering
 
@@ -118,7 +119,7 @@ The main menu and quick-entry menu expose search, command palette, privacy cente
 
 The command palette supports keyboard navigation and commands for jumping to today, opening future days, searching, settings, privacy, syncing, backing up, importing, and exporting all notes.
 
-Configurable shortcuts include search, settings, zoom in/out, jump to today, export today, strikethrough, task toggle, hide muted lines, shortcut help, and previous/next day. Shortcut conflicts are reported in Settings. Built-in editor shortcuts include Mod-B, Mod-I, Mod-U, and Backspace.
+Configurable shortcuts include search, settings, zoom in/out, jump to today, export today, strikethrough, task toggle, hide muted lines, shortcut help, and previous/next day. Shortcut conflicts are reported in Settings. Built-in editor shortcuts include Mod-B, Mod-I, Mod-U, Mod-T (focus tag input), and Backspace.
 
 ## 9. Preferences
 
@@ -204,7 +205,7 @@ The repository must not contain Firebase service-account credentials, private ke
 The Tauri application provides a compact hidden-title-bar window intended for quick entry. It supports:
 
 - Global default capture shortcut `Ctrl+Alt+N`, configurable in Settings.
-- Showing, hiding, focusing, and toggling the main window from the shortcut.
+- Showing, hiding, focusing, and toggling the main window from the shortcut. Hiding the window hides the application entirely (`NSApplication.hide:` on macOS), restoring focus to the previously active application.
 - A menu-bar tray icon and optional dock icon.
 - Always-on-top capture mode.
 - Configurable macOS window opacity/transparency.
