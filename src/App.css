@@ -272,8 +272,8 @@ button { cursor: pointer; font: inherit; }
 .future-day-panel { position: fixed; z-index: 15; top: 62px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 10px; transform: translateX(-50%); border: 1px solid #d9d4cb; border-radius: 8px; background: #fffdf9; box-shadow: 0 12px 30px #392c1f22; font-size: 12px; }
 .future-day-panel button, .future-notice button { padding: 5px 8px; border: 0; border-radius: 5px; color: #fff; background: #806790; font-size: 11px; }
 .future-notice { position: fixed; z-index: 18; right: 16px; bottom: 68px; display: flex; align-items: center; gap: 8px; max-width: min(440px, calc(100% - 32px)); padding: 10px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #62506f; background: #f8f5fa; box-shadow: 0 8px 24px #392c1f18; font-size: 12px; }
-.privacy-status { display: grid; grid-template-columns: minmax(110px, .4fr) 1fr; gap: 8px 14px; margin: 12px 0 18px; padding: 12px 0; border-block: 1px solid #eeeae5; font-size: 12px; }
-.privacy-status strong { color: #756a7d; }
+.settings-status { display: grid; grid-template-columns: minmax(110px, .4fr) 1fr; gap: 8px 14px; margin: 12px 0 18px; padding: 12px 0; border-block: 1px solid #eeeae5; font-size: 12px; }
+.settings-status strong { color: #756a7d; }
 .diff-viewer { max-height: 240px; margin-top: 6px; overflow: auto; border: 1px solid #e1dbd3; border-radius: 5px; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .diff-row { display: block; padding: 2px 7px; white-space: pre-wrap; }
 .diff-added { color: #287346; background: #eaf7ee; }
@@ -290,5 +290,5 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .command-palette button { color: #e8e2dc; }
 .theme-dark .command-palette button:hover { background: #383338; }
 .theme-dark .future-notice { color: #e8e2dc; background: #332f3b; border-color: #4d4659; }
-.theme-dark .privacy-status { border-color: #403b3f; }
+.theme-dark .settings-status { border-color: #403b3f; }
 @media (max-width: 700px) { .mobile-browser.app-shell { padding-bottom: 0; } .mobile-browser .future-day-panel { top: 104px; max-width: calc(100% - 24px); } .mobile-browser .future-notice { right: 12px; bottom: 12px; } }

@@ -400,7 +400,10 @@ function NotesApp() {
   useEffect(() => {
     if (!loaded || !isTauriEnvironment() || preferences.backupFrequency === 'off' || !preferences.backupFolder || backupAccessRootRef.current === preferences.backupFolder) return
     backupAccessRootRef.current = preferences.backupFolder
-    void invoke('request_backup_access', { root: preferences.backupFolder }).catch(() => setBackupState('error'))
+    void invoke('request_backup_access', { root: preferences.backupFolder })
+      .then(() => invoke<number | null>('last_backup_at', { root: preferences.backupFolder }))
+      .then((stamp) => { if (stamp) setLastBackupAt((current) => Math.max(current ?? 0, stamp)) })
+      .catch(() => setBackupState('error'))
   }, [loaded, preferences.backupFolder, preferences.backupFrequency])
 
   const allTags = useMemo(() => [...new Set(Object.values(documents).flatMap((markdown) => parseMarkdown(markdown).ranges.map((range) => range.tag)))].sort((left, right) => left.localeCompare(right)), [documents])
@@ -676,8 +679,10 @@ function NotesApp() {
     try {
       const selected = isTauriEnvironment() ? await openDirectoryDialog({ directory: true, multiple: false }) : await pickBackupDirectory()
       if (typeof selected === 'string') {
+        setLastBackupAt(undefined)
         setPreferences((current) => ({ ...current, backupFolder: selected }))
       } else if (selected) {
+        setLastBackupAt(undefined)
         backupDirectoryRef.current = selected
         setPreferences((current) => ({ ...current, backupFolder: 'Selected folder' }))
       } else {
@@ -909,7 +914,7 @@ function NotesApp() {
 
   const commandItems = [
     ['today', 'Jump to today'], ['future', 'Show future days'], ['search', 'Search notes'], ['settings', 'Open settings'],
-    ['sync', 'Sync now'], ['backup', 'Backup now'], ['import', 'Import backup'], ['export', 'Export all notes'],
+    ['sync', 'Sync now'], ...(isTauriEnvironment() ? [['backup', 'Backup now']] : []), ['import', 'Import backup'], ['export', 'Export all notes'],
   ].filter(([, label]) => label.toLocaleLowerCase().includes(commandQuery.toLocaleLowerCase()))
 
   const syncPrompt = !firebaseConfigured
@@ -1033,7 +1038,7 @@ function NotesApp() {
 
           <fieldset className="settings-group"><legend>Cloud sync</legend>
             <p className="settings-help">Notes stores your working copy locally in IndexedDB. Cloud notes are encrypted before upload.</p>
-            <div className="privacy-status"><strong>Local notes</strong><span>{Object.values(documents).filter(Boolean).length} non-empty days, from {oldestDocumentDay}</span><strong>Cloud sync</strong><span>{!firebaseConfigured ? 'Not configured' : !firebaseUser ? 'Signed out' : dataKey ? 'Unlocked and ready' : 'Signed in, encryption locked'}</span><strong>Backup</strong><span>{preferences.backupFrequency === 'off' ? 'Disabled' : backupState === 'error' ? 'Last backup failed' : lastBackupAt ? `Last saved ${new Date(lastBackupAt).toLocaleString()}` : 'Enabled, not run yet'}</span></div>
+            <div className="settings-status"><strong>Local notes</strong><span>{Object.values(documents).filter(Boolean).length} non-empty days, from {oldestDocumentDay}</span><strong>Cloud sync</strong><span>{!firebaseConfigured ? 'Not configured' : !firebaseUser ? 'Signed out' : dataKey ? 'Encrypted sync enabled' : 'Signed in — recovery phrase needed'}</span>{isTauriEnvironment() && <><strong>Backup</strong><span>{preferences.backupFrequency === 'off' ? 'Disabled on this device' : backupState === 'error' ? 'Last backup failed' : lastBackupAt ? `Last saved ${new Date(lastBackupAt).toLocaleString()}` : preferences.backupFolder ? 'No backups found' : 'No folder chosen'}</span></>}</div>
             {!firebaseConfigured ? <p className="settings-help">Add the VITE_FIREBASE_* values from FIREBASE_SETUP.md to enable Google sign-in and encrypted sync.</p> : !firebaseUser ? <><button className="settings-action" type="button" onClick={() => { void signIn() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Opening Google…' : 'Sign in with Google'}</button>{syncMessage && <p className="settings-help sync-error">{syncMessage}</p>}</> : <>
               <p className="settings-help">Signed in as {firebaseUser.email || firebaseUser.displayName || 'Google user'}.</p>
               {!dataKey && <><div className="settings-row"><span className="settings-label">Recovery phrase <button className="settings-link" type="button" onClick={() => { void generateRecoveryPhrase() }}>Generate random phrase</button></span><input value={recoveryPhrase} onChange={(event) => setRecoveryPhrase(event.target.value)} placeholder="12 words" autoComplete="off" /></div><button className="settings-action" type="button" onClick={() => { void prepareSync() }}>Unlock encrypted sync</button></>}
@@ -1043,12 +1048,12 @@ function NotesApp() {
             </>}
           </fieldset>
 
-          <fieldset className="settings-group"><legend>Data &amp; backups</legend>
+          {isTauriEnvironment() && <fieldset className="settings-group"><legend>Data &amp; backups</legend>
             <label className="settings-row"><span className="settings-label">Automatic backup</span><select value={preferences.backupFrequency} onChange={(event) => setPreferences((current) => ({ ...current, backupFrequency: event.target.value as Preferences['backupFrequency'] }))}><option value="off">Off</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
             <label className="settings-row"><span className="settings-label">Delete backups after</span><select value={preferences.backupRetention} onChange={(event) => setPreferences((current) => ({ ...current, backupRetention: event.target.value as Preferences['backupRetention'] }))}><option value="off">Keep all</option><option value="week">1 week</option><option value="month">1 month</option><option value="three-months">3 months</option></select></label>
             {preferences.backupFrequency !== 'off' && <label className="settings-row"><span className="settings-label">Backup folder</span><button className="settings-action" type="button" onClick={() => { void chooseBackupFolder() }}>{preferences.backupFolder || 'Choose folder'}</button></label>}
             {preferences.backupFrequency !== 'off' && <p className="settings-help" title="A new folder is created each day or week. Changes are written to that folder as they happen, so the current backup stays fresh.">Backups create a new {preferences.backupFrequency === 'weekly' ? 'week' : 'day'} folder and update it after changes; previous periods are kept.{backupState === 'saved' ? ' Last backup saved.' : backupState === 'error' ? ' Backup failed.' : ''}</p>}
-          </fieldset>
+          </fieldset>}
 
           <fieldset className="settings-group"><legend>Notifications</legend>
             <label className="settings-row"><span className="settings-label">Failure notifications</span><input type="checkbox" checked={preferences.notificationsEnabled} onChange={(event) => setPreferences((current) => ({ ...current, notificationsEnabled: event.target.checked }))} /></label>

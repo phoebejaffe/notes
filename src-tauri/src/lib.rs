@@ -313,6 +313,25 @@ fn request_backup_access(root: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn last_backup_at(root: String) -> Result<Option<u64>, String> {
+    let mut latest: Option<std::time::SystemTime> = None;
+    for entry in fs::read_dir(PathBuf::from(root)).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry.file_type().map_err(|error| error.to_string())?.is_dir() { continue; }
+        if !generated_backup_folder(&entry.file_name().to_string_lossy()) { continue; }
+        for file in fs::read_dir(entry.path()).map_err(|error| error.to_string())? {
+            let file = file.map_err(|error| error.to_string())?;
+            if !file.file_type().map_err(|error| error.to_string())?.is_file() { continue; }
+            if !valid_backup_day(&file.file_name().to_string_lossy()) { continue; }
+            if let Ok(modified) = file.metadata().and_then(|metadata| metadata.modified()) {
+                if latest.is_none_or(|time| modified > time) { latest = Some(modified); }
+            }
+        }
+    }
+    Ok(latest.and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|duration| duration.as_millis() as u64))
+}
+
+#[tauri::command]
 fn write_backup(root: String, folder_name: String, documents: Vec<BackupDocument>) -> Result<Vec<String>, String> {
     let backup_folder = PathBuf::from(root).join(folder_name);
     fs::create_dir_all(&backup_folder).map_err(|error| error.to_string())?;
@@ -457,7 +476,7 @@ pub fn run() {
             app.global_shortcut().register(shortcut)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup, request_backup_access, cleanup_backups, read_backup])
+        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup, request_backup_access, last_backup_at, cleanup_backups, read_backup])
         .on_window_event(|window, event| {
             if window.label() == "main"
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))

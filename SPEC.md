@@ -133,8 +133,8 @@ Preferences are persisted locally and currently cover:
 - Date display format, including long, short, ISO, and numeric variants.
 - Light or dark theme.
 - Compact spacing.
-- Automatic backup frequency: off, daily, or weekly.
-- Backup retention: keep all, one week, one month, or three months.
+- Automatic backup frequency: off, daily, or weekly (mac app only).
+- Backup retention: keep all, one week, one month, or three months (mac app only).
 - Onboarding and cloud-sync prompt dismissal.
 - macOS failure notifications.
 - Capture shortcut, always-on-top behavior, window opacity, launch at login, menu-bar visibility, and dock-icon visibility.
@@ -154,7 +154,7 @@ At least one of the macOS menu-bar or dock entry points must remain enabled.
 
 When enabled, backups write plain Markdown files to a user-selected folder. Daily backups use a date folder; weekly backups use a `week-YYYY-MM-DD` folder based on the Monday of that week. Existing-period folders are updated as notes change. Retention can remove generated backup folders older than the selected period. Backups are plaintext and should be treated as sensitive.
 
-Browser backups use the File System Access API where available. Tauri backups use native commands and filesystem access. Backup failures are surfaced in Settings and can produce macOS notifications when enabled.
+Backup controls are only exposed in the mac app, which uses native commands and filesystem access. The app reports the last backup time by scanning the newest `.md` file modification time inside generated backup folders, so the status reflects backups from previous launches as well as the current session. A browser backup path via the File System Access API exists in code but is not currently surfaced in the web UI. Backup failures are surfaced in Settings and can produce macOS notifications when enabled.
 
 ### Import
 
@@ -197,7 +197,7 @@ If Firebase variables are absent, the application must continue operating locall
 
 ## 12. Privacy and security expectations
 
-The Cloud sync section of Settings reports local note counts/range, cloud-sync state, and backup state above the recovery phrase input. Local working copies are stored in IndexedDB. Cloud note content is encrypted before upload. Backup and export files are plaintext by design and require user-controlled storage protection.
+The Cloud sync section of Settings reports local note counts/range and cloud-sync state above the recovery phrase input; in the mac app it also reports backup state. Local working copies are stored in IndexedDB. Cloud note content is encrypted before upload. Backup and export files are plaintext by design and require user-controlled storage protection.
 
 The repository must not contain Firebase service-account credentials, private keys, or committed local environment files. Production deployment must use restrictive per-user Firestore rules and verify that ciphertext, rather than note plaintext, is stored remotely.
 
@@ -240,7 +240,7 @@ Tests currently cover backup behavior, encrypted sync behavior, editor Markdown 
 - The sync query is currently bounded to the newest 1,000 remote documents.
 - Conflict resolution is document/day-level rather than a general collaborative text merge.
 - Tag colors and recent-tag ordering are local UI metadata and are not synchronized as part of encrypted documents.
-- Browser backup functionality depends on File System Access API support.
+- Automatic backups are only exposed in the mac app; the dormant browser path would depend on File System Access API support.
 - Native launch-at-login, opacity, menu-bar, and dock behaviors are platform-specific.
 - The README is a user-facing summary and setup guide; this spec remains the more detailed product reference.
 
