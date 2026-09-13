@@ -6,7 +6,18 @@ import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { commentsToTagDirectives } from './tagSyntax'
 import { $isTagBlockNode } from './TagBlockNode'
+import { AudioPlayerPopover } from './AudioPlayerPopover'
 import type { MdxNotesEditorProps } from './editorTypes'
+
+function isAudioRecordingUrl(href: string | null | undefined): boolean {
+  if (!href) return false
+  try {
+    const url = new URL(href)
+    return url.hostname === 'us-central1-pebble-ring-sync-20260911.cloudfunctions.net' && url.pathname.startsWith('/recordingAudio')
+  } catch {
+    return false
+  }
+}
 
 function suppressMutedPrefix(element: HTMLElement) {
   if (element.querySelector(':scope > .notes-muted-prefix')) return
@@ -248,6 +259,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const userInteractedRef = useRef(false)
   const suppressChangeRef = useRef(false)
   const [selectionState, setSelectionState] = useState({ text: '', blockText: '' })
+  const [audioPopover, setAudioPopover] = useState<{ url: string; rect: DOMRect } | null>(null)
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
   const boundaryParagraphRef = useRef<{ key: string; armed: boolean } | null>(null)
 
@@ -447,8 +459,23 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     },
   }), [activeTags, commit, recentTags, selectionLines, selectionState, showUndoRedo])
 
+  function openExternalLink(href: string) {
+    if ('__TAURI_INTERNALS__' in window) {
+      void import('@tauri-apps/plugin-shell').then(({ open }) => open(href))
+    } else {
+      window.open(href, '_blank', 'noopener,noreferrer')
+    }
+  }
+
   function focusEditor(event: MouseEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement
+    const link = target.closest<HTMLAnchorElement>('a[href]')
+    if (link && hostRef.current?.querySelector('.mdxeditor-root-contenteditable')?.contains(link)) {
+      event.preventDefault()
+      if (isAudioRecordingUrl(link.href)) setAudioPopover({ url: link.href, rect: link.getBoundingClientRect() })
+      else openExternalLink(link.href)
+      return
+    }
     if (target.closest('.mdxeditor-toolbar, [contenteditable]:not([contenteditable="false"])')) return
     editorRef.current?.focus()
   }
@@ -613,5 +640,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         plugins={plugins}
       />
     </EditorActionsProvider>
+    {audioPopover && <AudioPlayerPopover url={audioPopover.url} anchorRect={audioPopover.rect} onClose={() => setAudioPopover(null)} />}
   </div>
 }

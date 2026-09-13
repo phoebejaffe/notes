@@ -52,6 +52,7 @@ Supported editing actions include:
 
 - Bold, italic, underline, and strikethrough formatting.
 - Checklist/task items with clickable checkboxes that update the Markdown task marker. The editor provides a UI fallback when MDXEditor imports a GFM checklist as an ordinary list.
+- Clicking a link opens it in the default browser (in the Mac app via the system shell). Audio recording links open an inline player popover just above the link with play/pause and a seek bar; clicking outside or pressing Escape dismisses it.
 - Undo/redo controls on mobile keyboard devices.
 - Zoom and font-choice preferences. Zoom scales the day stream's editor content so the scrollable area and formatting bar always reach the window edges.
 - Keyboard shortcuts for common formatting and deleting one character.
