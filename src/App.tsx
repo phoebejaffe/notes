@@ -197,7 +197,6 @@ function NotesApp() {
   const [loaded, setLoaded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [privacyOpen, setPrivacyOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(() => !loadPreferences().onboardingDismissed)
   const [commandQuery, setCommandQuery] = useState('')
@@ -901,7 +900,6 @@ function NotesApp() {
     if (command === 'today') jumpToToday()
     if (command === 'search') setSearchOpen(true)
     if (command === 'settings') setSettingsOpen(true)
-    if (command === 'privacy') setPrivacyOpen(true)
     if (command === 'sync') void syncNow()
     if (command === 'backup') void performBackup()
     if (command === 'import') void previewImport()
@@ -910,7 +908,7 @@ function NotesApp() {
   }
 
   const commandItems = [
-    ['today', 'Jump to today'], ['future', 'Show future days'], ['search', 'Search notes'], ['settings', 'Open settings'], ['privacy', 'Privacy center'],
+    ['today', 'Jump to today'], ['future', 'Show future days'], ['search', 'Search notes'], ['settings', 'Open settings'],
     ['sync', 'Sync now'], ['backup', 'Backup now'], ['import', 'Import backup'], ['export', 'Export all notes'],
   ].filter(([, label]) => label.toLocaleLowerCase().includes(commandQuery.toLocaleLowerCase()))
 
@@ -936,7 +934,6 @@ function NotesApp() {
         {menuOpen && <nav className="menu-panel" aria-label="Noteses menu">
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
-          <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
           <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
           <button type="button" onClick={() => { setRawTextMode((raw) => !raw); setMenuOpen(false) }}>{rawTextMode ? 'Rich editor' : 'Raw text mode'}</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
@@ -958,7 +955,6 @@ function NotesApp() {
         {menuOpen && <nav className="menu-panel" aria-label="Quick entry menu">
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
-          <button type="button" onClick={() => { setPrivacyOpen(true); setMenuOpen(false) }}>Privacy center</button>
           <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
           <button type="button" onClick={() => { setRawTextMode((raw) => !raw); setMenuOpen(false) }}>{rawTextMode ? 'Rich editor' : 'Raw text mode'}</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
@@ -1016,8 +1012,6 @@ function NotesApp() {
 
       {onboardingOpen && !captureMode && <div className="modal-backdrop" role="presentation"><section className="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><div className="modal-heading"><div><span className="eyebrow">Welcome</span><h2 id="onboarding-title">Set up Notes</h2></div></div><p className="settings-description">Notes works offline first. Your notes stay on this device unless you choose encrypted cloud sync.</p><ol className="onboarding-list"><li>{appInstalled ? 'Notes is installed on this device.' : installPrompt ? 'Install Notes for quick offline access.' : 'On iPhone/iPad, use Safari Share → Add to Home Screen. On desktop, use your browser’s install option when available.'}</li><li>Sign in with Google in Settings if you want cloud sync.</li><li>Create or enter your recovery phrase to unlock encrypted sync.</li></ol>{installPrompt && !appInstalled && <button className="settings-action" type="button" onClick={() => { void installPwa() }}>Install Notes</button>}<button className="settings-action" type="button" onClick={() => { setOnboardingOpen(false); setPreferences((current) => ({ ...current, onboardingDismissed: true })) }}>Continue to Notes</button><button className="settings-link" type="button" onClick={() => { setOnboardingOpen(false); setSettingsOpen(true) }}>Open sync settings</button></section></div>}
 
-      {privacyOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setPrivacyOpen(false) }}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-title"><div className="modal-heading"><div><span className="eyebrow">Privacy</span><h2 id="privacy-title">Privacy center</h2></div><button className="modal-close" type="button" aria-label="Close privacy center" onClick={() => setPrivacyOpen(false)}>×</button></div><p className="settings-help">Notes stores your working copy locally in IndexedDB. Cloud notes are encrypted before upload.</p><div className="privacy-status"><strong>Local notes</strong><span>{Object.values(documents).filter(Boolean).length} non-empty days, from {oldestDocumentDay}</span><strong>Cloud sync</strong><span>{!firebaseConfigured ? 'Not configured' : !firebaseUser ? 'Signed out' : dataKey ? 'Unlocked and ready' : 'Signed in, encryption locked'}</span><strong>Backup</strong><span>{preferences.backupFrequency === 'off' ? 'Disabled' : backupState === 'error' ? 'Last backup failed' : lastBackupAt ? `Last saved ${new Date(lastBackupAt).toLocaleString()}` : 'Enabled, not run yet'}</span></div><button className="settings-action" type="button" onClick={() => { exportAllMarkdown(); setPrivacyOpen(false) }}>Export all notes</button><button className="settings-action" type="button" onClick={() => { setPrivacyOpen(false); setSettingsOpen(true) }}>Open privacy settings</button></section></div>}
-
       {settingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false) }}>
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
           <div className="modal-heading"><div><span className="eyebrow">Preferences</span><h2 id="settings-modal-title">Settings</h2></div><button className="modal-close" type="button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>×</button></div>
@@ -1038,6 +1032,8 @@ function NotesApp() {
           </fieldset>
 
           <fieldset className="settings-group"><legend>Cloud sync</legend>
+            <p className="settings-help">Notes stores your working copy locally in IndexedDB. Cloud notes are encrypted before upload.</p>
+            <div className="privacy-status"><strong>Local notes</strong><span>{Object.values(documents).filter(Boolean).length} non-empty days, from {oldestDocumentDay}</span><strong>Cloud sync</strong><span>{!firebaseConfigured ? 'Not configured' : !firebaseUser ? 'Signed out' : dataKey ? 'Unlocked and ready' : 'Signed in, encryption locked'}</span><strong>Backup</strong><span>{preferences.backupFrequency === 'off' ? 'Disabled' : backupState === 'error' ? 'Last backup failed' : lastBackupAt ? `Last saved ${new Date(lastBackupAt).toLocaleString()}` : 'Enabled, not run yet'}</span></div>
             {!firebaseConfigured ? <p className="settings-help">Add the VITE_FIREBASE_* values from FIREBASE_SETUP.md to enable Google sign-in and encrypted sync.</p> : !firebaseUser ? <><button className="settings-action" type="button" onClick={() => { void signIn() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Opening Google…' : 'Sign in with Google'}</button>{syncMessage && <p className="settings-help sync-error">{syncMessage}</p>}</> : <>
               <p className="settings-help">Signed in as {firebaseUser.email || firebaseUser.displayName || 'Google user'}.</p>
               {!dataKey && <><div className="settings-row"><span className="settings-label">Recovery phrase <button className="settings-link" type="button" onClick={() => { void generateRecoveryPhrase() }}>Generate random phrase</button></span><input value={recoveryPhrase} onChange={(event) => setRecoveryPhrase(event.target.value)} placeholder="12 words" autoComplete="off" /></div><button className="settings-action" type="button" onClick={() => { void prepareSync() }}>Unlock encrypted sync</button></>}

@@ -116,9 +116,9 @@ Tag metadata is currently local UI state; tag colors are not part of the Markdow
 
 ## 8. Commands, menus, and shortcuts
 
-The main menu and quick-entry menu expose search, command palette, privacy center, future-note creation, settings, reload, keyboard-shortcut help, tag management, today/all export, jump-to-today, and current-day reset.
+The main menu and quick-entry menu expose search, command palette, future-note creation, settings, reload, keyboard-shortcut help, tag management, today/all export, jump-to-today, and current-day reset.
 
-The command palette supports keyboard navigation and commands for jumping to today, opening future days, searching, settings, privacy, syncing, backing up, importing, and exporting all notes.
+The command palette supports keyboard navigation and commands for jumping to today, opening future days, searching, settings, syncing, backing up, importing, and exporting all notes.
 
 Configurable shortcuts include search, settings, zoom in/out, jump to today, export today, strikethrough, task toggle, hide muted lines, shortcut help, and previous/next day. Shortcut conflicts are reported in Settings. Built-in editor shortcuts include Mod-B, Mod-I, Mod-U, Mod-T (focus tag input), and Backspace.
 
@@ -197,7 +197,7 @@ If Firebase variables are absent, the application must continue operating locall
 
 ## 12. Privacy and security expectations
 
-The privacy center reports local note counts/range, cloud-sync state, and backup state, and provides all-notes export and a link to privacy settings. Local working copies are stored in IndexedDB. Cloud note content is encrypted before upload. Backup and export files are plaintext by design and require user-controlled storage protection.
+The Cloud sync section of Settings reports local note counts/range, cloud-sync state, and backup state above the recovery phrase input. Local working copies are stored in IndexedDB. Cloud note content is encrypted before upload. Backup and export files are plaintext by design and require user-controlled storage protection.
 
 The repository must not contain Firebase service-account credentials, private keys, or committed local environment files. Production deployment must use restrictive per-user Firestore rules and verify that ciphertext, rather than note plaintext, is stored remotely.
 
