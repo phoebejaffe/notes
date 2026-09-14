@@ -161,7 +161,33 @@ function restoreEditorSelection(root: HTMLElement | null, selectedText: string, 
   if (!selection) return
   const range = document.createRange()
   if (selectedText) {
-    range.selectNodeContents(target)
+    const nodes: Text[] = []
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node) {
+      nodes.push(node as Text)
+      node = walker.nextNode()
+    }
+    const fullText = nodes.map((textNode) => textNode.textContent ?? '').join('')
+    const matchStart = fullText.indexOf(selectedText)
+    if (matchStart >= 0) {
+      let offset = 0
+      const locate = (position: number) => {
+        for (const textNode of nodes) {
+          const length = textNode.textContent?.length ?? 0
+          if (position <= offset + length) return { node: textNode, offset: position - offset }
+          offset += length
+        }
+        return { node: nodes[nodes.length - 1], offset: nodes[nodes.length - 1]?.textContent?.length ?? 0 }
+      }
+      const start = locate(matchStart)
+      offset = 0
+      const end = locate(matchStart + selectedText.length)
+      if (start.node && end.node) {
+        range.setStart(start.node, start.offset)
+        range.setEnd(end.node, end.offset)
+      } else range.selectNodeContents(target)
+    } else range.selectNodeContents(target)
   } else {
     const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
     let node = walker.nextNode()
@@ -221,30 +247,43 @@ function applyChecklistWidgets(root: HTMLElement | null, getSource: () => string
   if (!root) return
   const lines = getSource().split('\n')
   let searchStart = 0
-  const managedItems = new Set<HTMLElement>()
-  root.querySelectorAll<HTMLElement>('li').forEach((item) => {
-    const existing = item.querySelector<HTMLInputElement>(':scope > .notes-checklist-checkbox')
+  let overlay = root.querySelector<HTMLElement>(':scope > .notes-checklist-overlay')
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.className = 'notes-checklist-overlay'
+    root.appendChild(overlay)
+  }
+  const managedLines = new Set<string>()
+  const rootRect = root.getBoundingClientRect()
+  root.querySelectorAll<HTMLElement>('.mdxeditor-root-contenteditable li').forEach((item) => {
     const lineIndex = lines.findIndex((line, index) => index >= searchStart && /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+/u.test(line) && sourceLineForRenderedText(line, item.textContent ?? '') >= 0)
     const match = lineIndex < 0 ? null : lines[lineIndex].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/u)
     if (lineIndex < 0 || !match) {
-      existing?.remove()
+      item.removeAttribute('data-notes-checklist')
+      item.removeAttribute('data-notes-checklist-checked')
       return
     }
     searchStart = lineIndex + 1
     const checked = match[2].toLowerCase() === 'x'
-    managedItems.add(item)
-    if (existing) {
-      if (existing.dataset.checklistLine !== String(lineIndex)) existing.dataset.checklistLine = String(lineIndex)
-      if (existing.checked !== checked) existing.checked = checked
-      return
+    const key = String(lineIndex)
+    managedLines.add(key)
+    item.setAttribute('data-notes-checklist', 'true')
+    item.setAttribute('data-notes-checklist-checked', String(checked))
+    let input = overlay.querySelector<HTMLInputElement>(`[data-checklist-line="${key}"]`)
+    if (!input) {
+      input = document.createElement('input')
+      input.type = 'checkbox'
+      input.className = 'notes-checklist-checkbox'
+      input.dataset.checklistLine = key
+      overlay.appendChild(input)
     }
-    const input = document.createElement('input')
-    input.type = 'checkbox'
-    input.className = 'notes-checklist-checkbox'
     input.checked = checked
-    input.dataset.checklistLine = String(lineIndex)
-    input.contentEditable = 'false'
     input.setAttribute('aria-label', checked ? 'Mark task incomplete' : 'Mark task complete')
+    const itemRect = item.getBoundingClientRect()
+    input.style.top = `${itemRect.top - rootRect.top + 3}px`
+    input.style.left = `${itemRect.left - rootRect.left - 20}px`
+    if (input.dataset.bound !== 'true') {
+      input.dataset.bound = 'true'
     input.addEventListener('change', () => {
       const nextLines = getSource().split('\n')
       const line = nextLines[Number(input.dataset.checklistLine)]
@@ -253,11 +292,12 @@ function applyChecklistWidgets(root: HTMLElement | null, getSource: () => string
       nextLines[Number(input.dataset.checklistLine)] = `${current[1]}[${input.checked ? 'x' : ' '}]${line.slice(current[0].length)}`
       commit(nextLines.join('\n'))
     })
-    item.insertBefore(input, item.firstChild)
+      }
   })
-  root.querySelectorAll<HTMLElement>('.notes-checklist-checkbox').forEach((input) => {
-    if (input.parentElement && !managedItems.has(input.parentElement)) input.remove()
+  overlay.querySelectorAll<HTMLInputElement>('.notes-checklist-checkbox').forEach((input) => {
+    if (!managedLines.has(input.dataset.checklistLine ?? '')) input.remove()
   })
+  if (!managedLines.size) overlay.remove()
 }
 
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, showUndoRedo = false, rawTextMode = false, taskShortcut = 'Mod-Shift-c' }: MdxNotesEditorProps) {

@@ -105,6 +105,11 @@ describe('marker engine', () => {
     expect(toggleMutedLines(muted.source, 0, 3).source).toBe(source)
   })
 
+  it('mutes a line containing a Markdown link without changing its content', () => {
+    const source = '[💡](https://example.com/recording) Transcribe with a better voice model.'
+    expect(toggleMutedLines(source, 0, 0).source).toBe('%% [💡](https://example.com/recording) Transcribe with a better voice model.')
+  })
+
   it('toggles checklist items and promotes plain list items', () => {
     expect(toggleChecklist('- one\n- [ ] two\n- [x] three', 0)).toBe('- [ ] one\n- [ ] two\n- [x] three')
     expect(toggleChecklist('- one\n- [ ] two\n- [x] three', 1)).toBe('- one\n- [x] two\n- [x] three')
