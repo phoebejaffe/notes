@@ -19,6 +19,7 @@
 - **Tags** are custom Lexical `ElementNode`s (`TagBlockNode`) serialized as nested Markdown container directives — never HTML comments. `%%` is the muted-line syntax.
 - **Platform gating** uses `isTauriEnvironment()` in `src/App.tsx`. Anything needing filesystem access (backups) or native APIs is mac-app-only; the browser build must keep working without it.
 - **Firebase is optional.** If `VITE_FIREBASE_*` env vars are absent the app runs fully local; cloud sync encrypts with a key derived from the user's recovery phrase (stored per-user under `notes-recovery-phrase:${uid}`).
+- **External writers exist.** A separate Pebble receiver (`~/Sites/pebble-ring`) writes encrypted daily documents directly to Firestore via Admin SDK using the same envelope format (`src/crypto.ts`, `src/encryptedSync.ts`). It prepends `💡`-prefixed transcription lines — `[💡](signed-url)` links to audio, which the editor renders with an inline player popover. Any change to the document envelope, key bundle, or associated-data scheme must stay compatible with that writer.
 - Preferences live in localStorage `notes-preferences`. Useful keys for repro scripts: `onboardingDismissed`, `syncPromptDismissed` (set both to skip first-run modals).
 
 ## Editor pitfalls (Lexical/MDXEditor)
