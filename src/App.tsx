@@ -454,7 +454,7 @@ function NotesApp() {
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
-      const helpShortcut = matchesShortcut(event, preferences.shortcuts.help) || (event.code === 'Slash' && event.shiftKey && !event.altKey && !event.ctrlKey && (event.metaKey || /mac/i.test(navigator.platform)))
+      const helpShortcut = matchesShortcut(event, preferences.shortcuts.help) || (event.code === 'Slash' && event.shiftKey && event.metaKey && !event.ctrlKey && !event.altKey)
       if (helpShortcut) {
         event.preventDefault()
         setShortcutHelpOpen(true)
