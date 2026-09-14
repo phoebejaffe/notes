@@ -33,6 +33,7 @@ describe('Rendered text to source line matching', () => {
     expect(sourceLineRangeForRenderedSelection(source, 'first line\nsecond line\nthird line')).toEqual({ startLine: 0, endLine: 2 })
     expect(sourceLineRangeForRenderedSelection('first\nunrelated\nsecond\nthird', 'first second third')).toBeUndefined()
   })
+    expect(sourceLineRangeForRenderedSelection('not brought that to him,  \nyou ok not sprintibng and what covid test', 'not brought that to him, you ok not sprintibng and what covid test')).toEqual({ startLine: 0, endLine: 1 })
 
   it('matches a muted line whose source is a Markdown link', () => {
     const source = '%% [💡](https://example.com/recording) Transcribe with a better voice model.'

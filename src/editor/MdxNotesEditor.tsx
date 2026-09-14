@@ -489,10 +489,13 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     recentTags,
     showUndoRedo,
     addTag: (tagValue: string) => {
+      const currentSelection = readRenderedSelection(hostRef.current)
+      const selectedText = currentSelection?.text ?? selectionState.text
+      const blockText = currentSelection?.blockText ?? selectionState.blockText
       const tag = tagValue.trim()
       const source = valueRef.current
-      const selectedRange = selectedSourceRange(source, selectionState.text)
-      const caretLine = selectedRange ? -1 : sourceLineForRenderedText(source, selectionState.blockText)
+      const selectedRange = selectedSourceRange(source, selectedText)
+      const caretLine = selectedRange ? -1 : sourceLineForRenderedText(source, blockText)
       const caretLineStart = caretLine >= 0 ? source.split('\n').slice(0, caretLine).reduce((offset, line) => offset + line.length + 1, 0) : -1
       const caretLineEnd = caretLine >= 0 ? caretLineStart + source.split('\n')[caretLine].length : -1
       const range = selectedRange ?? (caretLine >= 0 ? { from: caretLineStart, to: caretLineEnd } : undefined)
