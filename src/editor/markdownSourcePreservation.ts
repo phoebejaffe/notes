@@ -25,22 +25,23 @@ export function sourceLineRangeForRenderedSelection(source: string, renderedText
   const normalized = renderedText.replace(/\s+/gu, ' ').trim()
   if (!normalized) return undefined
   const lines = source.split('\n')
-  const matchedLines: number[] = []
-  let searchStart = 0
-  lines.forEach((line, index) => {
-    const sourceText = comparableLineText(line)
-    if (!sourceText) return
-    const matchStart = normalized.indexOf(sourceText, searchStart)
-    if (matchStart < 0) return
-    matchedLines.push(index)
-    searchStart = matchStart + sourceText.length
-  })
-  if (matchedLines.length > 1) return { startLine: matchedLines[0], endLine: matchedLines.at(-1)! }
-  const tokens = normalized.split(' ').filter(Boolean)
-  if (!tokens.length) return undefined
-  const startLine = lines.findIndex((line) => comparableLineText(line).includes(tokens[0]) || tokens[0].includes(comparableLineText(line)))
-  const endLine = lines.findLastIndex((line, index) => index >= startLine && (comparableLineText(line).includes(tokens.at(-1)!) || tokens.at(-1)!.includes(comparableLineText(line))))
-  return startLine >= 0 && endLine >= startLine ? { startLine, endLine } : undefined
+  const comparableLines = lines.map(comparableLineText)
+  const compactSelection = normalized.replace(/\s+/gu, '')
+  for (let startLine = 0; startLine < comparableLines.length; startLine += 1) {
+    if (!comparableLines[startLine]) continue
+    let combined = ''
+    let compactCombined = ''
+    for (let endLine = startLine; endLine < comparableLines.length; endLine += 1) {
+      if (comparableLines[endLine]) {
+        combined = combined ? `${combined} ${comparableLines[endLine]}` : comparableLines[endLine]
+        compactCombined += comparableLines[endLine].replace(/\s+/gu, '')
+      }
+      if (combined.length < normalized.length && compactCombined.length < compactSelection.length) continue
+      if (combined.includes(normalized) || compactCombined.includes(compactSelection)) return { startLine, endLine }
+      break
+    }
+  }
+  return undefined
 }
 function isMarkerLine(line: string) {
   return /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line)

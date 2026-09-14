@@ -31,6 +31,7 @@ describe('Rendered text to source line matching', () => {
   it('maps a multi-line rendered selection to its full source line range', () => {
     const source = '- first line\n- second line\n- third line\nafter'
     expect(sourceLineRangeForRenderedSelection(source, 'first line\nsecond line\nthird line')).toEqual({ startLine: 0, endLine: 2 })
+    expect(sourceLineRangeForRenderedSelection('first\nunrelated\nsecond\nthird', 'first second third')).toBeUndefined()
   })
 
   it('matches a muted line whose source is a Markdown link', () => {
