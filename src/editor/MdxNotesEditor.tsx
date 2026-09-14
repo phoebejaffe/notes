@@ -423,17 +423,10 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
     frame = window.requestAnimationFrame(apply)
     const retry = window.setTimeout(apply, 600)
-    const observer = new MutationObserver(() => {
-      const sourceChecklistCount = valueRef.current.split('\n').filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+/u.test(line)).length
-      const renderedChecklistCount = hostRef.current?.querySelectorAll('.notes-checklist-checkbox').length ?? 0
-      if (sourceChecklistCount > renderedChecklistCount) applyChecklistWidgets(hostRef.current, () => valueRef.current, commit)
-    })
-    if (hostRef.current) observer.observe(hostRef.current, { childList: true, subtree: true })
     return () => {
       cancelled = true
       window.cancelAnimationFrame(frame)
       window.clearTimeout(retry)
-      observer.disconnect()
     }
   }, [commit, hideMutedLines, tagColors, value])
 
