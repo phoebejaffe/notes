@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
 import { $createParagraphNode, $getNodeByKey, $getRoot, $setSelection, type LexicalEditor } from 'lexical'
-import { parseMarkdown, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
+import { moveLines, parseMarkdown, removeTagAtPosition, toggleChecklist, toggleMutedLines } from '../markerEngine'
 import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { commentsToTagDirectives } from './tagSyntax'
@@ -240,7 +240,7 @@ function applyChecklistWidgets(root: HTMLElement | null, getSource: () => string
   })
 }
 
-export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, showUndoRedo = false, rawTextMode = false }: MdxNotesEditorProps) {
+export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, showUndoRedo = false, rawTextMode = false, taskShortcut = 'Mod-Shift-c' }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const [lexicalEditor, setLexicalEditor] = useState<LexicalEditor | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -449,6 +449,18 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const line = sourceLineForRenderedText(source, selectionState.blockText)
       if (line >= 0) commit(toggleMutedLines(source, line, line).source)
     },
+    toggleChecklist: () => {
+      const source = valueRef.current
+      const line = sourceLineForRenderedText(source, selectionState.blockText)
+      if (line >= 0) commit(toggleChecklist(source, line))
+    },
+    moveLines: (direction: 'up' | 'down') => {
+      const source = valueRef.current
+      const range = selectedSourceRange(source, selectionState.text)
+      const startLine = range ? source.slice(0, range.from).split('\n').length - 1 : sourceLineForRenderedText(source, selectionState.blockText)
+      const endLine = range ? source.slice(0, range.to).split('\n').length - 1 : startLine
+      if (startLine >= 0 && endLine >= startLine) commit(moveLines(source, startLine, endLine, direction))
+    },
   }), [activeTags, commit, recentTags, selectionLines, selectionState, showUndoRedo])
 
   function openExternalLink(href: string) {
@@ -548,7 +560,20 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }
 
   function handleEditorKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if ((event.metaKey || event.ctrlKey) && event.key === '/') {
+    const modifier = event.metaKey || event.ctrlKey
+    const taskShortcutParts = taskShortcut.toLowerCase().split('-')
+    const taskShortcutKey = taskShortcutParts.at(-1)
+    if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === taskShortcutKey) {
+      event.preventDefault()
+      actions.toggleChecklist()
+      return
+    }
+    if (event.altKey && !modifier && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault()
+      actions.moveLines(event.key === 'ArrowUp' ? 'up' : 'down')
+      return
+    }
+    if (modifier && event.key === '/') {
       event.preventDefault()
       actions.toggleMute()
       return
@@ -603,9 +628,35 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }, [rawTextMode, value])
 
   if (rawTextMode) return <div className="notes-mdx-editor notes-raw-mode" ref={hostRef}><textarea className="notes-raw-editor" value={value} autoFocus={autoFocus} spellCheck={false} onKeyDown={(event) => {
+    const target = event.currentTarget
+    const modifier = event.metaKey || event.ctrlKey
+    const taskShortcutParts = taskShortcut.toLowerCase().split('-')
+    const taskShortcutKey = taskShortcutParts.at(-1)
+    if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === taskShortcutKey) {
+      event.preventDefault()
+      const line = target.value.slice(0, target.selectionStart).split('\n').length - 1
+      const nextValue = toggleChecklist(target.value, line)
+      if (nextValue !== target.value) {
+        valueRef.current = nextValue
+        onChangeRef.current(nextValue)
+      }
+      return
+    }
+    if (event.altKey && !modifier && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault()
+      const startLine = target.value.slice(0, target.selectionStart).split('\n').length - 1
+      const endLine = target.value.slice(0, target.selectionEnd).split('\n').length - 1
+      const direction = event.key === 'ArrowUp' ? 'up' : 'down'
+      const nextValue = moveLines(target.value, startLine, endLine, direction)
+      if (nextValue !== target.value) {
+        valueRef.current = nextValue
+        onChangeRef.current(nextValue)
+        window.requestAnimationFrame(() => target.focus())
+      }
+      return
+    }
     if (event.key === '"' && !event.metaKey && !event.ctrlKey && !event.altKey && event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) {
       event.preventDefault()
-      const target = event.currentTarget
       const start = target.selectionStart
       const end = target.selectionEnd
       const selectedText = target.value.slice(start, end)
@@ -617,7 +668,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
     if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
-    const target = event.currentTarget
     const atFirstLine = event.key === 'ArrowUp' && target.selectionStart === 0
     const atLastLine = event.key === 'ArrowDown' && target.selectionStart === target.value.length
     if (!atFirstLine && !atLastLine) return

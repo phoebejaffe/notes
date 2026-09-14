@@ -245,6 +245,40 @@ export function toggleMutedLines(source: string, startLine: number, endLine: num
   return { source: lines.join('\n'), muted: !unmute, changes }
 }
 
+const LIST_ITEM_PATTERN = /^(\s*)([-*+] |\d+[.)] )(.*)$/u
+const CHECKLIST_ITEM_PATTERN = /^(\s*(?:[-*+]|\d+[.)]) )\[([ xX])\](.*)$/u
+
+export function toggleChecklist(source: string, lineIndex: number) {
+  const lines = source.split('\n')
+  const line = lines[lineIndex]
+  if (line === undefined) return source
+  const checklist = line.match(CHECKLIST_ITEM_PATTERN)
+  if (checklist) {
+    lines[lineIndex] = `${checklist[1]}[${checklist[2].toLowerCase() === 'x' ? ' ' : 'x'}]${checklist[3]}`
+    return lines.join('\n')
+  }
+  const listItem = line.match(LIST_ITEM_PATTERN)
+  if (!listItem) return source
+  lines[lineIndex] = `${listItem[1]}${listItem[2]}[ ] ${listItem[3]}`
+  return lines.join('\n')
+}
+
+export function moveLines(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
+  const lines = source.split('\n')
+  if (startLine < 0 || endLine >= lines.length || startLine > endLine) return source
+  const adjacent = direction === 'up' ? startLine - 1 : endLine + 1
+  if (adjacent < 0 || adjacent >= lines.length) return source
+  const selected = lines.slice(startLine, endLine + 1)
+  if (direction === 'up') {
+    lines.splice(adjacent, 0, ...selected)
+    lines.splice(startLine + selected.length, selected.length)
+  } else {
+    lines.splice(startLine, selected.length)
+    lines.splice(adjacent - selected.length + 1, 0, ...selected)
+  }
+  return lines.join('\n')
+}
+
 function removeTagFromMarkerLine(line: string, kind: MarkerKind, tag: string) {
   const target = markerTagSpans(line).find((span) => span.kind === kind && span.tag === normalizeTag(tag))
   if (!target) return line

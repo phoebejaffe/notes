@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, normalizeRepeatedOpens, parseMarkdown, isMutedLine, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, toggleMutedLines } from './markerEngine'
+import { addTagToRange, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, moveLines, normalizeRepeatedOpens, parseMarkdown, isMutedLine, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, toggleChecklist, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -103,6 +103,20 @@ describe('marker engine', () => {
     expect(muted.source).toBe('%% plain\n  %% indented\n- %% grocery item\n## %% heading')
     expect(isMutedLine(muted.source.split('\n')[2])).toBe(true)
     expect(toggleMutedLines(muted.source, 0, 3).source).toBe(source)
+  })
+
+  it('toggles checklist items and promotes plain list items', () => {
+    expect(toggleChecklist('- one\n- [ ] two\n- [x] three', 0)).toBe('- [ ] one\n- [ ] two\n- [x] three')
+    expect(toggleChecklist('- one\n- [ ] two\n- [x] three', 1)).toBe('- one\n- [x] two\n- [x] three')
+    expect(toggleChecklist('- one\n- [ ] two\n- [x] three', 2)).toBe('- one\n- [ ] two\n- [ ] three')
+    expect(toggleChecklist('plain', 0)).toBe('plain')
+  })
+
+  it('moves selected lines up and down without changing their content', () => {
+    expect(moveLines('one\ntwo\nthree\nfour', 1, 2, 'up')).toBe('two\nthree\none\nfour')
+    expect(moveLines('one\ntwo\nthree\nfour', 1, 2, 'down')).toBe('one\nfour\ntwo\nthree')
+    expect(moveLines('one\ntwo', 0, 0, 'up')).toBe('one\ntwo')
+    expect(moveLines('one\ntwo', 1, 1, 'down')).toBe('one\ntwo')
   })
 
   it('renames every matching marker while preserving quoted names', () => {

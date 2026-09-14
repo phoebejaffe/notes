@@ -46,7 +46,7 @@ The current day is calculated using a configurable rollover hour, from midnight 
 
 The editor is based on MDXEditor and supports headings, lists, quotes, links, tables, thematic breaks, Markdown shortcuts, directives, and an application toolbar. Existing Markdown source is preserved around editor changes where possible so application marker lines are not silently lost. The formatting bar is fixed to the bottom of the window, appears while an editor is focused, follows the active light/dark theme, and has web/PWA-specific placement and responsive spacing.
 
-Tags are rendered as a custom Lexical `ElementNode` (`TagBlockNode`) inside the same editor instance, so arrow-key navigation, typing, and selection cross tag boundaries naturally within a day. Between day cards, ArrowUp at the top visual line or ArrowDown at the bottom visual line moves the caret into the adjacent day's editor (accounting for wrapped lines and trailing empty paragraphs). When a note begins with a tag block, pressing ArrowUp at its first line creates a caret position before the tag as a temporary empty paragraph; the paragraph is removed again if the caret leaves it while still empty, so no stray blank line is persisted. The tag block renders the tag tag and left border through CSS pseudo-elements on a container `<div class="notes-tag-directive">`.
+Tags are rendered as a custom Lexical `ElementNode` (`TagBlockNode`) inside the same editor instance, so arrow-key navigation, typing, and selection cross tag boundaries naturally within a day. Option-ArrowUp and Option-ArrowDown move the current or selected source lines within the day. Between day cards, ArrowUp at the top visual line or ArrowDown at the bottom visual line moves the caret into the adjacent day's editor (accounting for wrapped lines and trailing empty paragraphs). When a note begins with a tag block, pressing ArrowUp at its first line creates a caret position before the tag as a temporary empty paragraph; the paragraph is removed again if the caret leaves it while still empty, so no stray blank line is persisted. The tag block renders the tag tag and left border through CSS pseudo-elements on a container `<div class="notes-tag-directive">`.
 
 Supported editing actions include:
 
@@ -55,7 +55,7 @@ Supported editing actions include:
 - Clicking a link opens it in the default browser (in the Mac app via the system shell). Audio recording links open an inline player popover just above the link with play/pause and a seek bar; clicking outside or pressing Escape dismisses it.
 - Undo/redo controls on mobile keyboard devices.
 - Zoom and font-choice preferences. Zoom scales the day stream's editor content so the scrollable area and formatting bar always reach the window edges.
-- Keyboard shortcuts for common formatting and deleting one character.
+- Keyboard shortcuts for common formatting, toggling checklist items, moving selected lines with Option-ArrowUp/Option-ArrowDown, and deleting one character.
 - Pressing the `"` key with an active text selection wraps the selection in quotes while keeping the inner text selected, in both the rich editor and raw text mode.
 
 ### Muted lines
@@ -120,7 +120,7 @@ The main menu and quick-entry menu expose search, command palette, future-note c
 
 The command palette supports keyboard navigation and commands for jumping to today, opening future days, searching, settings, syncing, backing up, importing, and exporting all notes.
 
-Configurable shortcuts include search, settings, zoom in/out, jump to today, export today, strikethrough, task toggle, hide muted lines, shortcut help, and previous/next day. Shortcut conflicts are reported in Settings. Built-in editor shortcuts include Mod-B, Mod-I, Mod-U, Mod-T (focus tag input), and Backspace.
+Configurable shortcuts include search, settings, zoom in/out, jump to today, export today, strikethrough, task toggle (default Mod-Shift-C), hide muted lines, shortcut help, and previous/next day. Shortcut conflicts are reported in Settings. Built-in editor shortcuts include Mod-B, Mod-I, Mod-U, Mod-T (focus tag input), Option-ArrowUp/Option-ArrowDown (move selected lines), and Backspace.
 
 ## 9. Preferences
 

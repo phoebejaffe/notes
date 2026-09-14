@@ -12,4 +12,5 @@ export interface MdxNotesEditorProps {
   tagColors?: Record<string, string>
   showUndoRedo?: boolean
   rawTextMode?: boolean
+  taskShortcut?: string
 }

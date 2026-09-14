@@ -57,7 +57,7 @@ export const defaultPreferences: Preferences = {
     jumpToToday: 'Mod-j',
     exportToday: 'Mod-s',
     strikethrough: 'Mod-Shift-x',
-    taskToggle: 'Mod-Enter',
+    taskToggle: 'Mod-Shift-c',
     toggleMuted: 'Mod-Alt-/',
     help: 'Mod-Shift-?',
     settings: 'Mod-,',

@@ -7,6 +7,8 @@ export interface EditorActions {
   removeTag: (tag: string) => void
   recentTags: string[]
   toggleMute: () => void
+  toggleChecklist: () => void
+  moveLines: (direction: 'up' | 'down') => void
   showUndoRedo: boolean
 }
 
