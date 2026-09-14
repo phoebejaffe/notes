@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { preserveMarkerLines } from './markdownSourcePreservation'
+import { comparableLineText, preserveMarkerLines, sourceLineForRenderedText } from './markdownSourcePreservation'
 
 describe('Markdown source preservation', () => {
   it('keeps application marker lines when the rich editor omits comments', () => {
@@ -15,5 +15,29 @@ describe('Markdown source preservation', () => {
   it('keeps a newly inserted trailing line inside a closing tag', () => {
     const previous = '<!-- therapy -->\nlast line\n<!-- /therapy -->'
     expect(preserveMarkerLines(previous, 'last line\n')).toBe('<!-- therapy -->\nlast line\n\n<!-- /therapy -->')
+  })
+})
+
+describe('Rendered text to source line matching', () => {
+  it('matches a rendered line back to its plain source line', () => {
+    expect(sourceLineForRenderedText('first\nsecond line\nthird', 'second line')).toBe(1)
+  })
+
+  it('matches a rendered line whose source is a Markdown link', () => {
+    const source = '[💡](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=1b043d673ce2b8cc3a9bcd133823ca59&t=7PTRd5wANKZwUrA9t-PtC8c0HaBxM1ER6Aj98vM2j5g) Transcribe with a better voice model.'
+    expect(sourceLineForRenderedText(source, '💡 Transcribe with a better voice model.')).toBe(0)
+  })
+
+  it('matches a muted line whose source is a Markdown link', () => {
+    const source = '%% [💡](https://example.com/recording) Transcribe with a better voice model.'
+    expect(sourceLineForRenderedText(source, '%% 💡 Transcribe with a better voice model.')).toBe(0)
+  })
+
+  it('reduces images to their alt text', () => {
+    expect(comparableLineText('![diagram](https://example.com/a.png) after')).toBe('diagram after')
+  })
+
+  it('strips list, heading, and emphasis markers', () => {
+    expect(comparableLineText('- [ ] **buy** _milk_')).toBe('buy milk')
   })
 })

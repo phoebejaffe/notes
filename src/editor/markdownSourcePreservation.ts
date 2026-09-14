@@ -1,3 +1,26 @@
+// Reduces a Markdown source line to roughly what it renders as in the editor,
+// so rendered DOM text can be matched back to its source line. Links and
+// images resolve to their label text; emphasis markers and HTML are stripped.
+export function comparableLineText(line: string) {
+  return line
+    .replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '')
+    .replace(/^\[[ xX]\]\s+/u, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, '$1')
+    .replace(/<[^>]+>/gu, '')
+    .replace(/[\\*_`]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+export function sourceLineForRenderedText(source: string, renderedText: string) {
+  const normalized = renderedText.replace(/\s+/gu, ' ').trim()
+  if (!normalized) return -1
+  return source.split('\n').findIndex((line) => {
+    const sourceText = comparableLineText(line)
+    return sourceText && (sourceText.includes(normalized) || normalized.includes(sourceText))
+  })
+}
+
 function isMarkerLine(line: string) {
   return /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line)
 }
