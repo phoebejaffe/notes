@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
 import { $createParagraphNode, $getNodeByKey, $getRoot, $setSelection, type LexicalEditor } from 'lexical'
 import { parseMarkdown, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { commentsToTagDirectives } from './tagSyntax'
+import { comparableLineText, sourceLineForRenderedText } from './markdownSourcePreservation'
 import { $isTagBlockNode } from './TagBlockNode'
 import { AudioPlayerPopover } from './AudioPlayerPopover'
 import type { MdxNotesEditorProps } from './editorTypes'
@@ -86,7 +87,7 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
       const blockText = block.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
       const lineIndex = lines.findIndex((line, index) => {
         if (index < sourceSearchStart || !line.trim() || /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line) || /^\s*:::tag\s*\{[^}]*\}\s*$/u.test(line) || /^\s*:::\s*$/u.test(line)) return false
-        const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/^\[[ xX]\]\s+/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
+        const sourceText = comparableLineText(line)
         return sourceText && (blockText.includes(sourceText) || sourceText.includes(blockText))
       })
       if (lineIndex < 0) return
@@ -146,15 +147,6 @@ function selectedSourceRange(source: string, selectedText: string) {
   const from = source.indexOf(selectedText)
   if (from < 0) return undefined
   return { from, to: from + selectedText.length }
-}
-
-function sourceLineForRenderedText(source: string, renderedText: string) {
-  const normalized = renderedText.replace(/\s+/gu, ' ').trim()
-  if (!normalized) return -1
-  return source.split('\n').findIndex((line) => {
-    const sourceText = line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)/u, '').replace(/^\[[ xX]\]\s+/u, '').replace(/<[^>]+>/gu, '').replace(/[\\*_`]/gu, '').replace(/\s+/gu, ' ').trim()
-    return sourceText && (sourceText.includes(normalized) || normalized.includes(sourceText))
-  })
 }
 
 function restoreEditorSelection(root: HTMLElement | null, selectedText: string, blockText: string) {
@@ -601,6 +593,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       return
     }
   }
+
+  // Keep the raw textarea as tall as its content, like the rich editor.
+  useLayoutEffect(() => {
+    const textarea = hostRef.current?.querySelector<HTMLTextAreaElement>('.notes-raw-editor')
+    if (!rawTextMode || !textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${textarea.scrollHeight}px`
+  }, [rawTextMode, value])
 
   if (rawTextMode) return <div className="notes-mdx-editor notes-raw-mode" ref={hostRef}><textarea className="notes-raw-editor" value={value} autoFocus={autoFocus} spellCheck={false} onKeyDown={(event) => {
     if (event.key === '"' && !event.metaKey && !event.ctrlKey && !event.altKey && event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) {

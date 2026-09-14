@@ -173,7 +173,7 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .modal-backdrop { background: #00000088; }
 .notes-mdx-editor { position: relative; min-width: 0; cursor: text; overflow: hidden; border: 1px solid #e1dbd3; border-radius: 5px; font: 14px/1.65 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 .notes-mdx-editor:focus-within { border-color: #e1dbd3; outline: none; box-shadow: none; }
-.notes-raw-editor { display: block; width: 100%; min-height: 50px; resize: vertical; padding: 4px 6px; border: 0; outline: none; color: inherit; background: transparent; font: inherit; line-height: inherit; white-space: pre-wrap; }
+.notes-raw-editor { display: block; width: 100%; min-height: 50px; overflow: hidden; resize: none; padding: 4px 6px; border: 0; outline: none; color: inherit; background: transparent; font: inherit; line-height: inherit; white-space: pre-wrap; }
 .raw-mode-banner { position: fixed; z-index: 11; top: 42px; right: 0; left: 0; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; padding: 4px 10px; color: #62506f; background: #f4eff7; border-bottom: 1px solid #d8cbe0; font-size: 11px; }
 .raw-mode-banner button { padding: 0; border: 0; color: #806790; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
 .app-shell:not(.web-shell) .raw-mode-banner { top: 80px; }
