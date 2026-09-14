@@ -177,7 +177,8 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const wantsCtrl = parts.includes('ctrl')
   const wantsAlt = parts.includes('alt') || parts.includes('option')
   const wantsShift = parts.includes('shift')
-  const modifierMatches = wantsMod ? (/mac/i.test(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) : wantsCtrl ? event.ctrlKey && !event.metaKey : !event.ctrlKey && !event.metaKey
+  const isMac = /mac/i.test(navigator.platform) || /macintosh|mac os/i.test(navigator.userAgent)
+  const modifierMatches = wantsMod ? (isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) : wantsCtrl ? event.ctrlKey && !event.metaKey : !event.ctrlKey && !event.metaKey
   const keyMatches = event.key.toLowerCase() === key || ((key === '/' || key === '?') && event.code === 'Slash')
   return keyMatches && modifierMatches && (wantsAlt ? event.altKey : !event.altKey) && (wantsShift ? event.shiftKey : !event.shiftKey)
 }
@@ -453,9 +454,11 @@ function NotesApp() {
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
-      if (matchesShortcut(event, preferences.shortcuts.help)) {
+      const helpShortcut = matchesShortcut(event, preferences.shortcuts.help) || (event.code === 'Slash' && event.shiftKey && !event.altKey && !event.ctrlKey && (event.metaKey || /mac/i.test(navigator.platform)))
+      if (helpShortcut) {
         event.preventDefault()
         setShortcutHelpOpen(true)
+        setOnboardingOpen(false)
         setMenuOpen(false)
         return
       }
