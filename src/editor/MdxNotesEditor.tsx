@@ -6,6 +6,7 @@ import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { commentsToTagDirectives } from './tagSyntax'
 import { comparableLineText, sourceLineForRenderedText } from './markdownSourcePreservation'
+import { sourceLineRangeForRenderedSelection } from './markdownSourcePreservation'
 import { $isTagBlockNode } from './TagBlockNode'
 import { AudioPlayerPopover } from './AudioPlayerPopover'
 import type { MdxNotesEditorProps } from './editorTypes'
@@ -145,8 +146,13 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
 function selectedSourceRange(source: string, selectedText: string) {
   if (!selectedText) return undefined
   const from = source.indexOf(selectedText)
-  if (from < 0) return undefined
-  return { from, to: from + selectedText.length }
+  if (from >= 0) return { from, to: from + selectedText.length }
+  const lineRange = sourceLineRangeForRenderedSelection(source, selectedText)
+  if (!lineRange) return undefined
+  const lines = source.split('\n')
+  const lineStart = lines.slice(0, lineRange.startLine).reduce((offset, line) => offset + line.length + 1, 0)
+  const lineEnd = lineStart + lines.slice(lineRange.startLine, lineRange.endLine + 1).join('\n').length
+  return { from: lineStart, to: lineEnd }
 }
 
 function restoreEditorSelection(root: HTMLElement | null, selectedText: string, blockText: string, caretOffset: number) {

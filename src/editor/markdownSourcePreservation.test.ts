@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { comparableLineText, preserveMarkerLines, sourceLineForRenderedText } from './markdownSourcePreservation'
+import { sourceLineRangeForRenderedSelection } from './markdownSourcePreservation'
 
 describe('Markdown source preservation', () => {
   it('keeps application marker lines when the rich editor omits comments', () => {
@@ -26,6 +27,10 @@ describe('Rendered text to source line matching', () => {
   it('matches a rendered line whose source is a Markdown link', () => {
     const source = '[💡](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=1b043d673ce2b8cc3a9bcd133823ca59&t=7PTRd5wANKZwUrA9t-PtC8c0HaBxM1ER6Aj98vM2j5g) Transcribe with a better voice model.'
     expect(sourceLineForRenderedText(source, '💡 Transcribe with a better voice model.')).toBe(0)
+  })
+  it('maps a multi-line rendered selection to its full source line range', () => {
+    const source = '- first line\n- second line\n- third line\nafter'
+    expect(sourceLineRangeForRenderedSelection(source, 'first line\nsecond line\nthird line')).toEqual({ startLine: 0, endLine: 2 })
   })
 
   it('matches a muted line whose source is a Markdown link', () => {

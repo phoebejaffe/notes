@@ -21,6 +21,27 @@ export function sourceLineForRenderedText(source: string, renderedText: string) 
   })
 }
 
+export function sourceLineRangeForRenderedSelection(source: string, renderedText: string) {
+  const normalized = renderedText.replace(/\s+/gu, ' ').trim()
+  if (!normalized) return undefined
+  const lines = source.split('\n')
+  const matchedLines: number[] = []
+  let searchStart = 0
+  lines.forEach((line, index) => {
+    const sourceText = comparableLineText(line)
+    if (!sourceText) return
+    const matchStart = normalized.indexOf(sourceText, searchStart)
+    if (matchStart < 0) return
+    matchedLines.push(index)
+    searchStart = matchStart + sourceText.length
+  })
+  if (matchedLines.length > 1) return { startLine: matchedLines[0], endLine: matchedLines.at(-1)! }
+  const tokens = normalized.split(' ').filter(Boolean)
+  if (!tokens.length) return undefined
+  const startLine = lines.findIndex((line) => comparableLineText(line).includes(tokens[0]) || tokens[0].includes(comparableLineText(line)))
+  const endLine = lines.findLastIndex((line, index) => index >= startLine && (comparableLineText(line).includes(tokens.at(-1)!) || tokens.at(-1)!.includes(comparableLineText(line))))
+  return startLine >= 0 && endLine >= startLine ? { startLine, endLine } : undefined
+}
 function isMarkerLine(line: string) {
   return /^\s*(?:%%\s+)?<!--[\s\S]*-->\s*$/u.test(line)
 }

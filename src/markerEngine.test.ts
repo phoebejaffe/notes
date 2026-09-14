@@ -38,6 +38,11 @@ describe('marker engine', () => {
     expect(result.source).toBe('one\n<!-- therapy -->\ntwo\n<!-- /therapy -->\nthree')
   })
 
+  it('wraps every line in a multi-line tag selection', () => {
+    const result = addTagToRange('one\ntwo\nthree\nafter', 0, 2, 'therapy')
+    expect(result.source).toBe('<!-- therapy -->\none\ntwo\nthree\n<!-- /therapy -->\nafter')
+  })
+
   it('matches one-word tags when filtering a tagged range', () => {
     const source = '<!-- work -->\n\n<!-- /work -->'
     expect(sourceMatchesFilter(source, ['work'], false)).toBe(true)
