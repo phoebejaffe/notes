@@ -149,7 +149,7 @@ function selectedSourceRange(source: string, selectedText: string) {
   return { from, to: from + selectedText.length }
 }
 
-function restoreEditorSelection(root: HTMLElement | null, selectedText: string, blockText: string) {
+function restoreEditorSelection(root: HTMLElement | null, selectedText: string, blockText: string, caretOffset: number) {
   const content = root?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
   if (!content || (!selectedText && !blockText)) return
   const target = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')].find((element) => {
@@ -160,7 +160,27 @@ function restoreEditorSelection(root: HTMLElement | null, selectedText: string, 
   const selection = window.getSelection()
   if (!selection) return
   const range = document.createRange()
-  range.selectNodeContents(target)
+  if (selectedText) {
+    range.selectNodeContents(target)
+  } else {
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    let remaining = Math.max(0, caretOffset)
+    while (node) {
+      const length = node.textContent?.length ?? 0
+      if (remaining <= length) {
+        range.setStart(node, remaining)
+        range.collapse(true)
+        break
+      }
+      remaining -= length
+      node = walker.nextNode()
+    }
+    if (!node) {
+      range.selectNodeContents(target)
+      range.collapse(false)
+    }
+  }
   selection.removeAllRanges()
   selection.addRange(range)
   target.closest<HTMLElement>('[contenteditable="true"]')?.focus()
@@ -248,6 +268,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const onChangeRef = useRef(onChange)
   const selectedTextRef = useRef('')
   const caretBlockTextRef = useRef('')
+  const caretOffsetRef = useRef(0)
   const userInteractedRef = useRef(false)
   const suppressChangeRef = useRef(false)
   const [selectionState, setSelectionState] = useState({ text: '', blockText: '' })
@@ -258,13 +279,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const commit = useMemo(() => (markdown: string) => {
     const selectedText = selectedTextRef.current
     const blockText = caretBlockTextRef.current
+    const caretOffset = caretOffsetRef.current
     valueRef.current = markdown
     suppressChangeRef.current = true
     editorRef.current?.setMarkdown(markdown)
     onChangeRef.current(markdown)
     window.requestAnimationFrame(() => {
       suppressChangeRef.current = false
-      restoreEditorSelection(hostRef.current, selectedText, blockText)
+      restoreEditorSelection(hostRef.current, selectedText, blockText, caretOffset)
     })
   }, [])
 
@@ -371,9 +393,16 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (!selection || !content?.contains(selection.anchorNode)) return
       const selectedText = selection.toString()
       const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
-      const blockText = anchor?.closest('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')?.textContent ?? ''
+      const block = anchor?.closest<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')
+      const blockText = block?.textContent ?? ''
       selectedTextRef.current = selectedText
       caretBlockTextRef.current = blockText
+      if (block && selection.isCollapsed) {
+        const caretRange = document.createRange()
+        caretRange.selectNodeContents(block)
+        caretRange.setEnd(selection.anchorNode!, selection.anchorOffset)
+        caretOffsetRef.current = caretRange.toString().length
+      }
       setSelectionState({ text: selectedText, blockText })
     }
     document.addEventListener('selectionchange', updateSelection)
@@ -394,10 +423,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
     frame = window.requestAnimationFrame(apply)
     const retry = window.setTimeout(apply, 600)
+    const observer = new MutationObserver(() => {
+      const sourceChecklistCount = valueRef.current.split('\n').filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+/u.test(line)).length
+      const renderedChecklistCount = hostRef.current?.querySelectorAll('.notes-checklist-checkbox').length ?? 0
+      if (sourceChecklistCount > renderedChecklistCount) applyChecklistWidgets(hostRef.current, () => valueRef.current, commit)
+    })
+    if (hostRef.current) observer.observe(hostRef.current, { childList: true, subtree: true })
     return () => {
       cancelled = true
       window.cancelAnimationFrame(frame)
       window.clearTimeout(retry)
+      observer.disconnect()
     }
   }, [commit, hideMutedLines, tagColors, value])
 
@@ -462,6 +498,29 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (startLine >= 0 && endLine >= startLine) commit(moveLines(source, startLine, endLine, direction))
     },
   }), [activeTags, commit, recentTags, selectionLines, selectionState, showUndoRedo])
+
+  useEffect(() => {
+    if (rawTextMode) return
+    const host = hostRef.current
+    if (!host) return
+    const handleShortcut = (event: globalThis.KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey
+      const taskShortcutKey = taskShortcut.toLowerCase().split('-').at(-1)
+      if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === taskShortcutKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        actions.toggleChecklist()
+        return
+      }
+      if (event.altKey && !modifier && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        event.preventDefault()
+        event.stopPropagation()
+        actions.moveLines(event.key === 'ArrowUp' ? 'up' : 'down')
+      }
+    }
+    host.addEventListener('keydown', handleShortcut, true)
+    return () => host.removeEventListener('keydown', handleShortcut, true)
+  }, [actions, rawTextMode, taskShortcut])
 
   function openExternalLink(href: string) {
     if ('__TAURI_INTERNALS__' in window) {
@@ -560,20 +619,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }
 
   function handleEditorKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const modifier = event.metaKey || event.ctrlKey
-    const taskShortcutParts = taskShortcut.toLowerCase().split('-')
-    const taskShortcutKey = taskShortcutParts.at(-1)
-    if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === taskShortcutKey) {
-      event.preventDefault()
-      actions.toggleChecklist()
-      return
-    }
-    if (event.altKey && !modifier && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-      event.preventDefault()
-      actions.moveLines(event.key === 'ArrowUp' ? 'up' : 'down')
-      return
-    }
-    if (modifier && event.key === '/') {
+    if ((event.metaKey || event.ctrlKey) && event.key === '/') {
       event.preventDefault()
       actions.toggleMute()
       return
@@ -644,14 +690,24 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
     if (event.altKey && !modifier && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       event.preventDefault()
-      const startLine = target.value.slice(0, target.selectionStart).split('\n').length - 1
-      const endLine = target.value.slice(0, target.selectionEnd).split('\n').length - 1
+      const selectionStart = target.selectionStart
+      const selectionEnd = target.selectionEnd
+      const lines = target.value.split('\n')
+      const startLine = target.value.slice(0, selectionStart).split('\n').length - 1
+      const endLine = target.value.slice(0, selectionEnd).split('\n').length - 1
       const direction = event.key === 'ArrowUp' ? 'up' : 'down'
+      const adjacentLine = direction === 'up' ? startLine - 1 : endLine + 1
+      const delta = adjacentLine < 0 || adjacentLine >= lines.length
+        ? 0
+        : direction === 'up' ? -(lines[adjacentLine].length + 1) : lines[adjacentLine].length + 1
       const nextValue = moveLines(target.value, startLine, endLine, direction)
       if (nextValue !== target.value) {
         valueRef.current = nextValue
         onChangeRef.current(nextValue)
-        window.requestAnimationFrame(() => target.focus())
+        window.requestAnimationFrame(() => {
+          target.focus()
+          target.setSelectionRange(selectionStart + delta, selectionEnd + delta)
+        })
       }
       return
     }
