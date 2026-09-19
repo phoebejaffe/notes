@@ -7,12 +7,13 @@ import { MdxNotesEditor } from './editor/MdxNotesEditor'
 import { commentsToTagDirectives } from './editor/tagSyntax'
 import { parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
-import { listDailyDocuments, replaceDailyDocuments, saveDailyDocument } from './storage'
+import { clearSyncBases, listDailyDocuments, replaceDailyDocuments, saveDailyDocument, type DailyDocument, type DocumentSyncBase } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
 import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
 import { diffLines } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
 import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'
+import { mergeMarkdown } from './markdownMerge'
 import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
 import type { User } from 'firebase/auth'
 import { MarkdownPrototypePage } from './prototype/MarkdownPrototypePage'
@@ -243,7 +244,12 @@ function NotesApp() {
   const [syncConflicts, setSyncConflicts] = useState<SyncConflict[]>([])
   const documentUpdatedAtRef = useRef<Record<string, number>>({})
   const documentsRef = useRef<Record<string, string>>({})
-  const remoteUpdateRef = useRef(false)
+  const syncBasesRef = useRef<Record<string, DocumentSyncBase>>({})
+  const latestRemoteRef = useRef<Record<string, DailyDocument>>({})
+  const dirtyDaysRef = useRef(new Set<string>())
+  const uploadingDaysRef = useRef(new Set<string>())
+  const handleRemoteDocumentsRef = useRef<(documents: DailyDocument[]) => void>(() => undefined)
+  const uploadPendingDocumentsRef = useRef<() => Promise<void>>(async () => undefined)
   const streamEndRef = useRef<HTMLDivElement>(null)
   const todayRef = useRef<HTMLElement>(null)
   const recoveryWarningNotifiedRef = useRef(false)
@@ -375,6 +381,8 @@ function NotesApp() {
     listDailyDocuments().then((stored) => {
       const savedDocuments = Object.fromEntries(stored.map((document) => [document.day, document.markdown]))
       documentUpdatedAtRef.current = Object.fromEntries(stored.map((document) => [document.day, document.updatedAt]))
+      syncBasesRef.current = Object.fromEntries(stored.flatMap((document) => document.syncBase ? [[document.day, document.syncBase]] : []))
+      dirtyDaysRef.current = new Set(stored.filter((document) => document.syncBase && document.markdown !== document.syncBase.markdown).map((document) => document.day))
       if (!(today in savedDocuments)) {
         savedDocuments[today] = ''
       }
@@ -607,45 +615,221 @@ function NotesApp() {
     if (!loaded) return
     const timer = window.setTimeout(() => {
       setSaveState('saving')
-      Promise.all(Object.entries(documents).filter(([, markdown]) => markdown).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: documentUpdatedAtRef.current[day] ?? Date.now() }))).then(() => setSaveState('saved')).catch(() => setSaveState('saved'))
+      Promise.all(Object.entries(documents).filter(([, markdown]) => markdown).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: documentUpdatedAtRef.current[day] ?? currentTimestamp() }))).then(() => setSaveState('saved')).catch(() => setSaveState('saved'))
     }, 350)
     return () => window.clearTimeout(timer)
   }, [documents, loaded])
 
   useEffect(() => {
     if (!loaded || !firebaseUser || !dataKey) return
-    return watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => {
-      const updates = remoteDocuments.filter((document) => document.updatedAt > (documentUpdatedAtRef.current[document.day] ?? 0))
-      if (!updates.length) return
-      remoteUpdateRef.current = true
-      updates.forEach((document) => { documentUpdatedAtRef.current[document.day] = document.updatedAt })
-      setDocuments((current) => ({ ...current, ...Object.fromEntries(updates.map((document) => [document.day, document.markdown])) }))
-      setSyncState('ready')
-      setSyncMessage('Cloud changes received.')
-    }, (error) => {
+    return watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteDocumentsRef.current(remoteDocuments), (error) => {
       setSyncState('error')
       setSyncMessage(error.message || 'Realtime sync failed.')
     })
   }, [dataKey, firebaseUser, loaded])
 
   useEffect(() => {
-    if (!loaded || !firebaseUser || !dataKey) return
-    if (remoteUpdateRef.current) {
-      remoteUpdateRef.current = false
+    if (!loaded || !firebaseUser || !dataKey || !isOnline) return
+    const timer = window.setTimeout(() => { void uploadPendingDocumentsRef.current() }, 600)
+    return () => window.clearTimeout(timer)
+  }, [dataKey, documents, firebaseUser, isOnline, loaded])
+
+  function setDocumentMarkdown(day: string, markdown: string) {
+    documentsRef.current = { ...documentsRef.current, [day]: markdown }
+    setDocuments((current) => ({ ...current, [day]: markdown }))
+  }
+
+  function persistLocalDocument(day: string, markdown: string, updatedAt: number, syncBase = syncBasesRef.current[day]) {
+    void saveDailyDocument({ day, markdown, updatedAt, syncBase }).catch(() => undefined)
+  }
+
+  function showSyncConflict(conflict: SyncConflict) {
+    setSyncConflicts((current) => [...current.filter((item) => item.day !== conflict.day), conflict])
+    setConflictDrafts((current) => ({ ...current, [conflict.day]: current[conflict.day] ?? conflict.local.markdown }))
+    setSyncState('ready')
+    setSyncMessage('Cloud changes need review.')
+  }
+
+  function clearSyncConflict(day: string) {
+    setSyncConflicts((current) => current.filter((item) => item.day !== day))
+    setConflictDrafts((current) => {
+      const next = { ...current }
+      delete next[day]
+      return next
+    })
+  }
+
+  function handleRemoteDocuments(remoteDocuments: DailyDocument[]) {
+    const remoteDays = new Set(remoteDocuments.map((document) => document.day))
+    remoteDocuments.forEach((remote) => {
+      const latestRemote = latestRemoteRef.current[remote.day]
+      if (latestRemote && remote.markdown === latestRemote.markdown && remote.updatedAt === latestRemote.updatedAt) return
+      latestRemoteRef.current[remote.day] = remote
+      const base = syncBasesRef.current[remote.day]
+      if (base && remote.markdown === base.markdown && remote.updatedAt === base.updatedAt) return
+
+      const currentMarkdown = documentsRef.current[remote.day] ?? ''
+      const syncBase = { markdown: remote.markdown, updatedAt: remote.updatedAt }
+      const localDiverged = base ? currentMarkdown !== base.markdown : Boolean(currentMarkdown) && currentMarkdown !== remote.markdown
+      if (!localDiverged) {
+        syncBasesRef.current[remote.day] = syncBase
+        dirtyDaysRef.current.delete(remote.day)
+        documentUpdatedAtRef.current[remote.day] = remote.updatedAt
+        if (currentMarkdown !== remote.markdown) setDocumentMarkdown(remote.day, remote.markdown)
+        persistLocalDocument(remote.day, remote.markdown, remote.updatedAt, syncBase)
+        clearSyncConflict(remote.day)
+        return
+      }
+
+      if (!base) {
+        dirtyDaysRef.current.add(remote.day)
+        persistLocalDocument(remote.day, currentMarkdown, documentUpdatedAtRef.current[remote.day] ?? currentTimestamp())
+        showSyncConflict({
+          day: remote.day,
+          local: { day: remote.day, markdown: currentMarkdown, updatedAt: documentUpdatedAtRef.current[remote.day] ?? currentTimestamp(), syncBase: base },
+          remote,
+          base,
+        })
+        return
+      }
+
+      const merged = mergeMarkdown(base.markdown, currentMarkdown, remote.markdown)
+      if (merged.status === 'conflict') {
+        dirtyDaysRef.current.add(remote.day)
+        persistLocalDocument(remote.day, currentMarkdown, documentUpdatedAtRef.current[remote.day] ?? currentTimestamp())
+        showSyncConflict({
+          day: remote.day,
+          local: { day: remote.day, markdown: currentMarkdown, updatedAt: documentUpdatedAtRef.current[remote.day] ?? currentTimestamp(), syncBase: base },
+          remote,
+          base,
+        })
+        return
+      }
+
+      syncBasesRef.current[remote.day] = syncBase
+      const updatedAt = merged.markdown === remote.markdown ? remote.updatedAt : currentTimestamp()
+      documentUpdatedAtRef.current[remote.day] = updatedAt
+      setDocumentMarkdown(remote.day, merged.markdown)
+      if (merged.markdown === remote.markdown) dirtyDaysRef.current.delete(remote.day)
+      else dirtyDaysRef.current.add(remote.day)
+      persistLocalDocument(remote.day, merged.markdown, updatedAt, syncBase)
+      clearSyncConflict(remote.day)
+    })
+
+    Object.keys(documentsRef.current).forEach((day) => {
+      if (!remoteDays.has(day) && documentsRef.current[day]) dirtyDaysRef.current.add(day)
+    })
+    if (remoteDocuments.length) {
+      setSyncState('ready')
+      setSyncMessage('Cloud changes received.')
+    }
+    void uploadPendingDocumentsRef.current()
+  }
+
+  async function uploadPendingDocuments() {
+    if (!firebaseUser || !dataKey || !isOnline) return
+    const days = [...dirtyDaysRef.current].filter((day) => !uploadingDaysRef.current.has(day))
+    if (!days.length) return
+    setSyncState('working')
+    const outcomes = await Promise.all(days.map((day) => uploadPendingDocument(day)))
+    if (outcomes.includes('failed')) {
+      setSyncState('error')
+      setSyncMessage('Realtime sync failed.')
       return
     }
-    const timer = window.setTimeout(() => {
-      const localDocuments = Object.entries(documents).filter(([, markdown]) => markdown).map(([day, markdown]) => ({ day, markdown, updatedAt: documentUpdatedAtRef.current[day] ?? Date.now() }))
-      void Promise.all(localDocuments.map((document) => uploadEncryptedDocument(firebaseUser.uid, document, dataKey))).then(() => {
-        setSyncState('ready')
-        setSyncMessage('Changes synced.')
-      }).catch((error: unknown) => {
-        setSyncState('error')
-        setSyncMessage(error instanceof Error ? error.message : 'Realtime sync failed.')
+    if (outcomes.includes('conflict')) {
+      setSyncState('ready')
+      setSyncMessage('Cloud changes need review.')
+    } else {
+      setSyncState('ready')
+      setSyncMessage('Changes synced.')
+    }
+    if (outcomes.includes('retry')) window.setTimeout(() => { void uploadPendingDocumentsRef.current() }, 0)
+  }
+
+  async function uploadPendingDocument(day: string): Promise<'written' | 'conflict' | 'failed' | 'retry'> {
+    if (!firebaseUser || !dataKey) return 'failed'
+    uploadingDaysRef.current.add(day)
+    const submitted: DailyDocument = {
+      day,
+      markdown: documentsRef.current[day] ?? '',
+      updatedAt: documentUpdatedAtRef.current[day] ?? currentTimestamp(),
+      syncBase: syncBasesRef.current[day],
+    }
+    try {
+      const result = await uploadEncryptedDocument(firebaseUser.uid, submitted, dataKey)
+      if (result.status === 'conflict') {
+        handleUploadConflict(result.conflict)
+        return 'conflict'
+      }
+      return handleCommittedUpload(submitted, result.document)
+    } catch {
+      dirtyDaysRef.current.add(day)
+      return 'failed'
+    } finally {
+      uploadingDaysRef.current.delete(day)
+    }
+  }
+
+  function handleCommittedUpload(submitted: DailyDocument, committed: DailyDocument) {
+    const committedBase = { markdown: committed.markdown, updatedAt: committed.updatedAt }
+    latestRemoteRef.current[committed.day] = committed
+    const currentMarkdown = documentsRef.current[committed.day] ?? ''
+    if (currentMarkdown === submitted.markdown) {
+      syncBasesRef.current[committed.day] = committedBase
+      documentUpdatedAtRef.current[committed.day] = committed.updatedAt
+      setDocumentMarkdown(committed.day, committed.markdown)
+      dirtyDaysRef.current.delete(committed.day)
+      persistLocalDocument(committed.day, committed.markdown, committed.updatedAt, committedBase)
+      clearSyncConflict(committed.day)
+      return 'written' as const
+    }
+
+    const rebased = mergeMarkdown(submitted.markdown, currentMarkdown, committed.markdown)
+    if (rebased.status === 'conflict') {
+      const submittedBase = { markdown: submitted.markdown, updatedAt: submitted.updatedAt }
+      syncBasesRef.current[committed.day] = submittedBase
+      dirtyDaysRef.current.add(committed.day)
+      persistLocalDocument(committed.day, currentMarkdown, documentUpdatedAtRef.current[committed.day] ?? currentTimestamp(), submittedBase)
+      showSyncConflict({
+        day: committed.day,
+        local: { day: committed.day, markdown: currentMarkdown, updatedAt: documentUpdatedAtRef.current[committed.day] ?? currentTimestamp(), syncBase: submittedBase },
+        remote: committed,
+        base: submittedBase,
       })
-    }, 600)
-    return () => window.clearTimeout(timer)
-  }, [dataKey, documents, firebaseUser, loaded])
+      return 'conflict' as const
+    }
+
+    syncBasesRef.current[committed.day] = committedBase
+    const updatedAt = rebased.markdown === committed.markdown ? committed.updatedAt : currentTimestamp()
+    documentUpdatedAtRef.current[committed.day] = updatedAt
+    setDocumentMarkdown(committed.day, rebased.markdown)
+    if (rebased.markdown === committed.markdown) dirtyDaysRef.current.delete(committed.day)
+    else dirtyDaysRef.current.add(committed.day)
+    persistLocalDocument(committed.day, rebased.markdown, updatedAt, committedBase)
+    clearSyncConflict(committed.day)
+    return rebased.markdown === committed.markdown ? 'written' as const : 'retry' as const
+  }
+
+  function handleUploadConflict(conflict: SyncConflict) {
+    const currentMarkdown = documentsRef.current[conflict.day] ?? conflict.local.markdown
+    const mergeBase = conflict.base ?? conflict.local.syncBase
+    latestRemoteRef.current[conflict.day] = conflict.remote
+    if (mergeBase) syncBasesRef.current[conflict.day] = mergeBase
+    else delete syncBasesRef.current[conflict.day]
+    dirtyDaysRef.current.add(conflict.day)
+    persistLocalDocument(conflict.day, currentMarkdown, documentUpdatedAtRef.current[conflict.day] ?? currentTimestamp(), mergeBase)
+    showSyncConflict({
+      ...conflict,
+      local: { day: conflict.day, markdown: currentMarkdown, updatedAt: documentUpdatedAtRef.current[conflict.day] ?? currentTimestamp(), syncBase: mergeBase },
+      remote: conflict.remote,
+    })
+  }
+
+  useEffect(() => {
+    handleRemoteDocumentsRef.current = handleRemoteDocuments
+    uploadPendingDocumentsRef.current = uploadPendingDocuments
+  })
 
   const performBackup = useCallback(async () => {
     const directory = backupDirectoryRef.current
@@ -707,7 +891,8 @@ function NotesApp() {
 
   function updateSource(day: string, markdown: string) {
     documentUpdatedAtRef.current[day] = currentTimestamp()
-    setDocuments((current) => ({ ...current, [day]: markdown }))
+    dirtyDaysRef.current.add(day)
+    setDocumentMarkdown(day, markdown)
   }
 
   async function generateRecoveryPhrase() {
@@ -780,8 +965,25 @@ function NotesApp() {
       await Promise.all(Object.entries(documents).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() })))
       const localDocuments = await listDailyDocuments()
       const result = await syncDocuments(firebaseUser.uid, localDocuments, dataKey)
-      result.documents.forEach((document) => { documentUpdatedAtRef.current[document.day] = document.updatedAt })
-      setDocuments(Object.fromEntries(result.documents.map((document) => [document.day, document.markdown])))
+      dirtyDaysRef.current.clear()
+      result.documents.forEach((document) => {
+        documentUpdatedAtRef.current[document.day] = document.updatedAt
+        if (document.syncBase) {
+          syncBasesRef.current[document.day] = document.syncBase
+          latestRemoteRef.current[document.day] = document
+        }
+      })
+      result.conflicts.forEach((conflict) => {
+        const mergeBase = conflict.base ?? conflict.local.syncBase
+        latestRemoteRef.current[conflict.day] = conflict.remote
+        if (mergeBase) syncBasesRef.current[conflict.day] = mergeBase
+        else delete syncBasesRef.current[conflict.day]
+        dirtyDaysRef.current.add(conflict.day)
+        persistLocalDocument(conflict.day, conflict.local.markdown, conflict.local.updatedAt, mergeBase)
+      })
+      const nextDocuments = Object.fromEntries(result.documents.map((document) => [document.day, document.markdown]))
+      documentsRef.current = nextDocuments
+      setDocuments(nextDocuments)
       setSyncConflicts(result.conflicts)
       setConflictDrafts(Object.fromEntries(result.conflicts.map((conflict) => [conflict.day, conflict.local.markdown])))
       setSyncState('ready')
@@ -798,6 +1000,10 @@ function NotesApp() {
     setSyncState('working')
     try {
       await deleteRemoteUserData(firebaseUser.uid)
+      syncBasesRef.current = {}
+      latestRemoteRef.current = {}
+      dirtyDaysRef.current.clear()
+      await clearSyncBases()
       setDataKey(undefined)
       setRecoveryPhrase('')
       localStorage.removeItem(recoveryPhraseStorageKey(firebaseUser.uid))
@@ -813,13 +1019,32 @@ function NotesApp() {
 
   async function resolveConflict(conflict: SyncConflict, choice: 'local' | 'remote' | 'append' | 'merged') {
     if (!firebaseUser || !dataKey) return
+    const syncBase = { markdown: conflict.remote.markdown, updatedAt: conflict.remote.updatedAt }
     const markdown = choice === 'local' ? conflict.local.markdown : choice === 'remote' ? conflict.remote.markdown : choice === 'merged' ? conflictDrafts[conflict.day] ?? conflict.local.markdown : `${conflict.remote.markdown}${conflict.remote.markdown.endsWith('\\n') ? '' : '\\n'}${conflict.local.markdown}`
-    const document = { day: conflict.day, markdown, updatedAt: currentTimestamp() }
     setSyncState('working')
     try {
-      await uploadEncryptedDocument(firebaseUser.uid, document, dataKey)
-      documentUpdatedAtRef.current[document.day] = document.updatedAt
-      setDocuments((current) => ({ ...current, [document.day]: document.markdown }))
+      if (choice === 'remote') {
+        syncBasesRef.current[conflict.day] = syncBase
+        latestRemoteRef.current[conflict.day] = conflict.remote
+        dirtyDaysRef.current.delete(conflict.day)
+        documentUpdatedAtRef.current[conflict.day] = conflict.remote.updatedAt
+        setDocumentMarkdown(conflict.day, conflict.remote.markdown)
+        persistLocalDocument(conflict.day, conflict.remote.markdown, conflict.remote.updatedAt, syncBase)
+      } else {
+        const document = { day: conflict.day, markdown, updatedAt: currentTimestamp(), syncBase }
+        const result = await uploadEncryptedDocument(firebaseUser.uid, document, dataKey, { strategy: 'replace' })
+        if (result.status === 'conflict') {
+          handleUploadConflict(result.conflict)
+          return
+        }
+        const committed = result.document
+        syncBasesRef.current[conflict.day] = committed.syncBase ?? { markdown: committed.markdown, updatedAt: committed.updatedAt }
+        latestRemoteRef.current[conflict.day] = committed
+        dirtyDaysRef.current.delete(conflict.day)
+        documentUpdatedAtRef.current[conflict.day] = committed.updatedAt
+        setDocumentMarkdown(conflict.day, committed.markdown)
+        persistLocalDocument(conflict.day, committed.markdown, committed.updatedAt, syncBasesRef.current[conflict.day])
+      }
       setSyncConflicts((current) => current.filter((currentConflict) => currentConflict.day !== conflict.day))
       setConflictDrafts((current) => { const next = { ...current }; delete next[conflict.day]; return next })
       setSyncState('ready')
@@ -838,7 +1063,16 @@ function NotesApp() {
     const oldTag = tagToRename.trim().normalize('NFC')
     const newTag = renamedTag.trim().normalize('NFC')
     if (!oldTag || !newTag || oldTag === newTag) return
-    setDocuments((current) => Object.fromEntries(Object.entries(current).map(([day, markdown]) => [day, renameTagEverywhere(markdown, oldTag, newTag)])))
+    const next = Object.fromEntries(Object.entries(documentsRef.current).map(([day, markdown]) => {
+      const renamed = renameTagEverywhere(markdown, oldTag, newTag)
+      if (renamed !== markdown) {
+        documentUpdatedAtRef.current[day] = currentTimestamp()
+        dirtyDaysRef.current.add(day)
+      }
+      return [day, renamed]
+    }))
+    documentsRef.current = next
+    setDocuments(next)
     setTagToRename('')
     setRenamedTag('')
   }
@@ -896,8 +1130,10 @@ function NotesApp() {
       if (importMode === 'replace' || !(day in documents) || choice === 'imported') next[day] = markdown
       else if (choice === 'append' && next[day] !== markdown && markdown) next[day] = `${next[day]}${next[day].endsWith('\\n') ? '' : '\\n'}\\n${markdown}`
       documentUpdatedAtRef.current[day] = currentTimestamp()
+      dirtyDaysRef.current.add(day)
     })
     await replaceDailyDocuments(Object.entries(next).filter(([, markdown]) => markdown).map(([day, markdown]) => ({ day, markdown, updatedAt: documentUpdatedAtRef.current[day] ?? currentTimestamp() })))
+    documentsRef.current = next
     setDocuments(next)
     setDays((current) => [...new Set([...Object.keys(next), ...current])].sort((left, right) => right.localeCompare(left)))
     setImportPreview(undefined)

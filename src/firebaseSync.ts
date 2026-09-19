@@ -1,7 +1,8 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, setDoc, type DocumentData } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, runTransaction, setDoc, type DocumentData } from 'firebase/firestore'
 import { firestore } from './firebase'
 import { decryptDailyDocument, encryptDailyDocument, type EncryptedDailyDocument } from './encryptedSync'
 import { createKeyBundle, recoverDataKey, type KeyBundle } from './crypto'
+import { mergeMarkdown } from './markdownMerge'
 import type { DailyDocument } from './storage'
 
 const keyBundlePath = (uid: string) => doc(firestore!, 'users', uid, 'metadata', 'keyBundle')
@@ -20,16 +21,79 @@ export async function createRemoteKeyBundle(uid: string, recoveryPhrase?: string
   return { ...created, key: await recoverDataKey(created.recoveryKey, created.bundle) }
 }
 
-export async function uploadEncryptedDocument(uid: string, document: DailyDocument, key: CryptoKey) {
-  if (!firestore) throw new Error('Firebase is not configured')
-  const encrypted = await encryptDailyDocument(document, key)
-  await setDoc(doc(documentsPath(uid), document.day), encrypted)
-}
-
 export interface SyncConflict {
   day: string
   local: DailyDocument
   remote: DailyDocument
+  base?: DailyDocument['syncBase']
+}
+
+export type EncryptedDocumentUploadResult =
+  | { status: 'written'; document: DailyDocument }
+  | { status: 'conflict'; conflict: SyncConflict }
+
+export interface EncryptedDocumentUploadOptions {
+  strategy?: 'merge' | 'replace'
+}
+
+function withSyncBase(document: DailyDocument): DailyDocument {
+  return { ...document, syncBase: { markdown: document.markdown, updatedAt: document.updatedAt } }
+}
+
+function conflictResult(day: string, local: DailyDocument, remote: DailyDocument): EncryptedDocumentUploadResult {
+  return { status: 'conflict', conflict: { day, local, remote, base: local.syncBase } }
+}
+
+export type DocumentUploadDecision =
+  | { action: 'write'; markdown: string }
+  | { action: 'adopt' }
+  | { action: 'conflict' }
+
+export function resolveDocumentUpload(
+  document: DailyDocument,
+  remote: DailyDocument | undefined,
+  strategy: 'merge' | 'replace' = 'merge',
+): DocumentUploadDecision {
+  if (!remote || remote.markdown === document.markdown) return remote ? { action: 'adopt' } : { action: 'write', markdown: document.markdown }
+
+  const base = document.syncBase
+  if (strategy === 'replace') {
+    if (!base || remote.markdown !== base.markdown) return { action: 'conflict' }
+    return { action: 'write', markdown: document.markdown }
+  }
+
+  if (!base) return { action: 'conflict' }
+  if (remote.markdown === base.markdown) return { action: 'write', markdown: document.markdown }
+
+  const merged = mergeMarkdown(base.markdown, document.markdown, remote.markdown)
+  if (merged.status === 'conflict') return { action: 'conflict' }
+  return merged.markdown === remote.markdown ? { action: 'adopt' } : { action: 'write', markdown: merged.markdown }
+}
+
+export async function uploadEncryptedDocument(
+  uid: string,
+  document: DailyDocument,
+  key: CryptoKey,
+  options: EncryptedDocumentUploadOptions = {},
+): Promise<EncryptedDocumentUploadResult> {
+  if (!firestore) throw new Error('Firebase is not configured')
+  const documentRef = doc(documentsPath(uid), document.day)
+  return runTransaction(firestore, async (transaction) => {
+    const snapshot = await transaction.get(documentRef)
+    const remote = snapshot.exists()
+      ? await decryptDailyDocument(asEncryptedDocument(snapshot.data()), key)
+      : undefined
+    const writeDocument = async (markdown: string) => {
+      const next = { day: document.day, markdown, updatedAt: Date.now() }
+      transaction.set(documentRef, await encryptDailyDocument(next, key))
+      return { status: 'written' as const, document: withSyncBase(next) }
+    }
+
+    const decision = resolveDocumentUpload(document, remote, options.strategy)
+    if (decision.action === 'adopt') return { status: 'written', document: withSyncBase(remote!) }
+    if (decision.action === 'conflict') return conflictResult(document.day, document, remote!)
+    return writeDocument(decision.markdown)
+  })
 }
 
 function asEncryptedDocument(value: DocumentData) {
@@ -40,23 +104,43 @@ export async function syncDocuments(uid: string, localDocuments: DailyDocument[]
   if (!firestore) throw new Error('Firebase is not configured')
   const remote = await getDocs(query(documentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)))
   const localByDay = new Map(localDocuments.map((document) => [document.day, document]))
-  const merged = new Map(localDocuments.map((document) => [document.day, document]))
+  const remoteByDay = new Map<string, DailyDocument>()
+  const merged = new Map<string, DailyDocument>()
   const conflicts: SyncConflict[] = []
-  const uploads: Promise<void>[] = []
+  const uploads: { local: DailyDocument; remote?: DailyDocument }[] = []
+
   for (const snapshot of remote.docs) {
     const remoteDocument = await decryptDailyDocument(asEncryptedDocument(snapshot.data()), key)
+    remoteByDay.set(remoteDocument.day, remoteDocument)
     const localDocument = localByDay.get(remoteDocument.day)
-    if (localDocument && localDocument.markdown && remoteDocument.markdown && localDocument.markdown !== remoteDocument.markdown) {
-      conflicts.push({ day: remoteDocument.day, local: localDocument, remote: remoteDocument })
+    if (!localDocument || localDocument.markdown === remoteDocument.markdown || localDocument.markdown === localDocument.syncBase?.markdown) {
+      merged.set(remoteDocument.day, withSyncBase(remoteDocument))
       continue
     }
-    if (!localDocument || remoteDocument.updatedAt > localDocument.updatedAt) merged.set(remoteDocument.day, remoteDocument)
-    if (localDocument && localDocument.updatedAt > remoteDocument.updatedAt) uploads.push(uploadEncryptedDocument(uid, localDocument, key))
+    if (!localDocument.syncBase) {
+      conflicts.push({ day: remoteDocument.day, local: localDocument, remote: remoteDocument })
+      merged.set(localDocument.day, localDocument)
+      continue
+    }
+    uploads.push({ local: localDocument, remote: remoteDocument })
   }
-  for (const document of merged.values()) {
-    if (!remote.docs.some((snapshot) => snapshot.id === document.day) && !conflicts.some((conflict) => conflict.day === document.day)) uploads.push(uploadEncryptedDocument(uid, document, key))
+
+  for (const document of localDocuments) {
+    if (!remoteByDay.has(document.day)) uploads.push({ local: document })
   }
-  await Promise.all(uploads)
+
+  const uploadResults = await Promise.all(uploads.map(({ local }) => uploadEncryptedDocument(uid, local, key)))
+  uploadResults.forEach((result, index) => {
+    const { local, remote } = uploads[index]
+    if (result.status === 'written') {
+      merged.set(result.document.day, result.document)
+      return
+    }
+    conflicts.push(result.conflict)
+    merged.set(local.day, local)
+    if (remote) remoteByDay.set(remote.day, remote)
+  })
+
   return { documents: [...merged.values()], conflicts }
 }
 

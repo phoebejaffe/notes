@@ -1,7 +1,13 @@
+export interface DocumentSyncBase {
+  markdown: string
+  updatedAt: number
+}
+
 export interface DailyDocument {
   day: string
   markdown: string
   updatedAt: number
+  syncBase?: DocumentSyncBase
 }
 
 const databaseName = 'notes-local'
@@ -28,9 +34,15 @@ export async function loadDailyDocument(day: string) {
 export async function saveDailyDocument(document: DailyDocument) {
   const database = await openDatabase()
   return new Promise<void>((resolve, reject) => {
-    const request = database.transaction(storeName, 'readwrite').objectStore(storeName).put(document)
-    request.onsuccess = () => resolve()
-    request.onerror = () => reject(request.error)
+    const transaction = database.transaction(storeName, 'readwrite')
+    const store = transaction.objectStore(storeName)
+    const request = store.get(document.day)
+    request.onsuccess = () => {
+      const existing = request.result as DailyDocument | undefined
+      store.put({ ...existing, ...document, syncBase: document.syncBase ?? existing?.syncBase })
+    }
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
   })
 }
 
@@ -44,12 +56,31 @@ export async function listDailyDocuments() {
 }
 
 export async function replaceDailyDocuments(documents: DailyDocument[]) {
+  const existing = new Map((await listDailyDocuments()).map((document) => [document.day, document]))
   const database = await openDatabase()
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(storeName, 'readwrite')
     const store = transaction.objectStore(storeName)
     store.clear()
-    documents.forEach((document) => store.put(document))
+    documents.forEach((document) => {
+      store.put({ ...document, syncBase: document.syncBase ?? existing.get(document.day)?.syncBase })
+    })
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+}
+
+export async function clearSyncBases() {
+  const documents = await listDailyDocuments()
+  const database = await openDatabase()
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(storeName, 'readwrite')
+    const store = transaction.objectStore(storeName)
+    documents.forEach((document) => {
+      const next = { ...document }
+      delete next.syncBase
+      store.put(next)
+    })
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
   })

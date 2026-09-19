@@ -185,15 +185,17 @@ Only the authenticated user’s namespace should be accessible under the Firesto
 Sync supports:
 
 - Manual sync.
-- Debounced upload of local changes after encryption is unlocked.
+- Debounced transactional upload of changed daily documents after encryption is unlocked.
 - Realtime remote document watching.
-- Timestamp-based reconciliation for non-conflicting changes.
-- Conflict detection when both local and remote non-empty Markdown differ.
+- Local-only sync-base tracking and line-based three-way reconciliation for concurrent local/remote Markdown changes.
+- Conflict detection when both sides changed the same Markdown region differently or no usable sync base exists.
 - Conflict resolution by keeping local, keeping server, appending local to server, or editing/saving a merged Markdown version.
 - Sign-out, which clears the active in-memory key and recovery phrase from the UI but keeps local notes.
 - Permanent cloud-data deletion, which deletes cloud notes and the remote encryption key while keeping local notes.
 
-If Firebase variables are absent, the application must continue operating locally. Offline editing is supported; the UI warns that changes made on another device while disconnected may create loss during reconciliation.
+The remote document payload remains `{ markdown, updatedAt }`. Each local IndexedDB record may additionally retain a `syncBase` Markdown snapshot used only as the three-way merge ancestor; that base is never included in the encrypted remote payload. External writers such as the Pebble receiver can update the same encrypted daily documents, so uploads must read the latest remote document transactionally and must not overwrite unseen remote changes.
+
+If Firebase variables are absent, the application must continue operating locally. Offline editing is supported; concurrent offline edits made on another device may produce a reviewable conflict rather than silent data loss.
 
 ## 12. Privacy and security expectations
 
@@ -238,7 +240,7 @@ Tests currently cover backup behavior, encrypted sync behavior, editor Markdown 
 
 - Cloud sync requires Firebase configuration, Google authentication, and the original recovery phrase.
 - The sync query is currently bounded to the newest 1,000 remote documents.
-- Conflict resolution is document/day-level rather than a general collaborative text merge.
+- Concurrent Markdown changes use line-based three-way merging; ambiguous same-region edits still require day-level conflict resolution.
 - Tag colors and recent-tag ordering are local UI metadata and are not synchronized as part of encrypted documents.
 - Automatic backups are only exposed in the mac app; the dormant browser path would depend on File System Access API support.
 - Native launch-at-login, opacity, menu-bar, and dock behaviors are platform-specific.
@@ -259,7 +261,7 @@ This section is intentionally maintained as a living backlog. It should be updat
 
 - Improve search result navigation and make search semantics explicit for Markdown, tags, muted content, and date ranges.
 - Add broader date navigation/history controls for large note collections.
-- Improve conflict resolution with more capable structured Markdown merging and clearer deleted/empty-document handling.
+- Consider CRDT or operation-based syncing for richer real-time collaboration, and improve deleted/empty-document conflict handling.
 - Revisit the 1,000-document sync limit and define pagination/retention behavior for long-lived accounts.
 - Add robust validation and recovery flows for malformed imports, interrupted backups, and corrupted local storage.
 - Decide whether sample/reset functionality should remain in production UI or move to a development-only surface.
