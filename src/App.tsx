@@ -247,7 +247,7 @@ function NotesApp() {
   const syncBasesRef = useRef<Record<string, DocumentSyncBase>>({})
   const latestRemoteRef = useRef<Record<string, DailyDocument>>({})
   const dirtyDaysRef = useRef(new Set<string>())
-  const uploadingDaysRef = useRef(new Set<string>())
+  const uploadingDaysRef = useRef(new Map<string, string>())
   const handleRemoteDocumentsRef = useRef<(documents: DailyDocument[]) => void>(() => undefined)
   const uploadPendingDocumentsRef = useRef<() => Promise<void>>(async () => undefined)
   const streamEndRef = useRef<HTMLDivElement>(null)
@@ -670,6 +670,14 @@ function NotesApp() {
 
       const currentMarkdown = documentsRef.current[remote.day] ?? ''
       const syncBase = { markdown: remote.markdown, updatedAt: remote.updatedAt }
+      if (remote.markdown === uploadingDaysRef.current.get(remote.day)) {
+        // This snapshot is our own in-flight upload landing, not an external
+        // edit. Adopt it as the merge base so typing during the upload is
+        // treated as new divergence, not as a conflict against ourselves.
+        syncBasesRef.current[remote.day] = syncBase
+        persistLocalDocument(remote.day, currentMarkdown, documentUpdatedAtRef.current[remote.day] ?? currentTimestamp(), syncBase)
+        return
+      }
       const localDiverged = base ? currentMarkdown !== base.markdown : Boolean(currentMarkdown) && currentMarkdown !== remote.markdown
       if (!localDiverged) {
         syncBasesRef.current[remote.day] = syncBase
@@ -749,13 +757,13 @@ function NotesApp() {
 
   async function uploadPendingDocument(day: string): Promise<'written' | 'conflict' | 'failed' | 'retry'> {
     if (!firebaseUser || !dataKey) return 'failed'
-    uploadingDaysRef.current.add(day)
     const submitted: DailyDocument = {
       day,
       markdown: documentsRef.current[day] ?? '',
       updatedAt: documentUpdatedAtRef.current[day] ?? currentTimestamp(),
       syncBase: syncBasesRef.current[day],
     }
+    uploadingDaysRef.current.set(day, submitted.markdown)
     try {
       const result = await uploadEncryptedDocument(firebaseUser.uid, submitted, dataKey)
       if (result.status === 'conflict') {
@@ -964,7 +972,9 @@ function NotesApp() {
     try {
       await Promise.all(Object.entries(documents).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() })))
       const localDocuments = await listDailyDocuments()
+      localDocuments.forEach((document) => uploadingDaysRef.current.set(document.day, document.markdown))
       const result = await syncDocuments(firebaseUser.uid, localDocuments, dataKey)
+        .finally(() => localDocuments.forEach((document) => uploadingDaysRef.current.delete(document.day)))
       dirtyDaysRef.current.clear()
       result.documents.forEach((document) => {
         documentUpdatedAtRef.current[document.day] = document.updatedAt
@@ -1032,7 +1042,9 @@ function NotesApp() {
         persistLocalDocument(conflict.day, conflict.remote.markdown, conflict.remote.updatedAt, syncBase)
       } else {
         const document = { day: conflict.day, markdown, updatedAt: currentTimestamp(), syncBase }
+        uploadingDaysRef.current.set(conflict.day, markdown)
         const result = await uploadEncryptedDocument(firebaseUser.uid, document, dataKey, { strategy: 'replace' })
+          .finally(() => { uploadingDaysRef.current.delete(conflict.day) })
         if (result.status === 'conflict') {
           handleUploadConflict(result.conflict)
           return

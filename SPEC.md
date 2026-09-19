@@ -193,7 +193,7 @@ Sync supports:
 - Sign-out, which clears the active in-memory key and recovery phrase from the UI but keeps local notes.
 - Permanent cloud-data deletion, which deletes cloud notes and the remote encryption key while keeping local notes.
 
-The remote document payload remains `{ markdown, updatedAt }`. Each local IndexedDB record may additionally retain a `syncBase` Markdown snapshot used only as the three-way merge ancestor; that base is never included in the encrypted remote payload. External writers such as the Pebble receiver can update the same encrypted daily documents, so uploads must read the latest remote document transactionally and must not overwrite unseen remote changes.
+The remote document payload remains `{ markdown, updatedAt }`. Each local IndexedDB record may additionally retain a `syncBase` Markdown snapshot used only as the three-way merge ancestor; that base is never included in the encrypted remote payload. External writers such as the Pebble receiver can update the same encrypted daily documents, so uploads must read the latest remote document transactionally and must not overwrite unseen remote changes. A realtime snapshot matching an in-flight upload is treated as the app's own write echo and adopted as the new merge base rather than merged, so rapid consecutive edits cannot conflict with themselves.
 
 If Firebase variables are absent, the application must continue operating locally. Offline editing is supported; concurrent offline edits made on another device may produce a reviewable conflict rather than silent data loss.
 
