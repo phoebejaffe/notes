@@ -143,6 +143,27 @@ function applyTagDecorations(root: HTMLElement | null, source: string, colors: R
   })
 }
 
+function readRenderedSelection(root: HTMLElement | null) {
+  const content = root?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+  const selection = window.getSelection()
+  if (!content || !selection || !content.contains(selection.anchorNode)) return undefined
+  const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
+  const block = anchor?.closest<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')
+  let caretOffset = 0
+  const caretText = selection.isCollapsed && selection.anchorNode?.nodeType === Node.TEXT_NODE
+    ? selection.anchorNode.textContent ?? ''
+    : block?.textContent ?? ''
+  let caretTextOffset = 0
+  if (block && selection.isCollapsed) {
+    const range = document.createRange()
+    range.selectNodeContents(block)
+    range.setEnd(selection.anchorNode!, selection.anchorOffset)
+    caretOffset = range.toString().length
+    caretTextOffset = selection.anchorNode?.nodeType === Node.TEXT_NODE ? selection.anchorOffset : caretOffset
+  }
+  return { text: selection.toString(), blockText: block?.textContent ?? '', caretOffset, caretText, caretTextOffset }
+}
+
 function selectedSourceRange(source: string, selectedText: string) {
   if (!selectedText) return undefined
   const from = source.indexOf(selectedText)
