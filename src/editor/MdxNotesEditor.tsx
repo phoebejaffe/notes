@@ -410,8 +410,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const caretTextRef = useRef('')
   const caretTextOffsetRef = useRef(0)
   const userInteractedRef = useRef(false)
-  const suppressChangeRef = useRef(false)
-  const programmaticMarkdownRef = useRef<string | null>(null)
   const [selectionState, setSelectionState] = useState({ text: '', blockText: '', caretOffset: 0 })
   const [audioPopover, setAudioPopover] = useState<{ url: string; rect: DOMRect } | null>(null)
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
@@ -424,15 +422,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const caretText = caretTextRef.current
     const caretTextOffset = caretTextOffsetRef.current
     valueRef.current = markdown
-    programmaticMarkdownRef.current = markdown
-    suppressChangeRef.current = true
     editorRef.current?.setMarkdown(markdownForEditor(markdown))
     onChangeRef.current(markdown)
     window.requestAnimationFrame(() => {
       restoreEditorSelection(lexicalEditor, hostRef.current, selectedText, blockText, caretOffset, caretText, caretTextOffset)
       window.requestAnimationFrame(() => {
         restoreEditorSelection(lexicalEditor, hostRef.current, selectedText, blockText, caretOffset, caretText, caretTextOffset)
-        suppressChangeRef.current = false
       })
     })
   }, [lexicalEditor])
@@ -445,10 +440,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const host = hostRef.current
     if (!host) return
     const markInteraction = (event: Event) => {
-      if (host.contains(event.target as Node)) {
-        userInteractedRef.current = true
-        if (event.type === 'beforeinput' || event.type === 'keydown' || event.type === 'paste') programmaticMarkdownRef.current = null
-      }
+      if (host.contains(event.target as Node)) userInteractedRef.current = true
     }
     const preserveEditorSelection = (event: globalThis.MouseEvent) => {
       const target = event.target as HTMLElement
@@ -513,10 +505,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const editorValue = commentsToTagDirectives(value)
     if (valueRef.current === editorValue) return
     valueRef.current = editorValue
-    suppressChangeRef.current = true
     editorRef.current?.setMarkdown(markdownForEditor(editorValue))
-    const frame = window.requestAnimationFrame(() => { suppressChangeRef.current = false })
-    return () => window.cancelAnimationFrame(frame)
   }, [value])
 
   useEffect(() => {
@@ -967,12 +956,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         markdown={markdownForEditor(commentsToTagDirectives(value))}
         autoFocus={autoFocus}
         onChange={(markdown) => {
-          if (!userInteractedRef.current || suppressChangeRef.current) return
-          if (programmaticMarkdownRef.current !== null) {
-            programmaticMarkdownRef.current = null
-            return
-          }
+          if (!userInteractedRef.current) return
           const preserved = restoreMarkdownSpacing(valueRef.current, preserveMutedLines(valueRef.current, markdown))
+          // A setMarkdown echo serializes back to the same preserved source;
+          // an emission that differs carries a real user edit, even inside
+          // the post-commit suppression window — never swallow it.
+          if (preserved === valueRef.current) return
           valueRef.current = preserved
           onChangeRef.current(preserved)
         }}

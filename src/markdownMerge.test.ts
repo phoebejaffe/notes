@@ -47,8 +47,44 @@ describe('mergeMarkdown', () => {
     expect(mergeMarkdown('shared line', 'local line', 'remote line')).toEqual({ status: 'conflict' })
   })
 
-  it('handles an empty base with different local and remote additions as a conflict', () => {
-    expect(mergeMarkdown('', 'local note', '💡 remote transcription')).toEqual({ status: 'conflict' })
+  it('merges an empty base with different local and remote additions', () => {
+    expect(mergeMarkdown('', 'local note', '💡 remote transcription')).toEqual({
+      status: 'clean',
+      markdown: '💡 remote transcription\nlocal note',
+    })
+  })
+
+  it('merges a remote prepend with a local edit to the first line', () => {
+    const base = 'first note\n\nolder note'
+    const local = 'first note edited\n\nolder note'
+    const remote = '💡 call the dentist\n\nfirst note\n\nolder note'
+
+    expect(mergeMarkdown(base, local, remote)).toEqual({
+      status: 'clean',
+      markdown: '💡 call the dentist\n\nfirst note edited\n\nolder note',
+    })
+  })
+
+  it('keeps both sides when local and remote each prepend different lines', () => {
+    const base = 'first note'
+    const local = 'typed note\nfirst note'
+    const remote = '💡 call the dentist\nfirst note'
+
+    expect(mergeMarkdown(base, local, remote)).toEqual({
+      status: 'clean',
+      markdown: '💡 call the dentist\ntyped note\nfirst note',
+    })
+  })
+
+  it('merges a remote append with a local edit to an earlier line', () => {
+    const base = 'first note\n\nolder note'
+    const local = 'first note edited\n\nolder note'
+    const remote = 'first note\n\nolder note\n\n💡 late addition'
+
+    expect(mergeMarkdown(base, local, remote)).toEqual({
+      status: 'clean',
+      markdown: 'first note edited\n\nolder note\n\n💡 late addition',
+    })
   })
 
   it('accepts the remote document when local still matches base', () => {

@@ -235,16 +235,20 @@ button { cursor: pointer; font: inherit; }
 .capture-shell .notes-mdx-editor:not(:focus-within):not(.notes-has-selection) .mdxeditor-toolbar { display: flex; }
 .ios-pwa .notes-mdx-editor .mdxeditor-toolbar { top: 42px; right: 0; bottom: auto; left: 0; width: 100%; border-right: 0; border-left: 0; border-radius: 0; box-shadow: 0 4px 14px #392c1f10; }
 .app-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar, .capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar { box-shadow: none; }
-.capture-shell:not(.web-shell) .capture-menu { top: 0; right: 0; left: 0; height: 40px; padding: 0 6px; justify-content: flex-end; background: #2f2c31; }
-.capture-shell:not(.web-shell) .icon-button { color: #e8e2dc; }
-.capture-shell:not(.web-shell) .icon-button:hover, .capture-shell:not(.web-shell) .icon-button[aria-expanded='true'] { background: #5a5358; }
-.capture-shell:not(.web-shell) .mdxeditor-toolbar { top: 40px; bottom: auto; height: 36px; min-height: 36px; gap: 3px; padding: 4px 10px; border: 0; background: #2f2c31; }
-.capture-shell:not(.web-shell) .mdxeditor-toolbar > div, .capture-shell:not(.web-shell) .mdxeditor-toolbar [role='group'] { gap: 3px; }
-.capture-shell:not(.web-shell) .mdxeditor-toolbar button { width: 24px; height: 24px; flex-basis: 24px; padding: 2px; }
+.capture-shell:not(.web-shell) .capture-menu { top: 0; right: 0; left: 0; height: 32px; padding: 0 6px; justify-content: flex-end; background: #2f2c31; }
+.capture-shell:not(.web-shell) .capture-menu .menu-panel { top: 34px; }
+.capture-shell:not(.web-shell) .icon-button { width: 28px; height: 28px; color: #e8e2dc; font-size: 16px; }
+.capture-shell:not(.web-shell) .icon-button:hover, .capture-shell:not(.web-shell) .icon-button[aria-expanded='true'] { background: #48434a; }
+.capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar { top: 32px; bottom: auto; height: 34px; min-height: 34px; gap: 2px; padding: 3px 8px; border: 0; background: #2f2c31; }
+.capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar > div, .capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar [role='group'] { gap: 2px; }
+.capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar [class*='toolbarGroupOfGroups'] { margin: 0; }
+.capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar button { width: 24px; height: 24px; flex-basis: 24px; padding: 2px; border-color: transparent; color: #e8e2dc; background: transparent; }
+.capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar button:hover { background: #48434a; }
+.capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar button[data-state='on'] { color: #fff; background: #806790; }
 .capture-shell:not(.web-shell) .notes-editor-tag-suggestions { top: calc(100% + 6px); bottom: auto; }
-.capture-shell:not(.web-shell) .day-stream { padding-top: 66px; scroll-padding-top: 66px; }
-.capture-shell:not(.web-shell) .raw-mode-banner { top: 40px; }
-.raw-mode.capture-shell:not(.web-shell) .day-stream { padding-top: 64px; scroll-padding-top: 64px; }
+.capture-shell:not(.web-shell) .day-stream { padding-top: 56px; scroll-padding-top: 56px; }
+.capture-shell:not(.web-shell) .raw-mode-banner { top: 32px; }
+.raw-mode.capture-shell:not(.web-shell) .day-stream { padding-top: 56px; scroll-padding-top: 56px; }
 .theme-dark .notes-mdx-editor .mdxeditor { --basePageBg: #201e21; --baseBase: #2f2c31; --baseBgSubtle: #2f2c31; --baseBg: #383538; --baseBgHover: #48434a; --baseBgActive: #48434a; --baseLine: #4d4649; --baseBorder: #5a5358; --baseBorderHover: #6f666d; --baseText: #d9d1d5; --baseTextContrast: #f5f1ed; --accentText: #e6d7f2; --accentTextContrast: #fff; }
 .theme-dark .notes-mdx-editor, .theme-dark .notes-mdx-editor .mdxeditor { color: #e8e2dc; border-color: #4d4649; background: #201e21; }
 .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable, .theme-dark .notes-mdx-editor .mdxeditor-contenteditable-wrapper, .theme-dark .notes-mdx-editor [contenteditable='true'] { color: #f5f1ed !important; background: #201e21; caret-color: #f5f1ed; }
