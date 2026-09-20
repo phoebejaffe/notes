@@ -8,6 +8,8 @@ export interface EditorActions {
   recentTags: string[]
   toggleMute: () => void
   toggleChecklist: () => void
+  removeChecklist: () => void
+  checklistToPlainText: () => void
   moveLines: (direction: 'up' | 'down') => void
   showUndoRedo: boolean
 }

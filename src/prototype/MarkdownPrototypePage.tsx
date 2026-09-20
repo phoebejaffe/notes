@@ -43,6 +43,178 @@ Untagged content after the leading tag`,
 Second paragraph here.`,
 }
 
+const LINE_MOVEMENT_MARKDOWN = `prefix alpha
+first line
+second line
+third line
+suffix omega`
+
+const HARD_LINE_MOVEMENT_MARKDOWN = `Line A
+
+Line B
+
+Line C`
+
+const LINK_END_MOVEMENT_MARKDOWN = `Line A
+
+Line B [link](https://example.com)
+
+Line C`
+
+const TAGGED_LINE_MOVEMENT_MARKDOWN = `Line above
+
+:::tag{name="brainstorm"}
+Questions for Lyle
+- Line A
+- Line B
+- Line C
+:::
+
+Line below`
+
+const NORMAL_THEN_TAG_MOVEMENT_MARKDOWN = `Line 1
+Line 2
+Line 3
+
+:::tag{name="brainstorm"}
+Questions for Lyle
+- Tag A
+- Tag B
+- Tag C
+:::
+
+Line below`
+
+const REPEATED_MOVEMENT_MARKDOWN = `Line above
+
+:::tag{name="brainstorm"}
+Questions for Lyle
+- Line A
+- Line B
+- Line C
+:::
+
+Later list
+- Line D
+- Line E
+- Line F
+
+Line below`
+
+const LIST_MOVEMENT_MARKDOWN = `prefix alpha
+- first item
+- second item
+  - second child one
+  - second child two
+- third item
+1. ordered one
+  1. ordered nested
+2. ordered two
+suffix omega`
+
+const CHECKLIST_MARKDOWN = `prefix alpha
+- [ ] first task
+- [x] second task
+  - [ ] nested task
+- regular item
+suffix omega`
+
+const CHECKLIST_POSITION_MARKDOWN = `prefix alpha
+- A deliberately long line above the checklist that will wrap when the editor becomes narrow enough to exercise natural checkbox positioning.
+- [ ] The checklist stays attached to this line
+suffix omega`
+
+const AUDIO_TRANSCRIPTION_MARKDOWN = `💡 Be able to talk to a few other people about that and get their feedback about the business.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=fcb9611553c62fab066af5a3d562601e&t=LKt6bG9IHz6faGOPCknYHtoajtzuKOm9qSa6ir3veqE)
+- [ ] 💡 Find someone to go to the symphony with me.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=8b71347e6846691b4ca4e9598b6ab96f&t=Ovow199-bWVfT-k8WfCoiIQrgMcJa4P87caHuo8t7ck)
+💡 Kept finding blonde pubes on their pants.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=879fc5d90c8afa9217f84bcb6b5cd338&t=Kcu93ypuxY7a_eU9Xziild5ZVq_kTaJQayvPXl4tm7E)`
+
+const TAGGED_LIST_MARKDOWN = `:::tag{name="book club"}
+Line 1
+
+Line 2
+
+Line 3
+:::`
+
+const TAGGED_MUTE_MARKDOWN = `:::tag{name="book club"}
+Line 1
+Line 2
+Line 3
+:::`
+
+const TAGGING_MARKDOWN = `prefix alpha
+first line
+second line
+third line
+suffix omega`
+
+const FORMATTING_MARKDOWN = `prefix alpha
+plain target text
+**already bold** and *already italic*
+[link text](https://example.com) with trailing text
+suffix omega`
+
+const MUTED_MARKDOWN = `prefix alpha
+plain target
+%% already muted
+- list target
+## heading target
+- [ ] task target
+> quote target
+suffix omega`
+
+const PLAIN_TEXT_MARKDOWN = `prefix alpha
+alpha target middle
+formatted **bold target** and *italic target*
+suffix omega`
+
+const STRUCTURE_MARKDOWN = `prefix alpha
+# Heading target
+> quote target
+- bullet target
+:::tag{name="existing"}
+tagged target
+:::
+suffix omega`
+
+const LONG_SCROLL_MARKDOWN = `top marker
+${Array.from({ length: 30 }, (_, index) => `scroll filler ${index + 1}`).join('\n')}
+- [ ] scrolled task
+scrolled target
+${Array.from({ length: 30 }, (_, index) => `trailing filler ${index + 1}`).join('\n')}
+bottom marker`
+
+const SINGLE_EDITOR_SCENARIOS: Record<string, string> = {
+  'line-movement': LINE_MOVEMENT_MARKDOWN,
+  'line-movement-hard': HARD_LINE_MOVEMENT_MARKDOWN,
+  'line-movement-link-end': LINK_END_MOVEMENT_MARKDOWN,
+  'tagged-line-movement': TAGGED_LINE_MOVEMENT_MARKDOWN,
+  'repeated-line-movement': REPEATED_MOVEMENT_MARKDOWN,
+  'normal-then-tag-movement': NORMAL_THEN_TAG_MOVEMENT_MARKDOWN,
+  'line-movement-soft': `prefix alpha
+first line
+second line
+third line
+suffix omega`,
+  'list-movement': LIST_MOVEMENT_MARKDOWN,
+  checklist: CHECKLIST_MARKDOWN,
+  'checklist-position': CHECKLIST_POSITION_MARKDOWN,
+  'audio-transcription-checklist': AUDIO_TRANSCRIPTION_MARKDOWN,
+  'tagged-list-lines': TAGGED_LIST_MARKDOWN,
+  'tagged-muted-lines': TAGGED_MUTE_MARKDOWN,
+  tagging: TAGGING_MARKDOWN,
+  'tagging-soft': `prefix alpha
+first line
+second line
+third line
+suffix omega`,
+  formatting: FORMATTING_MARKDOWN,
+  muted: MUTED_MARKDOWN,
+  'plain-text': PLAIN_TEXT_MARKDOWN,
+  structure: STRUCTURE_MARKDOWN,
+  scroll: LONG_SCROLL_MARKDOWN,
+}
+
 function MultiEditorPrototype() {
   const [day1, setDay1] = useState(MULTI_DAY_MARKDOWN.day1)
   const [day2, setDay2] = useState(MULTI_DAY_MARKDOWN.day2)
@@ -65,9 +237,12 @@ function MultiEditorPrototype() {
 }
 
 export function MarkdownPrototypePage() {
-  const [markdown, setMarkdown] = useState(SAMPLE_MARKDOWN)
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  const scenario = params?.get('scenario') ?? ''
+  const initialMarkdown = SINGLE_EDITOR_SCENARIOS[scenario] ?? SAMPLE_MARKDOWN
+  const [markdown, setMarkdown] = useState(initialMarkdown)
   const [hideMuted, setHideMuted] = useState(false)
-  const multiMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('multi')
+  const multiMode = params?.has('multi') ?? false
 
   if (multiMode) {
     return <main className="markdown-prototype-page">
@@ -90,7 +265,7 @@ export function MarkdownPrototypePage() {
     </header>
     <p className="prototype-status">Formatting, lists, checklists, muted blocks, tags, and custom Markdown are handled by the MDXEditor wrapper.</p>
     <section className="prototype-editor-stack" aria-label="MDXEditor prototype">
-      <article className="prototype-panel">
+      <article className="prototype-panel" data-testid="prototype-editor" data-scenario={scenario || 'sample'}>
         <div className="prototype-panel-heading"><div><span className="prototype-eyebrow">Prototype</span><h2>MDXEditor</h2></div><span>Markdown-native rich text</span></div>
         <MdxNotesEditor value={markdown} onChange={setMarkdown} hideMutedLines={hideMuted} />
       </article>

@@ -2,6 +2,26 @@ import { expect, test } from '@playwright/test'
 
 const BLOCK_SELECTOR = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
 
+test('keeps the mac formatting bar at window scale when editor zoom is enabled', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('notes-preferences', JSON.stringify({ zoomLevel: 125, onboardingDismissed: true, syncPromptDismissed: true }))
+  })
+  await page.goto('/')
+  await page.locator('.app-shell').evaluate((shell) => shell.classList.remove('web-shell'))
+
+  const editor = page.locator('.notes-mdx-editor').first()
+  const content = editor.locator('.mdxeditor-root-contenteditable')
+  await expect(content).toBeVisible()
+  await content.click()
+
+  const toolbar = editor.locator('.mdxeditor-toolbar')
+  await expect(toolbar).toBeVisible()
+  await expect.poll(() => toolbar.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return Math.abs(rect.left) < 1 && Math.abs(rect.width - window.innerWidth) < 1 && Math.abs(rect.height - 48) < 1
+  })).toBe(true)
+})
+
 test('types inside tagged and untagged content in a single editor', async ({ page }) => {
   await page.goto('/prototype')
 

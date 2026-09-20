@@ -19,7 +19,7 @@
 - **Tags** are custom Lexical `ElementNode`s (`TagBlockNode`) serialized as nested Markdown container directives — never HTML comments. `%%` is the muted-line syntax.
 - **Platform gating** uses `isTauriEnvironment()` in `src/App.tsx`. Anything needing filesystem access (backups) or native APIs is mac-app-only; the browser build must keep working without it.
 - **Firebase is optional.** If `VITE_FIREBASE_*` env vars are absent the app runs fully local; cloud sync encrypts with a key derived from the user's recovery phrase (stored per-user under `notes-recovery-phrase:${uid}`).
-- **External writers exist.** A separate Pebble receiver (`~/Sites/pebble-ring`) writes encrypted daily documents directly to Firestore via Admin SDK using the same envelope format (`src/crypto.ts`, `src/encryptedSync.ts`). It prepends `💡`-prefixed transcription lines; audio lines end with a Markdown link around one space, such as `💡 text[ ](signed-url)`, which the editor renders with an inline player popover. Task lines use `- [ ] 💡 text[ ](signed-url)`. Any change to the document envelope, key bundle, or associated-data scheme must stay compatible with that writer.
+- **External writers exist.** A separate Pebble receiver (`~/Sites/pebble-ring`) writes encrypted daily documents directly to Firestore via Admin SDK using the same envelope format (`src/crypto.ts`, `src/encryptedSync.ts`). It prepends `💡`-prefixed transcription lines; audio lines end with a Markdown link around two underscores, such as `💡 text[__](signed-url)`, which the editor renders with an inline player popover. Task lines use `- [ ] 💡 text[__](signed-url)`. Any change to the document envelope, key bundle, or associated-data scheme must stay compatible with that writer.
 - **Cloud writes are merge-aware transactions.** `uploadEncryptedDocument` reads/decrypts the remote document inside `runTransaction`; each local IndexedDB record may store a plaintext `syncBase` merge ancestor that is never uploaded. Remote watcher updates, dirty-day uploads, in-flight rebases, and conflict resolution must preserve that base correctly rather than blindly overwriting newer remote Markdown. A watcher snapshot matching an in-flight submission (`uploadingDaysRef`) is the app's own write echo — adopt it as the merge base, never merge it against live editor content, or consecutive quick edits conflict with themselves and type-then-delete edits are silently reverted.
 - Preferences live in localStorage `notes-preferences`. Useful keys for repro scripts: `onboardingDismissed`, `syncPromptDismissed` (set both to skip first-run modals).
 
@@ -37,7 +37,7 @@
 - Never put CSS `zoom` on the `100vh` app shell — it shrinks the shell below the window and, in WebKit, makes `position: fixed` anchor to the zoomed element. Zoom applies to `.day-stream` via the `--editor-zoom` custom property.
 - Dark mode is a `.theme-dark` class on the shell, not `document.body` — portals/popovers must render inside `.app-shell`/`.capture-shell` to inherit it.
 - The mac app's only window is the capture window (`index.html?mode=capture`, hidden title bar, transparent, always-on-top). Tauri window focus events drive "focus today's editor" behavior via the `notes-focus-edge` custom event.
-- The formatting toolbar is intentionally hidden until an editor has focus (`:focus-within`).
+- The formatting toolbar is intentionally hidden until an editor has focus (`:focus-within`) or a non-collapsed selection; in the mac capture shell it remains visible across transient app focus changes.
 
 ## Testing notes
 

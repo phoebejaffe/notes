@@ -62,6 +62,10 @@ export class TagBlockNode extends ElementNode {
     return false
   }
 
+  isShadowRoot(): boolean {
+    return true
+  }
+
   extractWithChild(): boolean {
     return true
   }

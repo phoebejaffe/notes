@@ -12,6 +12,35 @@ export function comparableLineText(line: string) {
     .trim()
 }
 
+const LIST_ITEM_LINE_PATTERN = /^\s*(?:[-*+]|\d+[.)])\s+\S/u
+const CHECKLIST_ITEM_LINE_PATTERN = /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+\S/u
+
+export function markdownForEditor(source: string) {
+  const lines = source.split('\n')
+  const rendered: string[] = []
+  lines.forEach((line, index) => {
+    rendered.push(line)
+    const next = lines[index + 1]
+    if (CHECKLIST_ITEM_LINE_PATTERN.test(line) && next !== undefined && next.trim() && !LIST_ITEM_LINE_PATTERN.test(next) && !/^\s/.test(next)) rendered.push('')
+  })
+  return rendered.join('\n')
+}
+
+export function restoreMarkdownSpacing(previous: string, next: string) {
+  const previousLines = previous.split('\n')
+  const nextLines = next.split('\n')
+  let searchStart = 0
+  previousLines.forEach((line, index) => {
+    const following = previousLines[index + 1]
+    if (!CHECKLIST_ITEM_LINE_PATTERN.test(line) || following === undefined || !following.trim() || LIST_ITEM_LINE_PATTERN.test(following) || /^\s/.test(following)) return
+    const lineIndex = nextLines.indexOf(line, searchStart)
+    if (lineIndex < 0 || nextLines[lineIndex + 1] !== '') return
+    nextLines.splice(lineIndex + 1, 1)
+    searchStart = lineIndex + 1
+  })
+  return nextLines.join('\n')
+}
+
 export function sourceLineForRenderedText(source: string, renderedText: string) {
   const normalized = renderedText.replace(/\s+/gu, ' ').trim()
   if (!normalized) return -1
@@ -22,10 +51,10 @@ export function sourceLineForRenderedText(source: string, renderedText: string) 
 }
 
 export function sourceLineRangeForRenderedSelection(source: string, renderedText: string) {
-  const normalized = renderedText.replace(/\s+/gu, ' ').trim()
+  const normalized = renderedText.replace(/%%\s*/gu, '').replace(/\s+/gu, ' ').trim()
   if (!normalized) return undefined
   const lines = source.split('\n')
-  const comparableLines = lines.map(comparableLineText)
+  const comparableLines = lines.map((line) => comparableLineText(line).replace(/^%%\s+/u, ''))
   const compactSelection = normalized.replace(/\s+/gu, '')
   for (let startLine = 0; startLine < comparableLines.length; startLine += 1) {
     if (!comparableLines[startLine]) continue
@@ -37,7 +66,24 @@ export function sourceLineRangeForRenderedSelection(source: string, renderedText
         compactCombined += comparableLines[endLine].replace(/\s+/gu, '')
       }
       if (combined.length < normalized.length && compactCombined.length < compactSelection.length) continue
-      if (combined.includes(normalized) || compactCombined.includes(compactSelection)) return { startLine, endLine }
+      const matchStart = combined.indexOf(normalized)
+      const compactMatchStart = compactCombined.indexOf(compactSelection)
+      const matchedStart = matchStart >= 0 ? matchStart : compactMatchStart
+      if (matchedStart >= 0) {
+        const matchedLength = matchStart >= 0 ? normalized.length : compactSelection.length
+        const parts: Array<{ lineIndex: number; start: number; end: number }> = []
+        let cursor = 0
+        for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
+          const lineLength = comparableLines[lineIndex].length
+          if (!lineLength) continue
+          parts.push({ lineIndex, start: cursor, end: cursor + lineLength })
+          cursor += lineLength + 1
+        }
+        const matchEnd = matchedStart + matchedLength
+        const start = parts.find((part) => matchedStart < part.end)?.lineIndex ?? parts.at(-1)?.lineIndex ?? startLine
+        const end = [...parts].reverse().find((part) => matchEnd > part.start)?.lineIndex ?? start
+        return { startLine: start, endLine: Math.max(start, end) }
+      }
       break
     }
   }

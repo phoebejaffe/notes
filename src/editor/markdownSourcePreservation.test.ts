@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { comparableLineText, preserveMarkerLines, sourceLineForRenderedText } from './markdownSourcePreservation'
+import { comparableLineText, markdownForEditor, preserveMarkerLines, restoreMarkdownSpacing, sourceLineForRenderedText } from './markdownSourcePreservation'
 import { sourceLineRangeForRenderedSelection } from './markdownSourcePreservation'
 
 describe('Markdown source preservation', () => {
@@ -19,6 +19,15 @@ describe('Markdown source preservation', () => {
   })
 })
 
+describe('Markdown list rendering', () => {
+  it('separates following transcription lines from a task item without changing the source', () => {
+    const source = '💡 first recording[ ](https://example.com/one)\n- [ ] 💡 task recording[ ](https://example.com/two)\n💡 third recording[ ](https://example.com/three)'
+    const rendered = markdownForEditor(source)
+    expect(rendered).toContain('- [ ] 💡 task recording[ ](https://example.com/two)\n\n💡 third recording')
+    expect(restoreMarkdownSpacing(source, rendered)).toBe(source)
+  })
+})
+
 describe('Rendered text to source line matching', () => {
   it('matches a rendered line back to its plain source line', () => {
     expect(sourceLineForRenderedText('first\nsecond line\nthird', 'second line')).toBe(1)
@@ -33,12 +42,22 @@ describe('Rendered text to source line matching', () => {
     expect(sourceLineRangeForRenderedSelection(source, 'first line\nsecond line\nthird line')).toEqual({ startLine: 0, endLine: 2 })
     expect(sourceLineRangeForRenderedSelection('first\nunrelated\nsecond\nthird', 'first second third')).toBeUndefined()
   })
+
+  it('does not include an earlier soft-break line when selection starts later in a paragraph', () => {
+    expect(sourceLineRangeForRenderedSelection('prefix\nfirst\nsecond\nthird\nsuffix', 'first second')).toEqual({ startLine: 1, endLine: 2 })
+  })
     expect(sourceLineRangeForRenderedSelection('not brought that to him,  \nyou ok not sprintibng and what covid test', 'not brought that to him, you ok not sprintibng and what covid test')).toEqual({ startLine: 0, endLine: 1 })
 
   it('matches a muted line whose source is a Markdown link', () => {
     const source = '%% [💡](https://example.com/recording) Transcribe with a better voice model.'
     expect(sourceLineForRenderedText(source, '%% 💡 Transcribe with a better voice model.')).toBe(0)
   })
+
+  it('maps source-newline soft breaks across one rendered paragraph', () => {
+    const source = 'first soft line\nsecond soft line\nthird soft line'
+    expect(sourceLineRangeForRenderedSelection(source, 'first soft line second soft line third soft line')).toEqual({ startLine: 0, endLine: 2 })
+  })
+
 
   it('reduces images to their alt text', () => {
     expect(comparableLineText('![diagram](https://example.com/a.png) after')).toBe('diagram after')

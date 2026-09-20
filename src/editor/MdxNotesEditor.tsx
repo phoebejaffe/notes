@@ -1,12 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
-import { $createParagraphNode, $getNodeByKey, $getRoot, $setSelection, type LexicalEditor } from 'lexical'
-import { moveLines, parseMarkdown, removeTagAtPosition, toggleChecklist, toggleMutedLines } from '../markerEngine'
+import { $createParagraphNode, $getNodeByKey, $getNodeFromDOMNode, $getRoot, $getSelection, $setSelection, $isRangeSelection, type LexicalEditor } from 'lexical'
+import { checklistToPlainText, moveLines, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleChecklist, toggleMutedLines } from '../markerEngine'
 import { EditorActionsProvider } from './editorActions'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { commentsToTagDirectives } from './tagSyntax'
-import { comparableLineText, sourceLineForRenderedText } from './markdownSourcePreservation'
-import { sourceLineRangeForRenderedSelection } from './markdownSourcePreservation'
+import { comparableLineText, markdownForEditor, restoreMarkdownSpacing, sourceLineRangeForRenderedSelection } from './markdownSourcePreservation'
 import { $isTagBlockNode } from './TagBlockNode'
 import { AudioPlayerPopover } from './AudioPlayerPopover'
 import type { MdxNotesEditorProps } from './editorTypes'
@@ -21,31 +20,97 @@ function isAudioRecordingUrl(href: string | null | undefined): boolean {
   }
 }
 
-function suppressMutedPrefix(element: HTMLElement) {
-  if (element.querySelector(':scope > .notes-muted-prefix')) return
-  const textNode = [...element.childNodes].find((node): node is Text => node.nodeType === Node.TEXT_NODE && node.textContent?.trimStart().startsWith('%%') === true)
-  if (!textNode?.textContent) return
-  const leadingWhitespace = textNode.textContent.match(/^\s*/u)?.[0] ?? ''
-  const prefixLength = leadingWhitespace.length + 2 + (textNode.textContent[leadingWhitespace.length + 2] === ' ' ? 1 : 0)
-  const prefix = document.createElement('span')
-  prefix.className = 'notes-muted-prefix'
-  prefix.contentEditable = 'false'
-  prefix.setAttribute('aria-hidden', 'true')
-  prefix.textContent = textNode.textContent.slice(0, prefixLength)
-  textNode.textContent = textNode.textContent.slice(prefixLength)
-  textNode.parentNode?.insertBefore(prefix, textNode)
+function suppressMutedMarkers(element: HTMLElement, hidden: boolean) {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  let textNode = walker.nextNode() as Text | null
+  while (textNode) {
+    if (!textNode.parentElement?.closest('.notes-muted-prefix, .notes-muted-line')) nodes.push(textNode)
+    textNode = walker.nextNode() as Text | null
+  }
+
+  nodes.forEach((node) => {
+    const text = node.textContent ?? ''
+    const matches = [...text.matchAll(/(^|\n)(\s*%%\s?)/gu)]
+    if (!matches.length) return
+
+    const fragment = document.createDocumentFragment()
+    let cursor = 0
+    matches.forEach((match) => {
+      const markerStart = match.index + match[1].length
+      const markerEnd = markerStart + match[2].length
+      const nextLine = text.indexOf('\n', markerEnd)
+      const lineEnd = nextLine < 0 ? text.length : nextLine
+      fragment.append(text.slice(cursor, markerStart))
+
+      const prefix = document.createElement('span')
+      prefix.className = 'notes-muted-prefix'
+      prefix.contentEditable = 'false'
+      prefix.setAttribute('aria-hidden', 'true')
+      prefix.textContent = text.slice(markerStart, markerEnd)
+      fragment.append(prefix)
+
+      const line = document.createElement('span')
+      line.className = 'notes-muted-line'
+      line.hidden = hidden
+      line.textContent = text.slice(markerEnd, lineEnd)
+      fragment.append(line)
+      cursor = lineEnd
+    })
+    fragment.append(text.slice(cursor))
+    node.replaceWith(fragment)
+  })
+}
+
+function refreshMutedHighlights(hidden: boolean) {
+  if (typeof CSS === 'undefined' || !CSS.highlights) return
+  const lineRanges: Range[] = []
+
+  document.querySelectorAll<HTMLElement>('.mdxeditor-root-contenteditable').forEach((content) => {
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT)
+    let textNode = walker.nextNode() as Text | null
+    while (textNode) {
+      if (!textNode.parentElement?.closest('.notes-muted-prefix')) {
+        const text = textNode.textContent ?? ''
+        for (const match of text.matchAll(/(^|\n)\s*%%\s?/gu)) {
+          const lineStart = match.index + match[1].length
+          const nextLine = text.indexOf('\n', lineStart)
+          const lineEnd = nextLine < 0 ? text.length : nextLine
+          const range = document.createRange()
+          range.setStart(textNode, lineStart)
+          range.setEnd(textNode, lineEnd)
+          lineRanges.push(range)
+        }
+      }
+      textNode = walker.nextNode() as Text | null
+    }
+  })
+
+  CSS.highlights.set('notes-muted-line', new Highlight(...(hidden ? [] : lineRanges)))
+  CSS.highlights.set('notes-muted-line-hidden', new Highlight(...(hidden ? lineRanges : [])))
 }
 
 function applyMutedVisibility(root: HTMLElement | null, hidden: boolean) {
   if (!root) return
-  root.querySelectorAll<HTMLElement>('[data-prototype-muted="true"], p, li, blockquote').forEach((element) => {
-    const muted = element.matches('[data-prototype-muted="true"]') || element.textContent?.trimStart().startsWith('%%')
-    element.classList.toggle('notes-muted-block', muted)
-    if (muted) {
-      suppressMutedPrefix(element)
-      if (element.hidden !== hidden) element.hidden = hidden
-    }
+  const selection = window.getSelection()
+  const savedRange = selection?.rangeCount && selection.anchorNode && root.contains(selection.anchorNode)
+    ? selection.getRangeAt(0).cloneRange()
+    : null
+  root.querySelectorAll<HTMLElement>('[data-prototype-muted="true"], h1, h2, h3, h4, h5, h6, p, li, blockquote').forEach((element) => {
+    const renderedText = element.textContent ?? ''
+    const hasMutedLine = /(?:^|\n)\s*%%(?:\s|$)/u.test(renderedText)
+    const contentLines = renderedText.split('\n').filter((line) => line.trim())
+    const allContentMuted = contentLines.length > 0 && contentLines.every((line) => /^\s*%%(?:\s|$)/u.test(line))
+    const blockMuted = element.matches('[data-prototype-muted="true"]') || allContentMuted
+    element.classList.toggle('notes-muted-block', blockMuted)
+    if (hasMutedLine && allContentMuted) suppressMutedMarkers(element, hidden)
+    if (element.hidden !== (blockMuted && hidden)) element.hidden = blockMuted && hidden
   })
+  refreshMutedHighlights(hidden)
+  if (savedRange && selection && savedRange.startContainer.isConnected && savedRange.endContainer.isConnected) {
+    selection.removeAllRanges()
+    selection.addRange(savedRange)
+  }
 }
 
 function tagColor(tag: string, colors: Record<string, string>) {
@@ -176,70 +241,133 @@ function selectedSourceRange(source: string, selectedText: string) {
   return { from: lineStart, to: lineEnd }
 }
 
-function restoreEditorSelection(root: HTMLElement | null, selectedText: string, blockText: string, caretOffset: number) {
+function restoreEditorSelection(editor: LexicalEditor | null, root: HTMLElement | null, selectedText: string, blockText: string, caretOffset: number, caretText: string, caretTextOffset: number) {
   const content = root?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
   if (!content || (!selectedText && !blockText)) return
-  const target = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')].find((element) => {
-    const text = element.textContent ?? ''
-    return selectedText ? text.includes(selectedText) : text.includes(blockText)
-  })
-  if (!target) return
   const selection = window.getSelection()
   if (!selection) return
+  const blocks = [...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')]
+  let target = blocks.find((element) => {
+    const text = element.textContent ?? ''
+    return selectedText ? text.includes(selectedText) : text.includes(caretText || blockText)
+  })
+  const nodes: Text[] = []
+  const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node) {
+    nodes.push(node as Text)
+    node = walker.nextNode()
+  }
+  if (!nodes.length) return
+  const locate = (text: string, fromEnd = false) => {
+    const ordered = fromEnd ? [...nodes].reverse() : nodes
+    for (const textNode of ordered) {
+      const value = textNode.textContent ?? ''
+      const index = fromEnd ? value.lastIndexOf(text) : value.indexOf(text)
+      if (index >= 0) return { node: textNode, offset: fromEnd ? index + text.length : index }
+    }
+    return undefined
+  }
   const range = document.createRange()
   if (selectedText) {
-    const nodes: Text[] = []
-    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
-    let node = walker.nextNode()
-    while (node) {
-      nodes.push(node as Text)
-      node = walker.nextNode()
+    const exactTarget = target && locate(selectedText)
+    if (exactTarget) {
+      const end = locate(selectedText, true)
+      if (!end) return
+      range.setStart(exactTarget.node, exactTarget.offset)
+      range.setEnd(end.node, end.offset)
+    } else {
+      const chunks = selectedText.trim().split(/\n+/u).map((chunk) => chunk.trim()).filter(Boolean)
+      const firstChunk = chunks[0] ?? ''
+      const lastChunk = chunks.at(-1) ?? ''
+      const start = locate(firstChunk) ?? locate(firstChunk.split(/\s+/u)[0] ?? '')
+      const end = locate(lastChunk, true) ?? locate(lastChunk.split(/\s+/u).at(-1) ?? '', true)
+      if (!start || !end) return
+      range.setStart(start.node, start.offset)
+      range.setEnd(end.node, end.offset)
     }
-    const fullText = nodes.map((textNode) => textNode.textContent ?? '').join('')
-    const matchStart = fullText.indexOf(selectedText)
-    if (matchStart >= 0) {
-      let offset = 0
-      const locate = (position: number) => {
-        for (const textNode of nodes) {
-          const length = textNode.textContent?.length ?? 0
-          if (position <= offset + length) return { node: textNode, offset: position - offset }
-          offset += length
-        }
-        return { node: nodes[nodes.length - 1], offset: nodes[nodes.length - 1]?.textContent?.length ?? 0 }
-      }
-      const start = locate(matchStart)
-      offset = 0
-      const end = locate(matchStart + selectedText.length)
-      if (start.node && end.node) {
-        range.setStart(start.node, start.offset)
-        range.setEnd(end.node, end.offset)
-      } else range.selectNodeContents(target)
-    } else range.selectNodeContents(target)
   } else {
-    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
-    let node = walker.nextNode()
-    let remaining = Math.max(0, caretOffset)
-    while (node) {
-      const length = node.textContent?.length ?? 0
-      if (remaining <= length) {
-        range.setStart(node, remaining)
-        range.collapse(true)
-        break
+    let fallbackCaretOffset: number | undefined
+    if (!target) {
+      const nextToken = blockText.slice(Math.min(caretOffset, blockText.length)).match(/\S+/u)?.[0]
+      const previousToken = blockText.slice(0, Math.min(caretOffset, blockText.length)).match(/\S+$/u)?.[0]
+      const token = nextToken ?? previousToken
+      if (token) {
+        target = blocks.find((element) => (element.textContent ?? '').includes(token))
+        fallbackCaretOffset = nextToken ? (target?.textContent ?? '').indexOf(token) : (target?.textContent ?? '').indexOf(token) + token.length
       }
+      if (!target || fallbackCaretOffset === undefined || fallbackCaretOffset < 0) return
+    }
+    const targetNodes: Text[] = []
+    const targetWalker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
+    let targetNode = targetWalker.nextNode()
+    while (targetNode) {
+      targetNodes.push(targetNode as Text)
+      targetNode = targetWalker.nextNode()
+    }
+    const caretTextStart = caretText ? (target.textContent ?? '').indexOf(caretText) : -1
+    let remaining = Math.max(0, fallbackCaretOffset ?? (caretTextStart >= 0 ? caretTextStart + caretTextOffset : caretOffset))
+    const caretNode = targetNodes.find((textNode) => {
+      const length = textNode.textContent?.length ?? 0
+      if (remaining <= length) return true
       remaining -= length
-      node = walker.nextNode()
-    }
-    if (!node) {
-      range.selectNodeContents(target)
-      range.collapse(false)
-    }
+      return false
+    })
+    if (!caretNode) return
+    range.setStart(caretNode, remaining)
+    range.collapse(true)
   }
   selection.removeAllRanges()
   selection.addRange(range)
-  target.closest<HTMLElement>('[contenteditable="true"]')?.focus()
+  if (editor && range.startContainer.nodeType === Node.TEXT_NODE) {
+    const domNode = range.startContainer as Text
+    editor.update(() => {
+      const lexicalNode = $getNodeFromDOMNode(domNode)
+      const lexicalSelection = $getSelection()
+      if (lexicalNode && lexicalNode.getType() === 'text' && $isRangeSelection(lexicalSelection)) {
+        lexicalSelection.anchor.set(lexicalNode.getKey(), range.startOffset, 'text')
+        lexicalSelection.focus.set(lexicalNode.getKey(), range.startOffset, 'text')
+      }
+    })
+  }
 }
 
-function sourceLineRange(source: string, selectedText: string, caretBlockText: string) {
+function sourceLineForRenderedCaret(source: string, renderedBlockText: string, caretOffset: number) {
+  const normalizedBlock = renderedBlockText.replace(/%%\s*/gu, '').replace(/\s+/gu, ' ').trim()
+  if (normalizedBlock) {
+    const exactLine = source.split('\n').findIndex((line) => {
+      const comparable = comparableLineText(line).replace(/^%%\s+/u, '')
+      return comparable === normalizedBlock
+    })
+    if (exactLine >= 0) return exactLine
+    const blockRange = sourceLineRangeForRenderedSelection(source, renderedBlockText)
+    if (blockRange) {
+      let renderedOffset = 0
+      const lines = source.split('\n')
+      for (let lineIndex = blockRange.startLine; lineIndex <= blockRange.endLine; lineIndex += 1) {
+        const comparable = comparableLineText(lines[lineIndex]).replace(/^%%\s+/u, '')
+        if (!comparable) continue
+        if (caretOffset <= renderedOffset + comparable.length) return lineIndex
+        renderedOffset += comparable.length + 1
+      }
+      return blockRange.endLine
+    }
+  }
+  const lines = source.split('\n')
+  let renderedOffset = 0
+  let lastLine = -1
+  for (const [lineIndex, line] of lines.entries()) {
+    const comparable = comparableLineText(line)
+    if (!comparable) continue
+    const lineEnd = renderedOffset + comparable.length
+    if (caretOffset <= lineEnd) return lineIndex
+    renderedOffset = lineEnd + 1
+    lastLine = lineIndex
+  }
+  return lastLine
+}
+
+function sourceLineRange(source: string, selectedText: string, blockText: string, caretOffset = 0) {
   const range = selectedSourceRange(source, selectedText)
   if (range) {
     return {
@@ -247,7 +375,7 @@ function sourceLineRange(source: string, selectedText: string, caretBlockText: s
       endLine: source.slice(0, range.to).split('\n').length - 1,
     }
   }
-  const line = sourceLineForRenderedText(source, caretBlockText)
+  const line = sourceLineForRenderedCaret(source, blockText, caretOffset)
   return line < 0 ? undefined : { startLine: line, endLine: line }
 }
 
@@ -270,63 +398,6 @@ function loadRecentTags() {
   }
 }
 
-function applyChecklistWidgets(root: HTMLElement | null, getSource: () => string, commit: (markdown: string) => void) {
-  if (!root) return
-  const lines = getSource().split('\n')
-  let searchStart = 0
-  let overlay = root.querySelector<HTMLElement>(':scope > .notes-checklist-overlay')
-  if (!overlay) {
-    overlay = document.createElement('div')
-    overlay.className = 'notes-checklist-overlay'
-    root.appendChild(overlay)
-  }
-  const managedLines = new Set<string>()
-  const rootRect = root.getBoundingClientRect()
-  root.querySelectorAll<HTMLElement>('.mdxeditor-root-contenteditable li').forEach((item) => {
-    const lineIndex = lines.findIndex((line, index) => index >= searchStart && /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+/u.test(line) && sourceLineForRenderedText(line, item.textContent ?? '') >= 0)
-    const match = lineIndex < 0 ? null : lines[lineIndex].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/u)
-    if (lineIndex < 0 || !match) {
-      item.removeAttribute('data-notes-checklist')
-      item.removeAttribute('data-notes-checklist-checked')
-      return
-    }
-    searchStart = lineIndex + 1
-    const checked = match[2].toLowerCase() === 'x'
-    const key = String(lineIndex)
-    managedLines.add(key)
-    item.setAttribute('data-notes-checklist', 'true')
-    item.setAttribute('data-notes-checklist-checked', String(checked))
-    let input = overlay.querySelector<HTMLInputElement>(`[data-checklist-line="${key}"]`)
-    if (!input) {
-      input = document.createElement('input')
-      input.type = 'checkbox'
-      input.className = 'notes-checklist-checkbox'
-      input.dataset.checklistLine = key
-      overlay.appendChild(input)
-    }
-    input.checked = checked
-    input.setAttribute('aria-label', checked ? 'Mark task incomplete' : 'Mark task complete')
-    const itemRect = item.getBoundingClientRect()
-    input.style.top = `${itemRect.top - rootRect.top + 3}px`
-    input.style.left = `${itemRect.left - rootRect.left - 20}px`
-    if (input.dataset.bound !== 'true') {
-      input.dataset.bound = 'true'
-    input.addEventListener('change', () => {
-      const nextLines = getSource().split('\n')
-      const line = nextLines[Number(input.dataset.checklistLine)]
-      const current = line?.match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[[ xX]\]/u)
-      if (!current) return
-      nextLines[Number(input.dataset.checklistLine)] = `${current[1]}[${input.checked ? 'x' : ' '}]${line.slice(current[0].length)}`
-      commit(nextLines.join('\n'))
-    })
-      }
-  })
-  overlay.querySelectorAll<HTMLInputElement>('.notes-checklist-checkbox').forEach((input) => {
-    if (!managedLines.has(input.dataset.checklistLine ?? '')) input.remove()
-  })
-  if (!managedLines.size) overlay.remove()
-}
-
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, showUndoRedo = false, rawTextMode = false, taskShortcut = 'Mod-Shift-c' }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const [lexicalEditor, setLexicalEditor] = useState<LexicalEditor | null>(null)
@@ -336,9 +407,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const selectedTextRef = useRef('')
   const caretBlockTextRef = useRef('')
   const caretOffsetRef = useRef(0)
+  const caretTextRef = useRef('')
+  const caretTextOffsetRef = useRef(0)
   const userInteractedRef = useRef(false)
   const suppressChangeRef = useRef(false)
-  const [selectionState, setSelectionState] = useState({ text: '', blockText: '' })
+  const programmaticMarkdownRef = useRef<string | null>(null)
+  const [selectionState, setSelectionState] = useState({ text: '', blockText: '', caretOffset: 0 })
   const [audioPopover, setAudioPopover] = useState<{ url: string; rect: DOMRect } | null>(null)
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
   const boundaryParagraphRef = useRef<{ key: string; armed: boolean } | null>(null)
@@ -347,15 +421,21 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const selectedText = selectedTextRef.current
     const blockText = caretBlockTextRef.current
     const caretOffset = caretOffsetRef.current
+    const caretText = caretTextRef.current
+    const caretTextOffset = caretTextOffsetRef.current
     valueRef.current = markdown
+    programmaticMarkdownRef.current = markdown
     suppressChangeRef.current = true
-    editorRef.current?.setMarkdown(markdown)
+    editorRef.current?.setMarkdown(markdownForEditor(markdown))
     onChangeRef.current(markdown)
     window.requestAnimationFrame(() => {
-      suppressChangeRef.current = false
-      restoreEditorSelection(hostRef.current, selectedText, blockText, caretOffset)
+      restoreEditorSelection(lexicalEditor, hostRef.current, selectedText, blockText, caretOffset, caretText, caretTextOffset)
+      window.requestAnimationFrame(() => {
+        restoreEditorSelection(lexicalEditor, hostRef.current, selectedText, blockText, caretOffset, caretText, caretTextOffset)
+        suppressChangeRef.current = false
+      })
     })
-  }, [])
+  }, [lexicalEditor])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -365,7 +445,10 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const host = hostRef.current
     if (!host) return
     const markInteraction = (event: Event) => {
-      if (host.contains(event.target as Node)) userInteractedRef.current = true
+      if (host.contains(event.target as Node)) {
+        userInteractedRef.current = true
+        if (event.type === 'beforeinput' || event.type === 'keydown' || event.type === 'paste') programmaticMarkdownRef.current = null
+      }
     }
     const preserveEditorSelection = (event: globalThis.MouseEvent) => {
       const target = event.target as HTMLElement
@@ -411,6 +494,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('beforeinput', markInteraction)
     host.addEventListener('keydown', markInteraction)
     host.addEventListener('paste', markInteraction)
+    host.addEventListener('pointerdown', markInteraction, true)
     host.addEventListener('click', markInteraction)
     host.addEventListener('mousedown', preserveEditorSelection)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
@@ -418,6 +502,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('beforeinput', markInteraction)
       host.removeEventListener('keydown', markInteraction)
       host.removeEventListener('paste', markInteraction)
+      host.removeEventListener('pointerdown', markInteraction, true)
       host.removeEventListener('click', markInteraction)
       host.removeEventListener('mousedown', preserveEditorSelection)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
@@ -429,12 +514,13 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (valueRef.current === editorValue) return
     valueRef.current = editorValue
     suppressChangeRef.current = true
-    editorRef.current?.setMarkdown(editorValue)
+    editorRef.current?.setMarkdown(markdownForEditor(editorValue))
     const frame = window.requestAnimationFrame(() => { suppressChangeRef.current = false })
     return () => window.cancelAnimationFrame(frame)
   }, [value])
 
   useEffect(() => {
+    const host = hostRef.current
     const updateSelection = () => {
       const boundary = boundaryParagraphRef.current
       if (boundary?.armed) {
@@ -457,23 +543,38 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       }
       const selection = window.getSelection()
       const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+      const hasSelection = !!selection && !selection.isCollapsed && !!content?.contains(selection.anchorNode)
+      host?.classList.toggle('notes-has-selection', hasSelection)
       if (!selection || !content?.contains(selection.anchorNode)) return
       const selectedText = selection.toString()
       const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
       const block = anchor?.closest<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre')
       const blockText = block?.textContent ?? ''
+      const caretText = selection.isCollapsed && selection.anchorNode?.nodeType === Node.TEXT_NODE
+        ? selection.anchorNode.textContent ?? ''
+        : blockText
+      const caretTextOffset = selection.isCollapsed && selection.anchorNode?.nodeType === Node.TEXT_NODE
+        ? selection.anchorOffset
+        : 0
       selectedTextRef.current = selectedText
       caretBlockTextRef.current = blockText
+      if (selection.isCollapsed) {
+        caretTextRef.current = caretText
+        caretTextOffsetRef.current = caretTextOffset
+      }
       if (block && selection.isCollapsed) {
         const caretRange = document.createRange()
         caretRange.selectNodeContents(block)
         caretRange.setEnd(selection.anchorNode!, selection.anchorOffset)
         caretOffsetRef.current = caretRange.toString().length
       }
-      setSelectionState({ text: selectedText, blockText })
+      setSelectionState({ text: selectedText, blockText, caretOffset: caretOffsetRef.current })
     }
     document.addEventListener('selectionchange', updateSelection)
-    return () => document.removeEventListener('selectionchange', updateSelection)
+    return () => {
+      host?.classList.remove('notes-has-selection')
+      document.removeEventListener('selectionchange', updateSelection)
+    }
   }, [lexicalEditor])
 
   useEffect(() => {
@@ -484,7 +585,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (cancelled) return
       applyMutedVisibility(hostRef.current, hideMutedLines)
       applyTagDecorations(hostRef.current, value, tagColors)
-      applyChecklistWidgets(hostRef.current, () => valueRef.current, commit)
       attempts += 1
       if (attempts < 30) frame = window.requestAnimationFrame(apply)
     }
@@ -497,7 +597,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
   }, [commit, hideMutedLines, tagColors, value])
 
-  const selectionLines = useMemo(() => sourceLineRange(value, selectionState.text, selectionState.blockText), [selectionState, value])
+  const selectionLines = useMemo(() => sourceLineRange(value, selectionState.text, selectionState.blockText, selectionState.caretOffset), [selectionState, value])
   const activeTags = useMemo(() => {
     if (!selectionLines) return []
     const parsed = parseMarkdown(value)
@@ -513,10 +613,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const currentSelection = readRenderedSelection(hostRef.current)
       const selectedText = currentSelection?.text ?? selectionState.text
       const blockText = currentSelection?.blockText ?? selectionState.blockText
+      if (currentSelection) {
+        caretTextRef.current = currentSelection.caretText
+        caretTextOffsetRef.current = currentSelection.caretTextOffset
+      }
       const tag = tagValue.trim()
       const source = valueRef.current
       const selectedRange = selectedSourceRange(source, selectedText)
-      const caretLine = selectedRange ? -1 : sourceLineForRenderedText(source, blockText)
+      const caretLine = selectedRange ? -1 : sourceLineForRenderedCaret(source, blockText, currentSelection?.caretOffset ?? caretOffsetRef.current)
       const caretLineStart = caretLine >= 0 ? source.split('\n').slice(0, caretLine).reduce((offset, line) => offset + line.length + 1, 0) : -1
       const caretLineEnd = caretLine >= 0 ? caretLineStart + source.split('\n')[caretLine].length : -1
       const range = selectedRange ?? (caretLine >= 0 ? { from: caretLineStart, to: caretLineEnd } : undefined)
@@ -538,25 +642,69 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     },
     toggleMute: () => {
       const source = valueRef.current
-      const range = selectedSourceRange(source, selectionState.text)
+      const currentSelection = readRenderedSelection(hostRef.current)
+      const selectedText = currentSelection?.text ?? selectionState.text
+      const blockText = currentSelection?.blockText ?? selectionState.blockText
+      if (currentSelection) {
+        caretTextRef.current = currentSelection.caretText
+        caretTextOffsetRef.current = currentSelection.caretTextOffset
+      }
+      selectedTextRef.current = selectedText
+      const range = selectedSourceRange(source, selectedText)
       if (range) {
         const startLine = source.slice(0, range.from).split('\n').length - 1
         const endLine = source.slice(0, range.to).split('\n').length - 1
         commit(toggleMutedLines(source, startLine, endLine).source)
         return
       }
-      const line = sourceLineForRenderedText(source, selectionState.blockText)
+      const line = sourceLineForRenderedCaret(source, blockText, currentSelection?.caretOffset ?? caretOffsetRef.current)
       if (line >= 0) commit(toggleMutedLines(source, line, line).source)
     },
     toggleChecklist: () => {
       const source = valueRef.current
-      const line = sourceLineForRenderedText(source, selectionState.blockText)
+      const currentSelection = readRenderedSelection(hostRef.current)
+      const blockText = currentSelection?.blockText ?? selectionState.blockText
+      if (currentSelection) {
+        caretTextRef.current = currentSelection.caretText
+        caretTextOffsetRef.current = currentSelection.caretTextOffset
+      }
+      const line = sourceLineForRenderedCaret(source, blockText, currentSelection?.caretOffset ?? caretOffsetRef.current)
       if (line >= 0) commit(toggleChecklist(source, line))
+    },
+    removeChecklist: () => {
+      const source = valueRef.current
+      const currentSelection = readRenderedSelection(hostRef.current)
+      const blockText = currentSelection?.blockText ?? selectionState.blockText
+      if (currentSelection) {
+        caretTextRef.current = currentSelection.caretText
+        caretTextOffsetRef.current = currentSelection.caretTextOffset
+      }
+      const line = sourceLineForRenderedCaret(source, blockText, currentSelection?.caretOffset ?? caretOffsetRef.current)
+      if (line >= 0) commit(removeChecklist(source, line))
+    },
+    checklistToPlainText: () => {
+      const source = valueRef.current
+      const currentSelection = readRenderedSelection(hostRef.current)
+      const blockText = currentSelection?.blockText ?? selectionState.blockText
+      if (currentSelection) {
+        caretTextRef.current = currentSelection.caretText
+        caretTextOffsetRef.current = currentSelection.caretTextOffset
+      }
+      const line = sourceLineForRenderedCaret(source, blockText, currentSelection?.caretOffset ?? caretOffsetRef.current)
+      if (line >= 0) commit(checklistToPlainText(source, line))
     },
     moveLines: (direction: 'up' | 'down') => {
       const source = valueRef.current
-      const range = selectedSourceRange(source, selectionState.text)
-      const startLine = range ? source.slice(0, range.from).split('\n').length - 1 : sourceLineForRenderedText(source, selectionState.blockText)
+      const currentSelection = readRenderedSelection(hostRef.current)
+      const selectedText = currentSelection?.text ?? selectionState.text
+      const blockText = currentSelection?.blockText ?? selectionState.blockText
+      if (currentSelection) {
+        caretTextRef.current = currentSelection.caretText
+        caretTextOffsetRef.current = currentSelection.caretTextOffset
+      }
+      selectedTextRef.current = selectedText
+      const range = selectedSourceRange(source, selectedText)
+      const startLine = range ? source.slice(0, range.from).split('\n').length - 1 : sourceLineForRenderedCaret(source, blockText, currentSelection?.caretOffset ?? caretOffsetRef.current)
       const endLine = range ? source.slice(0, range.to).split('\n').length - 1 : startLine
       if (startLine >= 0 && endLine >= startLine) commit(moveLines(source, startLine, endLine, direction))
     },
@@ -572,7 +720,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === taskShortcutKey) {
         event.preventDefault()
         event.stopPropagation()
-        actions.toggleChecklist()
+        actions.checklistToPlainText()
+        return
+      }
+      if (modifier && !event.altKey && event.key === 'Enter') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.shiftKey) actions.removeChecklist()
+        else actions.toggleChecklist()
         return
       }
       if (event.altKey && !modifier && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
@@ -744,7 +899,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === taskShortcutKey) {
       event.preventDefault()
       const line = target.value.slice(0, target.selectionStart).split('\n').length - 1
-      const nextValue = toggleChecklist(target.value, line)
+      const nextValue = checklistToPlainText(target.value, line)
+      if (nextValue !== target.value) {
+        valueRef.current = nextValue
+        onChangeRef.current(nextValue)
+      }
+      return
+    }
+    if (modifier && !event.altKey && event.key === 'Enter') {
+      event.preventDefault()
+      const line = target.value.slice(0, target.selectionStart).split('\n').length - 1
+      const nextValue = event.shiftKey ? removeChecklist(target.value, line) : toggleChecklist(target.value, line)
       if (nextValue !== target.value) {
         valueRef.current = nextValue
         onChangeRef.current(nextValue)
@@ -799,12 +964,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     <EditorActionsProvider value={actions}>
       <MDXEditor
         ref={editorRef}
-        markdown={commentsToTagDirectives(value)}
+        markdown={markdownForEditor(commentsToTagDirectives(value))}
         autoFocus={autoFocus}
         onChange={(markdown) => {
           if (!userInteractedRef.current || suppressChangeRef.current) return
-          valueRef.current = markdown
-          onChangeRef.current(markdown)
+          if (programmaticMarkdownRef.current !== null) {
+            programmaticMarkdownRef.current = null
+            return
+          }
+          const preserved = restoreMarkdownSpacing(valueRef.current, preserveMutedLines(valueRef.current, markdown))
+          valueRef.current = preserved
+          onChangeRef.current(preserved)
         }}
         plugins={plugins}
       />

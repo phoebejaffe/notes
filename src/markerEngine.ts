@@ -221,6 +221,31 @@ export function isMutedLine(line: string) {
   return mutedMarkerPosition(line) !== undefined
 }
 
+export function preserveMutedLines(previous: string, next: string) {
+  const previousLines = previous.split('\n')
+  const nextLines = next.split('\n')
+  let searchStart = 0
+  previousLines.forEach((previousLine) => {
+    const marker = mutedMarkerPosition(previousLine)
+    if (!marker) return
+    const previousComparable = comparableWithoutMute(previousLine)
+    const matchIndex = nextLines.findIndex((nextLine, index) => index >= searchStart && comparableWithoutMute(nextLine) === previousComparable)
+    if (matchIndex < 0) return
+    searchStart = matchIndex + 1
+    if (!isMutedLine(nextLines[matchIndex])) nextLines[matchIndex] = toggleMutedLines(nextLines.join('\n'), matchIndex, matchIndex).source.split('\n')[matchIndex]
+  })
+  return nextLines.join('\n')
+}
+
+function comparableWithoutMute(line: string) {
+  const marker = mutedMarkerPosition(line)
+  return (marker ? `${line.slice(0, marker.start)}${line.slice(marker.end)}` : line)
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/u, '')
+    .replace(/^\s*#{1,6}\s+/u, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
 export function toggleMutedLines(source: string, startLine: number, endLine: number) {
   const originalLines = source.split('\n')
   const lines = [...originalLines]
@@ -246,7 +271,7 @@ export function toggleMutedLines(source: string, startLine: number, endLine: num
 }
 
 const LIST_ITEM_PATTERN = /^(\s*)([-*+] |\d+[.)] )(.*)$/u
-const CHECKLIST_ITEM_PATTERN = /^(\s*(?:[-*+]|\d+[.)]) )\[([ xX])\](.*)$/u
+const CHECKLIST_ITEM_PATTERN = /^(\s*(?:[-*+]|\d+[.)]) (?:%% )?)\[([ xX])\](.*)$/u
 
 export function toggleChecklist(source: string, lineIndex: number) {
   const lines = source.split('\n')
@@ -258,24 +283,74 @@ export function toggleChecklist(source: string, lineIndex: number) {
     return lines.join('\n')
   }
   const listItem = line.match(LIST_ITEM_PATTERN)
-  if (!listItem) return source
-  lines[lineIndex] = `${listItem[1]}${listItem[2]}[ ] ${listItem[3]}`
+  if (listItem) {
+    const mutedRest = listItem[3].match(/^%%(?:\s|$)/u)
+    lines[lineIndex] = mutedRest
+      ? `${listItem[1]}${listItem[2]}%% [ ] ${listItem[3].slice(mutedRest[0].length)}`
+      : `${listItem[1]}${listItem[2]}[ ] ${listItem[3]}`
+    return lines.join('\n')
+  }
+  const muted = mutedMarkerPosition(line)
+  if (muted && !line.slice(0, muted.start).trim()) {
+    lines[lineIndex] = `${line.slice(0, muted.start)}- %% [ ] ${line.slice(muted.end)}`
+    return lines.join('\n')
+  }
+  const indent = line.match(/^\s*/u)![0]
+  lines[lineIndex] = `${indent}- [ ] ${line.slice(indent.length)}`
+  return lines.join('\n')
+}
+
+export function removeChecklist(source: string, lineIndex: number) {
+  const lines = source.split('\n')
+  const line = lines[lineIndex]
+  if (line === undefined) return source
+  const checklist = line.match(CHECKLIST_ITEM_PATTERN)
+  if (!checklist) return source
+  const rest = checklist[3].replace(/^ /u, '')
+  lines[lineIndex] = rest ? `${checklist[1]}${rest}` : checklist[1].trimEnd()
+  return lines.join('\n')
+}
+
+export function checklistToPlainText(source: string, lineIndex: number) {
+  const lines = source.split('\n')
+  const line = lines[lineIndex]
+  if (line === undefined) return source
+  const item = line.match(/^(\s*)(?:[-*+]|\d+[.)]) (.*)$/u)
+  if (!item) return source
+  let rest = item[2]
+  const muted = rest.match(/^%% /u)
+  if (muted) rest = rest.slice(muted[0].length)
+  const task = rest.match(/^\[[ xX]\] ?/u)
+  if (task) rest = rest.slice(task[0].length)
+  lines[lineIndex] = `${item[1]}${muted ? '%% ' : ''}${rest}`
   return lines.join('\n')
 }
 
 export function moveLines(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
   const lines = source.split('\n')
   if (startLine < 0 || endLine >= lines.length || startLine > endLine) return source
-  const adjacent = direction === 'up' ? startLine - 1 : endLine + 1
-  if (adjacent < 0 || adjacent >= lines.length) return source
-  const selected = lines.slice(startLine, endLine + 1)
-  if (direction === 'up') {
-    lines.splice(adjacent, 0, ...selected)
-    lines.splice(startLine + selected.length, selected.length)
-  } else {
-    lines.splice(startLine, selected.length)
-    lines.splice(adjacent - selected.length + 1, 0, ...selected)
-  }
+  const isBoundary = (line: string) => /^\s*(?:::tag\s*\{[^}]*\}|:::\s*$|(?:%%\s+)?<!--[\s\S]*-->\s*)$/u.test(line)
+  if (lines.slice(startLine, endLine + 1).some(isBoundary)) return source
+  let segmentStart = startLine
+  while (segmentStart > 0 && !isBoundary(lines[segmentStart - 1])) segmentStart -= 1
+  let segmentEnd = endLine
+  while (segmentEnd + 1 < lines.length && !isBoundary(lines[segmentEnd + 1])) segmentEnd += 1
+  const slots = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line, index }) => index >= segmentStart && index <= segmentEnd && line.trim())
+  const selectedSlots = slots.filter(({ index }) => index >= startLine && index <= endLine)
+  if (!selectedSlots.length) return source
+  const firstSelected = slots.indexOf(selectedSlots[0])
+  const lastSelected = slots.indexOf(selectedSlots.at(-1)!)
+  const adjacentSlot = direction === 'up' ? firstSelected - 1 : lastSelected + 1
+  if (adjacentSlot < 0 || adjacentSlot >= slots.length) return source
+  const orderedSlots = direction === 'up'
+    ? [slots[adjacentSlot], ...selectedSlots]
+    : [...selectedSlots, slots[adjacentSlot]]
+  const values = direction === 'up'
+    ? [...selectedSlots.map(({ index }) => lines[index]), lines[slots[adjacentSlot].index]]
+    : [lines[slots[adjacentSlot].index], ...selectedSlots.map(({ index }) => lines[index])]
+  orderedSlots.forEach(({ index }, offset) => { lines[index] = values[offset] })
   return lines.join('\n')
 }
 
