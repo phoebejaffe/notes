@@ -8,6 +8,21 @@ function formatTime(seconds: number): string {
   return `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
+const recordingAudioCache = new Map<string, HTMLAudioElement>()
+
+export function preloadRecordingAudio(url: string) {
+  let audio = recordingAudioCache.get(url)
+  if (!audio) {
+    audio = new Audio()
+    audio.preload = 'auto'
+    audio.src = url
+    audio.load()
+    recordingAudioCache.set(url, audio)
+    if (recordingAudioCache.size > 12) recordingAudioCache.delete(recordingAudioCache.keys().next().value!)
+  }
+  return audio
+}
+
 interface AudioPlayerPopoverProps {
   url: string
   anchorRect: DOMRect
@@ -22,10 +37,12 @@ export function AudioPlayerPopover({ url, anchorRect, onClose }: AudioPlayerPopo
   const [duration, setDuration] = useState(0)
 
   useEffect(() => {
-    const audio = new Audio(url)
+    const audio = preloadRecordingAudio(url)
+    audio.currentTime = 0
     audioRef.current = audio
     const updateTime = () => setCurrentTime(audio.currentTime)
     const updateDuration = () => setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+    updateDuration()
     const markPaused = () => setPlaying(false)
     const markPlaying = () => setPlaying(true)
     audio.addEventListener('timeupdate', updateTime)

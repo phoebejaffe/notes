@@ -52,7 +52,7 @@ Supported editing actions include:
 
 - Bold, italic, underline, and strikethrough formatting.
 - Checklist/task items with MDXEditor/Lexical-native checkbox rendering and interaction that update the Markdown task marker. Top-level checkbox controls align with the paragraph text edge, stay attached to their list item through editor layout and wrapping, and are not positioned with JavaScript. Checked items use a subdued checkbox and a translucent strikethrough while keeping the text readable. A UI fallback remains available if MDXEditor imports a GFM checklist as an ordinary list.
-- Clicking a link opens it in the default browser (in the Mac app via the system shell). Audio recording links open an inline player popover just above the link with play/pause and a seek bar; clicking outside or pressing Escape dismisses it.
+- Clicking a link opens it in the default browser (in the Mac app via the system shell). Audio recording links open an inline player popover just above the link with play/pause and a seek bar; clicking outside or pressing Escape dismisses it. The recording is preloaded when the link is hovered or pressed and the popover reuses that warm audio element, so playback starts quickly.
 - Undo/redo controls on mobile keyboard devices.
 - Zoom and font-choice preferences. Zoom scales the day stream's editor content so the scrollable area and formatting bar always reach the window edges.
 - Keyboard shortcuts for common formatting, toggling checklist items, moving selected lines with Option-ArrowUp/Option-ArrowDown, and deleting one character. Line movement treats non-empty Markdown lines separated by blank lines as logical lines, preserves separator lines, and does not cross tag directive boundaries.
