@@ -7,7 +7,7 @@ import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { commentsToTagDirectives } from './tagSyntax'
 import { comparableLineText, markdownForEditor, restoreMarkdownSpacing, sourceLineRangeForRenderedSelection } from './markdownSourcePreservation'
 import { $isTagBlockNode } from './TagBlockNode'
-import { AudioPlayerPopover } from './AudioPlayerPopover'
+import { AudioPlayerPopover, preloadRecordingAudio } from './AudioPlayerPopover'
 import type { MdxNotesEditorProps } from './editorTypes'
 
 function isAudioRecordingUrl(href: string | null | undefined): boolean {
@@ -446,6 +446,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const target = event.target as HTMLElement
       if (target.closest('.mdxeditor-toolbar button')) event.preventDefault()
     }
+    const preloadAudioLink = (event: Event) => {
+      const link = (event.target as HTMLElement | null)?.closest?.('a[href]')
+      if (link && hostRef.current?.querySelector('.mdxeditor-root-contenteditable')?.contains(link) && isAudioRecordingUrl((link as HTMLAnchorElement).href)) {
+        preloadRecordingAudio((link as HTMLAnchorElement).href)
+      }
+    }
     const handleFocusEdge = (event: Event) => {
       const detail = (event as CustomEvent).detail as { direction: 'up' | 'down' } | undefined
       const direction = detail?.direction ?? 'down'
@@ -487,6 +493,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('keydown', markInteraction)
     host.addEventListener('paste', markInteraction)
     host.addEventListener('pointerdown', markInteraction, true)
+    host.addEventListener('pointerdown', preloadAudioLink, true)
+    host.addEventListener('pointerover', preloadAudioLink)
     host.addEventListener('click', markInteraction)
     host.addEventListener('mousedown', preserveEditorSelection)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
@@ -495,6 +503,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('keydown', markInteraction)
       host.removeEventListener('paste', markInteraction)
       host.removeEventListener('pointerdown', markInteraction, true)
+      host.removeEventListener('pointerdown', preloadAudioLink, true)
+      host.removeEventListener('pointerover', preloadAudioLink)
       host.removeEventListener('click', markInteraction)
       host.removeEventListener('mousedown', preserveEditorSelection)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
@@ -506,7 +516,24 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (valueRef.current === editorValue) return
     valueRef.current = editorValue
     editorRef.current?.setMarkdown(markdownForEditor(editorValue))
-  }, [value])
+    // setMarkdown rebuilds the document, which drops the caret. Only restore
+    // when this editor held it — a remote merge on another day's card must not
+    // steal the selection from the editor being typed in.
+    const content = hostRef.current?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
+    const anchor = window.getSelection()?.anchorNode
+    if (!content || !anchor || !content.contains(anchor)) return
+    const selectedText = selectedTextRef.current
+    const blockText = caretBlockTextRef.current
+    const caretOffset = caretOffsetRef.current
+    const caretText = caretTextRef.current
+    const caretTextOffset = caretTextOffsetRef.current
+    window.requestAnimationFrame(() => {
+      restoreEditorSelection(lexicalEditor, hostRef.current, selectedText, blockText, caretOffset, caretText, caretTextOffset)
+      window.requestAnimationFrame(() => {
+        restoreEditorSelection(lexicalEditor, hostRef.current, selectedText, blockText, caretOffset, caretText, caretTextOffset)
+      })
+    })
+  }, [lexicalEditor, value])
 
   useEffect(() => {
     const host = hostRef.current
