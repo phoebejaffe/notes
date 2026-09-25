@@ -112,6 +112,28 @@ const LIST_MOVEMENT_MARKDOWN = `prefix alpha
 2. ordered two
 suffix omega`
 
+export const MOVEMENT_SWEEP_MARKDOWN = `alpha one
+alpha two
+
+bravo para
+
+## heading here
+
+- bullet one
+- bullet two
+  - nested one
+  - nested two
+- bullet three
+
+> quote one
+> quote two
+
+1. ordered one
+2. ordered two
+
+tail one
+tail two`
+
 const CHECKLIST_MARKDOWN = `prefix alpha
 - [ ] first task
 - [x] second task
@@ -197,6 +219,7 @@ second line
 third line
 suffix omega`,
   'list-movement': LIST_MOVEMENT_MARKDOWN,
+  'movement-sweep': MOVEMENT_SWEEP_MARKDOWN,
   checklist: CHECKLIST_MARKDOWN,
   'checklist-position': CHECKLIST_POSITION_MARKDOWN,
   'audio-transcription-checklist': AUDIO_TRANSCRIPTION_MARKDOWN,
@@ -267,7 +290,7 @@ export function MarkdownPrototypePage() {
     <section className="prototype-editor-stack" aria-label="MDXEditor prototype">
       <article className="prototype-panel" data-testid="prototype-editor" data-scenario={scenario || 'sample'}>
         <div className="prototype-panel-heading"><div><span className="prototype-eyebrow">Prototype</span><h2>MDXEditor</h2></div><span>Markdown-native rich text</span></div>
-        <MdxNotesEditor value={markdown} onChange={setMarkdown} hideMutedLines={hideMuted} />
+        <MdxNotesEditor value={markdown} onChange={setMarkdown} />
       </article>
     </section>
     <pre data-testid="prototype-source" hidden>{markdown}</pre>

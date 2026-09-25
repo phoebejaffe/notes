@@ -261,15 +261,17 @@ test('muting one tagged list line changes only that line and keeps the caret', a
   await expect.poll(async () => (await selectionSnapshot(page)).blockText).toContain('Line B')
 })
 
-test('option-arrow movement preserves nested list structure and neighboring text', async ({ page }) => {
+test('option-arrow movement preserves list structure and neighboring text', async ({ page }) => {
   await page.goto('/prototype?scenario=list-movement')
   const root = editorFor(page)
-  const target = root.locator('li', { hasText: 'third item' })
+  const target = root.locator('li', { hasText: 'second item' })
   await target.click()
   await page.keyboard.press('Alt+ArrowUp')
-  await expectSource(page, /second child one\s+- third item\s+- second child two\s+1\. ordered one/s)
+  await expectSource(page, /prefix alpha\n- second item\n- first item\n  - second child one/u)
+  await expect.poll(async () => (await selectionSnapshot(page)).blockText).toContain('second item')
   await page.keyboard.press('Alt+ArrowDown')
-  await expectSource(page, /third item[\s\S]*1\. ordered one/s)
+  await expectSource(page, /prefix alpha\n- first item\n- second item\n  - second child one/u)
+  await expect.poll(async () => (await selectionSnapshot(page)).blockText).toContain('second item')
   await expect(root.locator(BLOCK_SELECTOR).first()).toContainText('prefix alpha')
   await expect(root).toContainText('suffix omega')
 })

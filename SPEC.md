@@ -44,25 +44,17 @@ The current day is calculated using a configurable rollover hour, from midnight 
 
 ## 5. Markdown editor
 
-The editor is based on MDXEditor and supports headings, lists, quotes, links, tables, thematic breaks, Markdown shortcuts, directives, and an application toolbar. Existing Markdown source is preserved around editor changes where possible so application marker lines are not silently lost. Consecutive external transcription lines following a task item are rendered as separate paragraphs rather than being treated as lazy continuation content inside the task. The formatting bar is fixed to the bottom of the window, appears while an editor is focused or contains a non-collapsed selection, follows the active light/dark theme, remains at the window scale when editor zoom is enabled, and has web/PWA-specific placement and responsive spacing. The macOS app renders it without a drop shadow. In the macOS capture window, it remains visible across transient application focus changes and renders as a compact dark-grey strip directly below the top menu bar, which shares the same dark grey. The macOS app reserves additional top space so the formatting bar cannot obscure the first content when the stream is at its top.
+> **Editor rebuild in progress (branch `editor-v3`).** The bespoke editor layer was removed and is being rebuilt test-first against the e2e suite in `e2e/`. The descriptions below reflect the current stripped state; strikethrough, mute, tags, custom shortcuts, raw text mode, cross-editor navigation, and the audio player are pending rebuild. Refer to `main` for the previous implementation.
 
-Tags are rendered as a custom Lexical `ElementNode` (`TagBlockNode`) inside the same editor instance, so arrow-key navigation, typing, and selection cross tag boundaries naturally within a day. The tag node is a Lexical shadow-root boundary, so block-level formatting such as list toggling is scoped to the selected tagged line instead of lifting sibling tagged lines into the same list. Option-ArrowUp and Option-ArrowDown move the current or selected source lines within the day while preserving the caret or selection position. Between day cards, ArrowUp at the top visual line or ArrowDown at the bottom visual line moves the caret into the adjacent day's editor (accounting for wrapped lines and trailing empty paragraphs). When a note begins with a tag block, pressing ArrowUp at its first line creates a caret position before the tag as a temporary empty paragraph; the paragraph is removed again if the caret leaves it while still empty, so no stray blank line is persisted. The tag block renders the tag tag and left border through CSS pseudo-elements on a container `<div class="notes-tag-directive">`.
+The editor is based on MDXEditor and currently supports headings, lists (including `- [ ]` checklists with click-to-toggle checkboxes), quotes, links, tables, thematic breaks, and Markdown input shortcuts. A formatting bar renders MDXEditor's undo/redo, bold/italic/underline, and list toggles; the mute button, tag input, and tag chip controls render but are inert placeholders. The bar is fixed to the bottom of the window, follows the active light/dark theme, remains at the window scale when editor zoom is enabled, and has web/PWA-specific placement. In the macOS capture window it renders as a compact dark-grey strip below the top menu bar. It is hidden unless the editor has focus or a non-collapsed selection, and stays visible in the capture shell.
 
-Supported editing actions include:
+Editor commands run in Markdown space: the DOM selection is mapped to canonical source lines through mdast source positions (`src/editor/sourceMapping.ts`), the operation mutates the source (via `markerEngine`), the result is re-imported, and the caret/selection is restored at the corresponding lines. Currently wired: Option/Alt+ArrowUp/Down moves the selected source lines within the nearest tag boundary — a moved line that is not part of a list jumps past a whole contiguous list as one block, landing as its own blank-separated block — Cmd+Enter toggles a checklist item or converts a block to a task, Cmd+Shift+Enter drops a checkbox marker, Cmd+Shift+C turns a task/bullet into plain text.
 
-- Bold, italic, underline, and strikethrough formatting.
-- Checklist/task items with MDXEditor/Lexical-native checkbox rendering and interaction that update the Markdown task marker. Top-level checkbox controls align with the paragraph text edge, stay attached to their list item through editor layout and wrapping, and are not positioned with JavaScript. Checked items use a subdued checkbox and a translucent strikethrough while keeping the text readable. A UI fallback remains available if MDXEditor imports a GFM checklist as an ordinary list.
-- Clicking a link opens it in the default browser (in the Mac app via the system shell). Audio recording links open an inline player popover just above the link with play/pause and a seek bar; clicking outside or pressing Escape dismisses it. The recording is preloaded when the link is hovered or pressed and the popover reuses that warm audio element, so playback starts quickly.
-- Undo/redo controls on mobile keyboard devices.
-- Zoom and font-choice preferences. Zoom scales the day stream's editor content so the scrollable area and formatting bar always reach the window edges.
-- Keyboard shortcuts for common formatting, toggling checklist items, moving selected lines with Option-ArrowUp/Option-ArrowDown, and deleting one character. Line movement treats non-empty Markdown lines separated by blank lines as logical lines, preserves separator lines, and does not cross tag directive boundaries.
-- Pressing the `"` key with an active text selection wraps the selection in quotes while keeping the inner text selected, in both the rich editor and raw text mode.
+Markdown source is the canonical persisted format. Before rendering, `markdownForEditor` inserts a blank line between a list item and a directly following non-list line (otherwise the next line would merge into the item as a lazy continuation); `restoreMarkdownSpacing` strips those injected blanks on export. Container directives (`:::tag{…}`, `:::muted`, `:::custom-block`) parse through `directivesPlugin` with a minimal nested-editor descriptor — tag content stays editable and round-trips losslessly, but has no dedicated UI yet. Custom import/export visitors preserve per-item checkbox state so a plain bullet inside a task list stays plain. Unordered lists export with `-` bullets. The marker engine (`src/markerEngine.ts`) still parses `%%` muted lines, tag directives, and legacy `<!-- tag -->` comment markers for app-level features — the filter panel, tag manager, and per-day diagnostics all remain functional — but `%%` markers currently render as literal text without styling and the mute/tag toolbar controls do nothing.
 
-### Muted lines
+External `value` changes (sync/merge) are pushed into the editor via `setMarkdown`; an interaction gate prevents mount/normalization echoes from writing back to the document.
 
-A line may be muted by adding a `%%` marker after its list or heading prefix. Muted tag marker lines are also supported, for example `%% <!-- tag -->` and `%% <!-- /tag -->`. The editor applies muted styling to the affected rendered line, using CSS Custom Highlight ranges when a muted source line shares a rendered paragraph so Lexical does not revert decorator DOM changes. The user can toggle muted state for the selected text or current line with the formatting control or `Cmd-/`. For a mixed selection, muting applies to every selected line without duplicating existing markers; a selection is unmuted only when all selected lines are already muted. The filter panel can hide muted lines. Muting is represented in the Markdown source and is not destructive.
-
-### Tag markers
+### Tag source format
 
 Tags are represented by nested Markdown container directives around Markdown content:
 
@@ -72,28 +64,7 @@ Content belonging to the tag.
 :::
 ```
 
-Legacy paired HTML-comment markers remain readable and can be migrated per day through an explicit confirmation action. They are converted to directives for editor changes:
-
-```markdown
-<!-- tag -->
-Content belonging to the tag.
-<!-- /tag -->
-```
-
-Tag names containing spaces are quoted in directive attributes. Tags are normalized to Unicode NFC form, and tags are now required to be properly nested rather than crossing.
-
-The marker engine:
-
-- Parses open and close marker lines and produces tagged ranges.
-- Reports malformed markers, unmatched closes, repeated opens, and unclosed spans as diagnostics.
-- Adds a tag around a selected range or current line.
-- Removes an active tag from the current selection.
-- Renames a tag throughout all local documents.
-- Preserves tag ranges as visual decorations in the rendered editor.
-
-Tagged blocks receive a colored border/decorative treatment. Colors are selected per known tag in the tag manager, with a deterministic five-color fallback palette for tags without an explicit color. The first active tag determines the primary color for a block when multiple tags overlap.
-
-The editor maintains up to twelve recently used tags for the tag autocomplete/action menu. The formatting bar shows tags surrounding the caret or selection and provides removal controls. Focusing the toolbar tag input (by clicking it, or with Mod-T — Cmd-T on macOS, Ctrl-T on web) preserves the editor's current selection so it remains visibly highlighted while the tag name is typed; the selection is painted through the CSS Custom Highlight API until the input loses focus. Known tags are also derived from all parsed local documents.
+Legacy paired HTML-comment markers remain readable and can be migrated per day through an explicit confirmation action. Tag names containing spaces are quoted in directive attributes and normalized to Unicode NFC. The marker engine parses markers into ranges, reports malformed/unbalanced diagnostics, adds and removes tags around line ranges, and renames tags across documents. Tag colors remain configurable per known tag in the tag manager; they are not yet applied to editor rendering on this branch.
 
 ## 6. Search and filtering
 

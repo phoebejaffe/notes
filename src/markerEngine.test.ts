@@ -198,6 +198,12 @@ describe('marker engine', () => {
     expect(moveLines(source, 5, 5, 'down')).toBe('Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n- Line C\n- Line B\n:::\n\nLine below')
   })
 
+  it('moves non-list content past an entire list as one block', () => {
+    const source = 'before\n- parent one\n  - child one\n  - child two\n- parent two\n\nbelow para\nafter'
+    expect(moveLines(source, 6, 6, 'up')).toBe('before\n\nbelow para\n\n- parent one\n  - child one\n  - child two\n- parent two\n\nafter')
+    expect(moveLines(source, 0, 0, 'down')).toBe('- parent one\n  - child one\n  - child two\n- parent two\n\nbefore\n\nbelow para\nafter')
+  })
+
   it('moves nested list lines without changing indentation or neighboring text', () => {
     const source = 'before\n- parent one\n  - child one\n  - child two\n- parent two\nafter'
     expect(moveLines(source, 2, 2, 'down')).toBe('before\n- parent one\n  - child two\n  - child one\n- parent two\nafter')

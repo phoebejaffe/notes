@@ -1,37 +1,36 @@
-import { directivesPlugin, headingsPlugin, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, realmPlugin, rootEditor$, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
+import { directivesPlugin, exportVisitors$, headingsPlugin, importVisitors$, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, realmPlugin, rootEditor$, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
 import type { LexicalEditor } from 'lexical'
-import { DirectiveContentEditor } from './DirectiveContentEditor'
+import type { RefObject } from 'react'
 import { MdxEditorToolbar } from './MdxEditorToolbar'
-import { tagBlockPlugin } from './tagBlockPlugin'
+import { DirectiveContentEditor } from './DirectiveContentEditor'
+import { ListItemCheckedImportVisitor, ListItemCheckedVisitor } from './listItemExport'
 
-const directive = (name: string, attributes: string[] = []): DirectiveDescriptor => ({
+const DIRECTIVE_DESCRIPTORS: DirectiveDescriptor<any>[] = ['tag', 'muted', 'custom-block'].map((name) => ({
   name,
-  testNode: (node) => node.name === name,
-  attributes,
+  type: 'containerDirective' as const,
+  testNode: (node) => node.type === 'containerDirective' && (node as { name?: string }).name === name,
+  attributes: ['name'],
   hasChildren: true,
   Editor: DirectiveContentEditor,
-})
+}))
 
-export const mdxDirectiveDescriptors = [directive('muted'), directive('custom-block', ['kind'])]
-
-const lexicalEditorPlugin = (assign: (editor: LexicalEditor | null) => void) => realmPlugin({
-  init(realm) {
-    realm.sub(rootEditor$, assign)
-  },
-})()
-
-export function mdxEditorPlugins(assignLexicalEditor: (editor: LexicalEditor | null) => void) {
+export function mdxEditorPlugins(lexicalEditorRef: RefObject<LexicalEditor | null>) {
   return [
+    realmPlugin({
+      postInit(realm) {
+        lexicalEditorRef.current = realm.getValue(rootEditor$)
+        realm.pub(exportVisitors$, [ListItemCheckedVisitor as never, ...realm.getValue(exportVisitors$)])
+        realm.pub(importVisitors$, [ListItemCheckedImportVisitor as never, ...realm.getValue(importVisitors$)])
+      },
+    })(),
     headingsPlugin(),
     listsPlugin(),
     quotePlugin(),
     linkPlugin(),
     tablePlugin(),
     thematicBreakPlugin(),
+    directivesPlugin({ directiveDescriptors: DIRECTIVE_DESCRIPTORS }),
     markdownShortcutPlugin(),
-    directivesPlugin({ directiveDescriptors: mdxDirectiveDescriptors }),
-    tagBlockPlugin(),
-    lexicalEditorPlugin(assignLexicalEditor),
     toolbarPlugin({ toolbarContents: () => <MdxEditorToolbar /> }),
   ]
 }

@@ -225,7 +225,6 @@ function NotesApp() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterTags, setFilterTags] = useState<string[]>([])
   const [hideMutedLines, setHideMutedLines] = useState(false)
-  const [rawTextMode, setRawTextMode] = useState(false)
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
@@ -1181,7 +1180,7 @@ function NotesApp() {
   if (!loaded || authLoading) return <main className="loading-screen">{!loaded ? 'Opening your notes…' : 'Checking your sign-in…'}</main>
 
   return (
-    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!isTauriEnvironment() ? ' web-shell' : ''}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''}${!captureMode && isIosPwa() ? ' ios-pwa' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}${rawTextMode ? ' raw-mode' : ''}`} style={{ '--editor-zoom': isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 } as CSSProperties}>
+    <main className={`${captureMode ? 'capture-shell' : 'app-shell'}${!isTauriEnvironment() ? ' web-shell' : ''}${!captureMode && !isTauriEnvironment() && isMobileKeyboardDevice() ? ' mobile-browser' : ''}${!captureMode && isIosPwa() ? ' ios-pwa' : ''} theme-${preferences.theme}${preferences.compactSpacing ? ' compact-spacing' : ''} font-${preferences.fontChoice}${captureMode && !captureFocused ? ' capture-unfocused' : ''}`} style={{ '--editor-zoom': isMobileKeyboardDevice() ? 1 : preferences.zoomLevel / 100, opacity: isTauriEnvironment() && preferences.windowOpacityEnabled ? preferences.windowOpacity / 100 : 1 } as CSSProperties}>
       {!captureMode && <header className="topbar">
         <div className="topbar-left" />
         <div className="topbar-right">
@@ -1195,7 +1194,6 @@ function NotesApp() {
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
           <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
-          <button type="button" onClick={() => { setRawTextMode((raw) => !raw); setMenuOpen(false) }}>{rawTextMode ? 'Rich editor' : 'Raw text mode'}</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
@@ -1216,7 +1214,6 @@ function NotesApp() {
           <button type="button" onClick={() => { setSearchOpen(true); setMenuOpen(false) }}>Search</button>
           <button type="button" onClick={() => { setCommandPaletteOpen(true); setMenuOpen(false) }}>Command palette</button>
           <button type="button" onClick={() => { setFutureDateInput(shiftLogicalDay(today, 1)); setMenuOpen(false) }}>Write a future note</button>
-          <button type="button" onClick={() => { setRawTextMode((raw) => !raw); setMenuOpen(false) }}>{rawTextMode ? 'Rich editor' : 'Raw text mode'}</button>
           <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false) }}>Settings</button>
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
@@ -1230,8 +1227,6 @@ function NotesApp() {
         </nav>}
         {filterOpen && <div className="filter-panel capture-filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </div>}
-      {rawTextMode && <div className="raw-mode-banner" role="status">Raw text mode is on <button type="button" onClick={() => setRawTextMode(false)}>turn off</button></div>}
-
       {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
       {futureDateInput && <section className="future-day-panel" role="dialog" aria-label="Open a future day"><label>Future day <input type="date" value={futureDateInput} onChange={(event) => setFutureDateInput(event.target.value)} /></label><button type="button" onClick={() => { openFutureDay(futureDateInput); setFutureDateInput('') }}>Open</button><button type="button" onClick={() => setFutureDateInput('')}>Cancel</button></section>}
       {futureNotice && futureNoticeDay && <div className="future-notice" role="status">{futureNotice}<button type="button" onClick={() => setFutureNotice(undefined)}>Dismiss</button><button type="button" onClick={() => { localStorage.removeItem(`notes-future-notice:${futureNoticeDay}`); localStorage.setItem(`notes-future-notice:${futureNoticeDay}:snooze`, String(Date.now() + 24 * 60 * 60 * 1000)); setFutureNotice(undefined) }}>Snooze 1 day</button></div>}
@@ -1249,7 +1244,7 @@ function NotesApp() {
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
               {hasLegacyTags && <button className="tag-migration-button" type="button" onClick={() => { if (window.confirm('Migrate this day’s legacy comment tags to Markdown directives?')) updateSource(documentDay, migratedSource) }}>Migrate legacy tags</button>}
-              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} showUndoRedo={isMobileKeyboardDevice()} rawTextMode={rawTextMode} taskShortcut={preferences.shortcuts.taskToggle} />
+              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>

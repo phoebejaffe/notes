@@ -8,9 +8,4 @@ export interface MdxNotesEditorProps {
   onChange: (markdown: string) => void
   onSelection?: (selection: EditorSelection) => void
   autoFocus?: boolean
-  hideMutedLines?: boolean
-  tagColors?: Record<string, string>
-  showUndoRedo?: boolean
-  rawTextMode?: boolean
-  taskShortcut?: string
 }

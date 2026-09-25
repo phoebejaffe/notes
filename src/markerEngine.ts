@@ -327,10 +327,14 @@ export function checklistToPlainText(source: string, lineIndex: number) {
 }
 
 export function moveLines(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
+  return moveLinesDetailed(source, startLine, endLine, direction)?.source ?? source
+}
+
+export function moveLinesDetailed(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
   const lines = source.split('\n')
-  if (startLine < 0 || endLine >= lines.length || startLine > endLine) return source
+  if (startLine < 0 || endLine >= lines.length || startLine > endLine) return null
   const isBoundary = (line: string) => /^\s*(?:::tag\s*\{[^}]*\}|:::\s*$|(?:%%\s+)?<!--[\s\S]*-->\s*)$/u.test(line)
-  if (lines.slice(startLine, endLine + 1).some(isBoundary)) return source
+  if (lines.slice(startLine, endLine + 1).some(isBoundary)) return null
   let segmentStart = startLine
   while (segmentStart > 0 && !isBoundary(lines[segmentStart - 1])) segmentStart -= 1
   let segmentEnd = endLine
@@ -339,11 +343,41 @@ export function moveLines(source: string, startLine: number, endLine: number, di
     .map((line, index) => ({ line, index }))
     .filter(({ line, index }) => index >= segmentStart && index <= segmentEnd && line.trim())
   const selectedSlots = slots.filter(({ index }) => index >= startLine && index <= endLine)
-  if (!selectedSlots.length) return source
+  if (!selectedSlots.length) return null
   const firstSelected = slots.indexOf(selectedSlots[0])
   const lastSelected = slots.indexOf(selectedSlots.at(-1)!)
   const adjacentSlot = direction === 'up' ? firstSelected - 1 : lastSelected + 1
-  if (adjacentSlot < 0 || adjacentSlot >= slots.length) return source
+  if (adjacentSlot < 0 || adjacentSlot >= slots.length) return null
+
+  // Content that isn't part of a list moves past a whole contiguous list run
+  // as one block, landing as its own blank-separated paragraph instead of
+  // merging into a list item or a neighboring paragraph.
+  const isListLine = (line: string) => /^\s*(?:[-*+]|\d+[.)])\s/u.test(line)
+  const neighborIndex = slots[adjacentSlot].index
+  const movedIsList = lines.slice(startLine, endLine + 1).some((line) => isListLine(line))
+  if (!movedIsList && isListLine(lines[neighborIndex])) {
+    let runStart = neighborIndex
+    while (runStart > 0 && isListLine(lines[runStart - 1])) runStart -= 1
+    let runEnd = neighborIndex
+    while (runEnd + 1 < lines.length && isListLine(lines[runEnd + 1])) runEnd += 1
+    const moved = lines.splice(startLine, endLine - startLine + 1)
+    const payload = [...moved]
+    let insertAt: number
+    let lead = 0
+    if (direction === 'up') {
+      insertAt = runStart
+      if (runStart > 0 && lines[runStart - 1].trim()) { payload.unshift(''); lead = 1 }
+      payload.push('')
+    } else {
+      insertAt = runEnd - moved.length + 1
+      if (insertAt < lines.length && !lines[insertAt].trim()) insertAt += 1
+      else { payload.unshift(''); lead = 1 }
+      if (insertAt < lines.length && lines[insertAt].trim()) payload.push('')
+    }
+    const movedStart = insertAt + lead
+    lines.splice(insertAt, 0, ...payload)
+    return { source: lines.join('\n'), startLine: movedStart, endLine: movedStart + moved.length - 1 }
+  }
   const orderedSlots = direction === 'up'
     ? [slots[adjacentSlot], ...selectedSlots]
     : [...selectedSlots, slots[adjacentSlot]]
@@ -351,7 +385,9 @@ export function moveLines(source: string, startLine: number, endLine: number, di
     ? [...selectedSlots.map(({ index }) => lines[index]), lines[slots[adjacentSlot].index]]
     : [lines[slots[adjacentSlot].index], ...selectedSlots.map(({ index }) => lines[index])]
   orderedSlots.forEach(({ index }, offset) => { lines[index] = values[offset] })
-  return lines.join('\n')
+  const movedStart = direction === 'up' ? slots[firstSelected - 1].index : slots[firstSelected + 1].index
+  const movedEnd = direction === 'up' ? slots[lastSelected - 1].index : slots[lastSelected + 1].index
+  return { source: lines.join('\n'), startLine: movedStart, endLine: movedEnd }
 }
 
 function removeTagFromMarkerLine(line: string, kind: MarkerKind, tag: string) {
