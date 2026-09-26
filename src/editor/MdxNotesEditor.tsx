@@ -47,21 +47,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
   }, [])
 
-  // The formatting toolbar is styled visible while the editor holds a
-  // non-collapsed selection (`.notes-has-selection` in App.css).
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
-    const update = () => {
-      const selection = window.getSelection()
-      const editable = host.querySelector('.mdxeditor-root-contenteditable')
-      const hasSelection = !!selection && !selection.isCollapsed && !!selection.anchorNode && !!editable?.contains(selection.anchorNode)
-      host.classList.toggle('notes-has-selection', hasSelection)
-    }
-    document.addEventListener('selectionchange', update)
-    return () => document.removeEventListener('selectionchange', update)
-  }, [])
-
   // Muted-line decorations are recomputed from the canonical source whenever
   // it changes — CSS highlight ranges track DOM text, so they must be rebuilt
   // after every re-import. Retried over frames for decorator content.
