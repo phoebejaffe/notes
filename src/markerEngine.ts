@@ -209,37 +209,59 @@ export function addTagToRange(source: string, startLine: number, endLine: number
   return { source: lines.join('\n') }
 }
 
-const MUTED_PREFIX_PATTERN = /^(\s*(?:(?:[-*+]|\d+[.)])\s+|#{1,6}\s+)?)(%%)(?:\s|$)/u
-
+// A line is muted when it contains `%%` anywhere; when muting we append ` %%`
+// at the end of the line so it stays clear of list/heading prefixes.
 export function mutedMarkerPosition(line: string) {
-  const match = line.match(MUTED_PREFIX_PATTERN)
+  const match = /%%/u.exec(line)
   if (!match) return undefined
-  return { start: match[1].length, end: match[0].length }
+  let start = match.index
+  let end = match.index + 2
+  if (line[end] === ' ') end += 1
+  else if (start > 0 && line[start - 1] === ' ') start -= 1
+  return { start, end }
 }
 
 export function isMutedLine(line: string) {
-  return mutedMarkerPosition(line) !== undefined
+  return line.includes('%%')
+}
+
+// Removes every `%%` marker, collapsing the space the marker sat in. Trailing
+// ` %%` is removed entirely; a mid-line `foo %% bar` becomes `foo bar`.
+export function stripMutedMarkers(line: string) {
+  return line.replace(/^ ?%% ?/u, '').replace(/ ?%% ?/gu, ' ').replace(/\s+$/u, '')
 }
 
 export function preserveMutedLines(previous: string, next: string) {
   const previousLines = previous.split('\n')
   const nextLines = next.split('\n')
+  const claimed = new Set<number>()
   let searchStart = 0
-  previousLines.forEach((previousLine) => {
-    const marker = mutedMarkerPosition(previousLine)
-    if (!marker) return
-    const previousComparable = comparableWithoutMute(previousLine)
-    const matchIndex = nextLines.findIndex((nextLine, index) => index >= searchStart && comparableWithoutMute(nextLine) === previousComparable)
-    if (matchIndex < 0) return
-    searchStart = matchIndex + 1
-    if (!isMutedLine(nextLines[matchIndex])) nextLines[matchIndex] = toggleMutedLines(nextLines.join('\n'), matchIndex, matchIndex).source.split('\n')[matchIndex]
+  const claim = (index: number) => {
+    claimed.add(index)
+    searchStart = Math.max(searchStart, index + 1)
+    if (!isMutedLine(nextLines[index])) nextLines[index] = `${nextLines[index].trimEnd()} %%`
+  }
+  previousLines.forEach((previousLine, index) => {
+    if (!isMutedLine(previousLine)) return
+    const want = comparableWithoutMute(previousLine)
+    if (!want) return
+    if (index < nextLines.length && !claimed.has(index) && comparableWithoutMute(nextLines[index]) === want) {
+      claim(index)
+      return
+    }
+    const matchIndex = nextLines.findIndex((line, nextIndex) => nextIndex >= searchStart && !claimed.has(nextIndex) && comparableWithoutMute(line) === want)
+    if (matchIndex >= 0) {
+      claim(matchIndex)
+      return
+    }
+    // The line was edited in place (its text no longer matches) — keep it muted.
+    if (index < nextLines.length && !claimed.has(index) && nextLines[index].trim()) claim(index)
   })
   return nextLines.join('\n')
 }
 
 function comparableWithoutMute(line: string) {
-  const marker = mutedMarkerPosition(line)
-  return (marker ? `${line.slice(0, marker.start)}${line.slice(marker.end)}` : line)
+  return stripMutedMarkers(line)
     .replace(/^\s*(?:[-*+]|\d+[.)])\s+/u, '')
     .replace(/^\s*#{1,6}\s+/u, '')
     .replace(/\s+/gu, ' ')
@@ -250,16 +272,11 @@ export function toggleMutedLines(source: string, startLine: number, endLine: num
   const originalLines = source.split('\n')
   const lines = [...originalLines]
   const selected = lines.slice(startLine, endLine + 1)
-  const unmute = selected.length > 0 && selected.every(isMutedLine)
+  const unmute = selected.length > 0 && selected.every((line) => !line.trim() || isMutedLine(line))
   lines.slice(startLine, endLine + 1).forEach((line, offset) => {
     const index = startLine + offset
-    const marker = mutedMarkerPosition(line)
-    if (unmute && marker) {
-      lines[index] = `${line.slice(0, marker.start)}${line.slice(marker.end)}`
-    } else if (!unmute && !marker) {
-      const prefix = line.match(/^(\s*(?:(?:[-*+]|\d+[.)])\s+|#{1,6}\s+)?)/u)?.[1] ?? ''
-      lines[index] = `${prefix}%% ${line.slice(prefix.length)}`
-    }
+    if (unmute) lines[index] = stripMutedMarkers(line)
+    else if (line.trim() && !isMutedLine(line)) lines[index] = `${line.trimEnd()} %%`
   })
   const changes: Array<{ from: number; to: number; insert: string }> = []
   let offset = 0

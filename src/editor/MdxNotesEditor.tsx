@@ -5,20 +5,22 @@ import { $getNearestNodeOfType } from '@lexical/utils'
 import { INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
-import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, selectCanonicalLines, selectionLineRange } from './sourceMapping'
-import { checklistToPlainText, moveLinesDetailed, removeChecklist } from '../markerEngine'
+import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange } from './sourceMapping'
+import { clearMutedDecorations, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
+import { checklistToPlainText, moveLinesDetailed, preserveMutedLines, removeChecklist, toggleMutedLines } from '../markerEngine'
 import type { MdxNotesEditorProps } from './editorTypes'
 
 type Restore =
   | { type: 'caret'; line: number; offset: number }
   | { type: 'range'; startLine: number; endLine: number }
 
-export function MdxNotesEditor({ value, onChange, autoFocus = false }: MdxNotesEditorProps) {
+export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const lexicalEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
   const hostRef = useRef<HTMLDivElement>(null)
   const valueRef = useRef(value)
   const onChangeRef = useRef(onChange)
+  const hideMutedLinesRef = useRef(hideMutedLines)
   const userInteractedRef = useRef(false)
 
   useEffect(() => {
@@ -60,10 +62,49 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false }: MdxNotesE
     return () => document.removeEventListener('selectionchange', update)
   }, [])
 
+  // Muted-line decorations are recomputed from the canonical source whenever
+  // it changes — CSS highlight ranges track DOM text, so they must be rebuilt
+  // after every re-import. Retried over frames for decorator content.
+  // Only reads refs, so it is safe to call from any effect or handler.
+  const refreshDecorations = () => {
+    const host = hostRef.current
+    if (!host) return
+    const apply = () => refreshMutedDecorations(host, valueRef.current, hideMutedLinesRef.current)
+    apply()
+    requestAnimationFrame(apply)
+    requestAnimationFrame(() => requestAnimationFrame(apply))
+  }
+  const refreshDecorationsRef = useRef(refreshDecorations)
+  useEffect(() => {
+    refreshDecorationsRef.current = refreshDecorations
+  })
+
+  useEffect(() => {
+    hideMutedLinesRef.current = hideMutedLines
+    const host = hostRef.current
+    if (!host) return
+    // Note the caret's canonical line before hiding collapses blocks, then
+    // restore it — on the nearest still-visible line if its own disappeared.
+    const map = buildDocumentMap(valueRef.current)
+    const range = selectionLineRange(host, map)
+    refreshDecorationsRef.current()
+    if (!range) return
+    const line = hideMutedLines ? nearestVisibleLine(valueRef.current, range.startLine) : range.startLine
+    const offset = line === range.startLine ? range.caretOffset : 0
+    reapplyUntilSettled(() => placeCaretAtCanonicalLine(host, map, line, offset))
+  }, [hideMutedLines])
+
+  useEffect(() => {
+    refreshDecorationsRef.current()
+    const host = hostRef.current
+    return () => { if (host) clearMutedDecorations(host) }
+  }, [])
+
   useEffect(() => {
     if (valueRef.current === value) return
     valueRef.current = value
     editorRef.current?.setMarkdown(markdownForEditor(value).markdown)
+    refreshDecorationsRef.current()
   }, [value])
 
   // Editor commands run on keydown capture so Lexical never sees them. Line
@@ -80,16 +121,24 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false }: MdxNotesE
       onChangeRef.current(markdown)
       if (!restore) return
       const map = buildDocumentMap(markdown)
-      const apply = () => {
-        if (restore.type === 'caret') placeCaretAtCanonicalLine(host, map, restore.line, restore.offset)
-        else selectCanonicalLines(host, map, restore.startLine, restore.endLine)
-      }
-      // Lexical commits plain DOM synchronously, but directive decorators and
-      // their nested editors render through React — retry over a couple of
-      // frames for those.
-      apply()
-      requestAnimationFrame(apply)
-      requestAnimationFrame(() => requestAnimationFrame(apply))
+      reapplyUntilSettled(() => restore.type === 'caret'
+        ? placeCaretAtCanonicalLine(host, map, restore.line, restore.offset)
+        : selectCanonicalLines(host, map, restore.startLine, restore.endLine))
+      refreshDecorationsRef.current()
+    }
+
+    // Cmd+/ and the toolbar mute button both toggle ` %%` on the selected
+    // canonical source lines.
+    const muteSelection = () => {
+      const map = buildDocumentMap(valueRef.current)
+      const range = selectionLineRange(host, map)
+      if (!range) return false
+      const result = toggleMutedLines(valueRef.current, range.startLine, range.endLine)
+      if (result.source === valueRef.current) return false
+      commit(result.source, range.collapsed
+        ? { type: 'caret', line: range.startLine, offset: range.caretOffset }
+        : { type: 'range', startLine: range.startLine, endLine: range.endLine })
+      return true
     }
 
     const lexicalPointFor = (node: Node, offset: number): [string, number, 'text' | 'element'] | null => {
@@ -151,6 +200,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false }: MdxNotesE
 
       if (!mod) return false
 
+      if (!event.shiftKey && event.key === '/') return muteSelection()
+
       // Cmd+Shift+Enter drops the checkbox marker while keeping the list item —
       // inside a 'check' list Lexical normalizes undefined `checked` back to a
       // checkbox, so this has to happen in Markdown space.
@@ -196,7 +247,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false }: MdxNotesE
       }
     }
     host.addEventListener('keydown', handler, true)
-    return () => host.removeEventListener('keydown', handler, true)
+    host.addEventListener('notes-mute-toggle', muteSelection)
+    return () => {
+      host.removeEventListener('keydown', handler, true)
+      host.removeEventListener('notes-mute-toggle', muteSelection)
+    }
   }, [lexicalEditorRef])
 
   function focusEditor(event: MouseEvent<HTMLDivElement>) {
@@ -215,10 +270,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false }: MdxNotesE
       toMarkdownOptions={{ bullet: '-' }}
       onChange={(markdown) => {
         if (!userInteractedRef.current) return
-        const restored = restoreMarkdownSpacing(valueRef.current, markdown)
+        const tight = restoreMarkdownSpacing(valueRef.current, markdown)
+        const restored = preserveMutedLines(valueRef.current, tight)
         if (restored === valueRef.current) return
         valueRef.current = restored
         onChangeRef.current(restored)
+        refreshDecorationsRef.current()
       }}
       plugins={plugins}
     />

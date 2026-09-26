@@ -255,7 +255,7 @@ test('muting one tagged list line changes only that line and keeps the caret', a
   const root = editorFor(page)
   await setCaretAtText(root, 'Line B', 2)
   await page.keyboard.press('Control+/')
-  await expectSource(page, /[-*] %% Line B/u)
+  await expectSource(page, /[-*] Line B %%/u)
   await expectSource(page, /[-*] Line A/u)
   await expectSource(page, /[-*] Line C/u)
   await expect.poll(async () => (await selectionSnapshot(page)).blockText).toContain('Line B')

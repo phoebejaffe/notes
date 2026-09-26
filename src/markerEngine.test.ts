@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, checklistToPlainText, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, moveLines, normalizeRepeatedOpens, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, toggleChecklist, toggleMutedLines } from './markerEngine'
+import { addTagToRange, checklistToPlainText, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, moveLines, normalizeRepeatedOpens, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -102,24 +102,48 @@ describe('marker engine', () => {
     expect(after).toContain('<!-- meeting -->')
   })
 
-  it('mutes and unmutes plain, list, and heading lines', () => {
+  it('mutes and unmutes plain, list, and heading lines with a trailing marker', () => {
     const source = 'plain\n  indented\n- grocery item\n## heading'
     const muted = toggleMutedLines(source, 0, 3)
-    expect(muted.source).toBe('%% plain\n  %% indented\n- %% grocery item\n## %% heading')
+    expect(muted.source).toBe('plain %%\n  indented %%\n- grocery item %%\n## heading %%')
     expect(isMutedLine(muted.source.split('\n')[2])).toBe(true)
     expect(toggleMutedLines(muted.source, 0, 3).source).toBe(source)
+  })
+
+  it('recognizes muted markers anywhere in a line', () => {
+    expect(['%% plain', '- %% bullet', '  1. %% nested', '## %% heading', 'plain %%', 'a %% b', 'a%%b'].every(isMutedLine)).toBe(true)
+    expect(['plain', '- bullet', '% single', '%percent%% word'].map(isMutedLine)).toEqual([false, false, false, true])
+  })
+
+  it('strips muted markers wherever they sit', () => {
+    expect(stripMutedMarkers('foo %%')).toBe('foo')
+    expect(stripMutedMarkers('%% foo')).toBe('foo')
+    expect(stripMutedMarkers(' %% foo')).toBe('foo')
+    expect(stripMutedMarkers('foo %% bar')).toBe('foo bar')
+    expect(stripMutedMarkers('- %% item')).toBe('- item')
+    expect(stripMutedMarkers('  - item %%')).toBe('  - item')
+    expect(stripMutedMarkers('## %% heading')).toBe('## heading')
+    expect(stripMutedMarkers('%%')).toBe('')
   })
 
   it('preserves muted lines when the rich editor reserializes surrounding Markdown', () => {
     const previous = 'prefix\n%% plain target\n%% already muted\n- %% list target\n## %% heading target\nsuffix'
     const next = 'prefix\nplain target\nalready muted\n* list target\n## heading target\nsuffix'
-    expect(preserveMutedLines(previous, next)).toBe('prefix\n%% plain target\n%% already muted\n* %% list target\n## %% heading target\nsuffix')
+    expect(preserveMutedLines(previous, next)).toBe('prefix\nplain target %%\nalready muted %%\n* list target %%\n## heading target %%\nsuffix')
+  })
+
+  it('keeps lines muted when their text is edited in the rich editor', () => {
+    // The marker is hidden in the editor, so an edit exports unmarked text on
+    // the same line — the mute must survive.
+    expect(preserveMutedLines('foo %%\nbar', 'foo extended\nbar')).toBe('foo extended %%\nbar')
+    expect(preserveMutedLines('a\nb %%', 'inserted\na\nb')).toBe('inserted\na\nb %%')
+    expect(preserveMutedLines('a\na %%', 'a\na')).toBe('a\na %%')
   })
 
   it('mutes every line in a mixed selection without double-muting existing lines', () => {
     const source = 'plain\n%% already muted\n- list item\n## heading'
     const result = toggleMutedLines(source, 0, 3)
-    expect(result.source).toBe('%% plain\n%% already muted\n- %% list item\n## %% heading')
+    expect(result.source).toBe('plain %%\n%% already muted\n- list item %%\n## heading %%')
     expect(result.source.split('\n').filter((line) => line.includes('%%')).every((line) => !line.includes('%%%%'))).toBe(true)
     expect(toggleMutedLines(result.source, 0, 3).source).toBe('plain\nalready muted\n- list item\n## heading')
   })
@@ -131,7 +155,7 @@ describe('marker engine', () => {
 
   it('mutes a line containing a Markdown link without changing its content', () => {
     const source = '[💡](https://example.com/recording) Transcribe with a better voice model.'
-    expect(toggleMutedLines(source, 0, 0).source).toBe('%% [💡](https://example.com/recording) Transcribe with a better voice model.')
+    expect(toggleMutedLines(source, 0, 0).source).toBe('[💡](https://example.com/recording) Transcribe with a better voice model. %%')
   })
 
   it('toggles checklist items and promotes other lines to tasks', () => {
@@ -147,6 +171,7 @@ describe('marker engine', () => {
     expect(toggleChecklist('%% muted', 0)).toBe('- %% [ ] muted')
     expect(toggleChecklist('- %% muted item', 0)).toBe('- %% [ ] muted item')
     expect(toggleChecklist('- %% [ ] muted task', 0)).toBe('- %% [x] muted task')
+    expect(toggleChecklist('muted %%', 0)).toBe('- [ ] muted %%')
     expect(toggleMutedLines('- %% [x] muted task', 0, 0).source).toBe('- [x] muted task')
   })
 
@@ -213,10 +238,6 @@ describe('marker engine', () => {
   it('keeps text outside a tagged line range unchanged', () => {
     const source = 'before\nfirst\nsecond\nafter'
     expect(addTagToRange(source, 1, 2, 'therapy').source).toBe('before\n<!-- therapy -->\nfirst\nsecond\n<!-- /therapy -->\nafter')
-  })
-
-  it('recognizes muted markers after list and heading prefixes', () => {
-    expect(['%% plain', '- %% bullet', '  1. %% nested', '## %% heading'].every(isMutedLine)).toBe(true)
   })
 
   it('renames every matching marker while preserving quoted names', () => {

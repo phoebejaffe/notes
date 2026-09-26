@@ -21,7 +21,7 @@ export function MdxEditorToolbar() {
     <UndoRedo />
     <BoldItalicUnderlineToggles />
     <ListsToggle options={['bullet', 'number', 'check']} />
-    <button className="notes-editor-toolbar-button notes-editor-mute-button" type="button" aria-label="Mute selected lines" title="Mute selected lines"><MuteIcon /></button>
+    <button className="notes-editor-toolbar-button notes-editor-mute-button" type="button" aria-label="Mute selected lines" title="Mute selected lines" onClick={(event) => event.currentTarget.dispatchEvent(new CustomEvent('notes-mute-toggle', { bubbles: true }))}><MuteIcon /></button>
     <AddTagControl />
   </>
 }

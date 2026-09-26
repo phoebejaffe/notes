@@ -330,17 +330,50 @@ function domPointForEditorLine(host: HTMLElement, map: DocumentMap, editorLine: 
   return domPointInChildren(editable, map.blocks, editorLine, offset)
 }
 
-export function placeCaretAtCanonicalLine(host: HTMLElement, map: DocumentMap, canonicalLine: number, offset: number) {
-  const point = domPointForEditorLine(host, map, editorLineForCanonical(map, canonicalLine), offset)
-  if (!point) return
-  const selection = window.getSelection()
-  selection?.setBaseAndExtent(point.node, point.offset, point.node, point.offset)
+// The rendered DOM extent of a canonical source line — a whole block, one list
+// item, or one soft-break segment inside a paragraph. Used to style muted
+// lines through CSS highlights without touching editor DOM.
+export function canonicalLineRange(host: HTMLElement, map: DocumentMap, canonicalLine: number): Range | null {
+  const editorLine = editorLineForCanonical(map, canonicalLine)
+  const start = domPointForEditorLine(host, map, editorLine, 0)
+  const end = domPointForEditorLine(host, map, editorLine, Number.POSITIVE_INFINITY)
+  if (!start || !end) return null
+  const range = document.createRange()
+  range.setStart(start.node, start.offset)
+  range.setEnd(end.node, end.offset)
+  return range
 }
 
-export function selectCanonicalLines(host: HTMLElement, map: DocumentMap, startLine: number, endLine: number) {
+export function placeCaretAtCanonicalLine(host: HTMLElement, map: DocumentMap, canonicalLine: number, offset: number): Node | null {
+  const point = domPointForEditorLine(host, map, editorLineForCanonical(map, canonicalLine), offset)
+  if (!point) return null
+  const selection = window.getSelection()
+  selection?.setBaseAndExtent(point.node, point.offset, point.node, point.offset)
+  return point.node
+}
+
+export function selectCanonicalLines(host: HTMLElement, map: DocumentMap, startLine: number, endLine: number): Node | null {
   const anchor = domPointForEditorLine(host, map, editorLineForCanonical(map, startLine), 0)
   const focus = domPointForEditorLine(host, map, editorLineForCanonical(map, endLine), Number.POSITIVE_INFINITY)
-  if (!anchor || !focus) return
+  if (!anchor || !focus) return null
   const selection = window.getSelection()
   selection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
+  return anchor.node
+}
+
+// Re-applies a DOM selection across frames until it sticks. Directive
+// decorators and their nested editors mount through React after a commit and
+// can reset the DOM selection — but a remount also detaches the node we
+// placed, so retrying only while the placed node is disconnected covers the
+// remount without overriding the user's next click or keypress.
+export function reapplyUntilSettled(place: () => Node | null) {
+  let placed: Node | null = null
+  const deadline = performance.now() + 800
+  const apply = () => {
+    if (placed?.isConnected) return
+    const node = place()
+    if (node) placed = node
+    if (performance.now() < deadline) requestAnimationFrame(apply)
+  }
+  apply()
 }

@@ -164,6 +164,9 @@ Line 2
 Line 3
 :::`
 
+const SOFTBREAK_MUTED_MARKDOWN = `first half
+second half`
+
 const TAGGING_MARKDOWN = `prefix alpha
 first line
 second line
@@ -178,7 +181,9 @@ suffix omega`
 
 const MUTED_MARKDOWN = `prefix alpha
 plain target
+
 %% already muted
+
 - list target
 ## heading target
 - [ ] task target
@@ -225,6 +230,7 @@ suffix omega`,
   'audio-transcription-checklist': AUDIO_TRANSCRIPTION_MARKDOWN,
   'tagged-list-lines': TAGGED_LIST_MARKDOWN,
   'tagged-muted-lines': TAGGED_MUTE_MARKDOWN,
+  'softbreak-muted': SOFTBREAK_MUTED_MARKDOWN,
   tagging: TAGGING_MARKDOWN,
   'tagging-soft': `prefix alpha
 first line
@@ -290,7 +296,7 @@ export function MarkdownPrototypePage() {
     <section className="prototype-editor-stack" aria-label="MDXEditor prototype">
       <article className="prototype-panel" data-testid="prototype-editor" data-scenario={scenario || 'sample'}>
         <div className="prototype-panel-heading"><div><span className="prototype-eyebrow">Prototype</span><h2>MDXEditor</h2></div><span>Markdown-native rich text</span></div>
-        <MdxNotesEditor value={markdown} onChange={setMarkdown} />
+        <MdxNotesEditor value={markdown} onChange={setMarkdown} hideMutedLines={hideMuted} />
       </article>
     </section>
     <pre data-testid="prototype-source" hidden>{markdown}</pre>
