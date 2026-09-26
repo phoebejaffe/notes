@@ -14,6 +14,51 @@ type Restore =
   | { type: 'caret'; line: number; offset: number }
   | { type: 'range'; startLine: number; endLine: number }
 
+// Rendered text leaves of the editor in document order, skipping empty text
+// and nodes with no layout (e.g. hidden muted blocks).
+function renderedTextLeaves(container: HTMLElement): Node[] {
+  const leaves: Node[] = []
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+  })
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    if (range.getClientRects().length) leaves.push(node)
+  }
+  return leaves
+}
+
+// The caret is at the editor's visual top/bottom edge when its rect sits on
+// the same rendered line as the first/last text line in the whole editor —
+// including lines inside nested directive editors.
+function caretAtEditorEdge(host: HTMLElement, direction: 'up' | 'down'): boolean {
+  const selection = window.getSelection()
+  if (!selection?.isCollapsed || !selection.anchorNode || !selection.rangeCount) return false
+  const outer = contentEditable(host)
+  if (!outer?.contains(selection.anchorNode)) return false
+  const leaves = renderedTextLeaves(outer)
+  const leaf = direction === 'up' ? leaves[0] : leaves[leaves.length - 1]
+  if (!leaf) return false
+  const range = document.createRange()
+  range.selectNodeContents(leaf)
+  const rects = range.getClientRects()
+  const edgeRect = direction === 'up' ? rects[0] : rects[rects.length - 1]
+  const caretRect = selection.getRangeAt(0).getBoundingClientRect()
+  const lineHeight = Math.max(edgeRect.height, caretRect.height, 1)
+  return direction === 'up'
+    ? caretRect.top <= edgeRect.top + lineHeight * 0.5
+    : caretRect.bottom >= edgeRect.bottom - lineHeight * 0.5
+}
+
+function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down') {
+  const card = host.closest<HTMLElement>('.day-card')
+  const cards = [...(card?.parentElement?.querySelectorAll<HTMLElement>('.day-card') ?? [])]
+  const index = card ? cards.indexOf(card) : -1
+  const targetEditor = (direction === 'up' ? cards[index - 1] : cards[index + 1])?.querySelector<HTMLElement>('.notes-mdx-editor')
+  targetEditor?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction }, bubbles: false }))
+}
+
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const lexicalEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
@@ -168,8 +213,35 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       return !!editable && !!editableAtCaret && editableAtCaret !== editable
     }
 
+    // A sibling editor asks us to take focus at an edge: land the caret at
+    // the start of the first rendered line or the end of the last, even when
+    // that line lives inside a nested directive editor.
+    const handleFocusEdge = (event: Event) => {
+      const direction = ((event as CustomEvent).detail as { direction?: 'up' | 'down' } | undefined)?.direction ?? 'down'
+      userInteractedRef.current = true
+      const outer = contentEditable(host)
+      if (!outer) return
+      const leaves = renderedTextLeaves(outer)
+      const leaf = direction === 'up' ? leaves[leaves.length - 1] : leaves[0]
+      if (!leaf) return
+      const editable = leaf.parentElement?.closest<HTMLElement>('[contenteditable="true"]') ?? outer
+      const offset = direction === 'up' ? (leaf.textContent?.length ?? 0) : 0
+      editable.focus()
+      window.getSelection()?.setBaseAndExtent(leaf, offset, leaf, offset)
+    }
+
     const runCommand = (event: KeyboardEvent): boolean => {
       const mod = event.metaKey || event.ctrlKey
+
+      // Plain arrows only — never Cmd/Alt/Shift-modified arrows.
+      if (!mod && !event.altKey && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        const direction = event.key === 'ArrowUp' ? 'up' : 'down'
+        if (caretAtEditorEdge(host, direction)) {
+          focusAdjacentEditor(host, direction)
+          return true
+        }
+        return false
+      }
 
       if (event.altKey && !mod && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
         const map = buildDocumentMap(valueRef.current)
@@ -233,9 +305,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
     host.addEventListener('keydown', handler, true)
     host.addEventListener('notes-mute-toggle', muteSelection)
+    host.addEventListener('notes-focus-edge', handleFocusEdge)
     return () => {
       host.removeEventListener('keydown', handler, true)
       host.removeEventListener('notes-mute-toggle', muteSelection)
+      host.removeEventListener('notes-focus-edge', handleFocusEdge)
     }
   }, [lexicalEditorRef])
 

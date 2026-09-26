@@ -231,6 +231,8 @@ button { cursor: pointer; font: inherit; }
 .notes-mdx-editor .mdxeditor-toolbar button:hover { background: #f4eff7; }
 .notes-mdx-editor .mdxeditor-toolbar button[data-state='on'] { color: #fff; background: #806790; }
 .notes-mdx-editor .mdxeditor-toolbar button svg { width: 16px; height: 16px; }
+.notes-mdx-editor:not(:focus-within) .mdxeditor-toolbar { display: none; }
+.capture-shell .notes-mdx-editor:not(:focus-within) .mdxeditor-toolbar { display: flex; }
 .ios-pwa .notes-mdx-editor .mdxeditor-toolbar { top: 42px; border-right: 0; border-left: 0; border-radius: 0; box-shadow: 0 4px 14px #392c1f10; }
 .app-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar, .capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar { box-shadow: none; }
 .capture-shell:not(.web-shell) .capture-menu { top: 0; right: 0; left: 0; height: 32px; padding: 0 6px; justify-content: flex-end; background: #2f2c31; }
