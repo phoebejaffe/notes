@@ -1,18 +1,59 @@
-import { useEffect, useMemo, useRef, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
-import { $createRangeSelection, $getNearestNodeFromDOMNode, $setSelection, type LexicalEditor } from 'lexical'
+import { $createParagraphNode, $createRangeSelection, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $setSelection, type LexicalEditor } from 'lexical'
 import { $getNearestNodeOfType } from '@lexical/utils'
 import { INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
-import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange } from './sourceMapping'
+import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
 import { clearMutedDecorations, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
-import { checklistToPlainText, moveLinesDetailed, preserveMutedLines, removeChecklist, toggleMutedLines } from '../markerEngine'
+import { addTagDirectiveToRange, checklistToPlainText, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
+import { commentsToTagDirectives } from './tagSyntax'
+import { $isTagBlockNode } from './TagBlockNode'
+import { EditorActionsProvider, type EditorActions } from './editorActions'
 import type { MdxNotesEditorProps } from './editorTypes'
 
 type Restore =
   | { type: 'caret'; line: number; offset: number }
   | { type: 'range'; startLine: number; endLine: number }
+
+const RECENT_TAGS_KEY = 'notes-recent-tags'
+
+// Top-level editable blocks. Paragraphs nested in list items, blockquotes, or
+// tag directives are part of their container block, so they're excluded.
+const TOP_LEVEL_BLOCK_SELECTOR = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
+
+function topLevelBlocks(content: HTMLElement | null | undefined) {
+  return [...content?.querySelectorAll<HTMLElement>(TOP_LEVEL_BLOCK_SELECTOR) ?? []]
+}
+
+function loadRecentTags() {
+  try {
+    const value = JSON.parse(localStorage.getItem(RECENT_TAGS_KEY) ?? '[]')
+    return Array.isArray(value) ? value.filter((tag): tag is string => typeof tag === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function tagColor(tag: string, colors: Record<string, string>) {
+  if (colors[tag]) return colors[tag]
+  const palette = ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55']
+  return palette[[...tag].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % palette.length]
+}
+
+// Tag chips and borders are pure CSS on .notes-tag-directive; only the color
+// needs JS since it comes from a prop. Writing the custom property only when
+// it differs keeps Lexical's mutation observer quiet.
+function applyTagColors(host: HTMLElement, colors: Record<string, string>) {
+  host.querySelectorAll<HTMLElement>('.notes-tag-directive').forEach((element) => {
+    const name = element.getAttribute('data-tag-tag') ?? ''
+    const color = tagColor(name, colors)
+    if (element.style.getPropertyValue('--notes-tag-color') !== color) {
+      element.style.setProperty('--notes-tag-color', color)
+    }
+  })
+}
 
 // Rendered text leaves of the editor in document order, skipping empty text
 // and nodes with no layout (e.g. hidden muted blocks).
@@ -44,7 +85,14 @@ function caretAtEditorEdge(host: HTMLElement, direction: 'up' | 'down'): boolean
   range.selectNodeContents(leaf)
   const rects = range.getClientRects()
   const edgeRect = direction === 'up' ? rects[0] : rects[rects.length - 1]
-  const caretRect = selection.getRangeAt(0).getBoundingClientRect()
+  // A collapsed caret in an empty block (<p><br></p>) reports a zero rect —
+  // fall back to the anchor element's box so edge detection still works there.
+  let caretRect = selection.getRangeAt(0).getBoundingClientRect()
+  if (!caretRect.top && !caretRect.bottom && !caretRect.height) {
+    const anchorElement = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode.parentElement
+    const fallback = anchorElement?.getBoundingClientRect()
+    if (fallback) caretRect = fallback
+  }
   const lineHeight = Math.max(edgeRect.height, caretRect.height, 1)
   return direction === 'up'
     ? caretRect.top <= edgeRect.top + lineHeight * 0.5
@@ -59,14 +107,24 @@ function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down') {
   targetEditor?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction }, bubbles: false }))
 }
 
-export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false }: MdxNotesEditorProps) {
+export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {} }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const lexicalEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
   const hostRef = useRef<HTMLDivElement>(null)
-  const valueRef = useRef(value)
+  const valueRef = useRef(commentsToTagDirectives(value))
   const onChangeRef = useRef(onChange)
   const hideMutedLinesRef = useRef(hideMutedLines)
+  const tagColorsRef = useRef(tagColors)
   const userInteractedRef = useRef(false)
+  const lastRangeRef = useRef<SelectionLineRange | null>(null)
+  const boundaryParagraphRef = useRef<{ key: string; armed: boolean } | null>(null)
+  const commitRef = useRef<((markdown: string, restore?: Restore) => void) | null>(null)
+  const [activeTags, setActiveTags] = useState<string[]>([])
+  const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
+
+  useEffect(() => {
+    tagColorsRef.current = tagColors
+  }, [tagColors])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -99,7 +157,10 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const refreshDecorations = () => {
     const host = hostRef.current
     if (!host) return
-    const apply = () => refreshMutedDecorations(host, valueRef.current, hideMutedLinesRef.current)
+    const apply = () => {
+      refreshMutedDecorations(host, valueRef.current, hideMutedLinesRef.current)
+      applyTagColors(host, tagColorsRef.current)
+    }
     apply()
     requestAnimationFrame(apply)
     requestAnimationFrame(() => requestAnimationFrame(apply))
@@ -131,9 +192,10 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }, [])
 
   useEffect(() => {
-    if (valueRef.current === value) return
-    valueRef.current = value
-    editorRef.current?.setMarkdown(markdownForEditor(value).markdown)
+    const editorValue = commentsToTagDirectives(value)
+    if (valueRef.current === editorValue) return
+    valueRef.current = editorValue
+    editorRef.current?.setMarkdown(markdownForEditor(editorValue).markdown)
     refreshDecorationsRef.current()
   }, [value])
 
@@ -155,6 +217,66 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         ? placeCaretAtCanonicalLine(host, map, restore.line, restore.offset)
         : selectCanonicalLines(host, map, restore.startLine, restore.endLine))
       refreshDecorationsRef.current()
+    }
+    commitRef.current = commit
+
+    // ArrowUp at the top of a document whose first block is a tag has nowhere
+    // native to go, so insert a throwaway paragraph above the tag and land the
+    // caret there. It's removed once the caret leaves it while still empty.
+    const firstBlockIsTag = () => {
+      const first = topLevelBlocks(contentEditable(host))[0]
+      return !!first?.classList.contains('notes-tag-directive')
+    }
+
+    const focusBeforeTag = () => {
+      lexicalEditorRef.current?.update(() => {
+        const firstChild = $getRoot().getFirstChild()
+        if (!$isTagBlockNode(firstChild)) return
+        const paragraph = $createParagraphNode()
+        firstChild.insertBefore(paragraph)
+        paragraph.selectStart()
+        const key = paragraph.getKey()
+        boundaryParagraphRef.current = { key, armed: false }
+        // Lexical commits the new selection asynchronously; a selectionchange
+        // can fire with the pre-insert anchor first. Arm the cleanup only after
+        // the caret has had a frame to settle inside the boundary paragraph.
+        window.requestAnimationFrame(() => {
+          if (boundaryParagraphRef.current?.key === key) boundaryParagraphRef.current.armed = true
+        })
+      })
+    }
+
+    // Snapshot the canonical line range while the selection lives inside this
+    // editor — the tag input in the toolbar keeps acting on it after focus
+    // moves there. Also recomputes the active-tag chips and cleans up an empty
+    // boundary paragraph once the caret leaves it.
+    const updateSelection = () => {
+      const content = contentEditable(host)
+      const anchor = window.getSelection()?.anchorNode
+      const boundary = boundaryParagraphRef.current
+      if (boundary?.armed) {
+        const first = topLevelBlocks(content)[0]
+        if (!first || !anchor || !first.contains(anchor)) {
+          boundaryParagraphRef.current = null
+          const selectionLeftEditor = !anchor || !content?.contains(anchor)
+          lexicalEditorRef.current?.update(() => {
+            const node = $getNodeByKey(boundary.key)
+            if (!node || node.getTextContent().length !== 0) return
+            if (selectionLeftEditor) $setSelection(null)
+            node.remove()
+          })
+        }
+      }
+      if (!content || !anchor || !content.contains(anchor)) return
+      const map = buildDocumentMap(valueRef.current)
+      const range = selectionLineRange(host, map)
+      lastRangeRef.current = range
+      const tags = range
+        ? [...new Set(parseMarkdown(valueRef.current).ranges
+            .filter((tagRange) => tagRange.startLine <= range.endLine && tagRange.endLine >= range.startLine)
+            .map((tagRange) => tagRange.tag))]
+        : []
+      setActiveTags((current) => current.length === tags.length && current.every((tag, index) => tag === tags[index]) ? current : tags)
     }
 
     // Cmd+/ and the toolbar mute button both toggle ` %%` on the selected
@@ -237,7 +359,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (!mod && !event.altKey && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
         const direction = event.key === 'ArrowUp' ? 'up' : 'down'
         if (caretAtEditorEdge(host, direction)) {
-          focusAdjacentEditor(host, direction)
+          if (direction === 'up' && firstBlockIsTag()) focusBeforeTag()
+          else focusAdjacentEditor(host, direction)
           return true
         }
         return false
@@ -306,10 +429,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('keydown', handler, true)
     host.addEventListener('notes-mute-toggle', muteSelection)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
+    document.addEventListener('selectionchange', updateSelection)
     return () => {
       host.removeEventListener('keydown', handler, true)
       host.removeEventListener('notes-mute-toggle', muteSelection)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
+      document.removeEventListener('selectionchange', updateSelection)
     }
   }, [lexicalEditorRef])
 
@@ -321,10 +446,39 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   const plugins = useMemo(() => mdxEditorPlugins(lexicalEditorRef), [lexicalEditorRef])
 
+  const actions = useMemo<EditorActions>(() => ({
+    activeTags,
+    recentTags,
+    addTag: (tagValue) => {
+      const host = hostRef.current
+      const tag = tagValue.trim()
+      if (!host || !tag) return
+      const map = buildDocumentMap(valueRef.current)
+      const range = selectionLineRange(host, map) ?? lastRangeRef.current
+      if (!range) return
+      const result = addTagDirectiveToRange(valueRef.current, range.startLine, range.endLine, tag)
+      if (result.error || result.source === valueRef.current) return
+      commitRef.current?.(result.source, range.collapsed
+        ? { type: 'caret', line: range.startLine + 1, offset: range.caretOffset }
+        : { type: 'range', startLine: range.startLine + 1, endLine: range.endLine + 1 })
+      const nextRecentTags = [tag, ...recentTags.filter((recent) => recent !== tag)].slice(0, 12)
+      setRecentTags(nextRecentTags)
+      localStorage.setItem(RECENT_TAGS_KEY, JSON.stringify(nextRecentTags))
+    },
+    removeTag: (tag) => {
+      const range = lastRangeRef.current
+      if (!range) return
+      const result = removeTagAtPosition(valueRef.current, range.startLine, tag)
+      if (result.error) return
+      commitRef.current?.(result.source, { type: 'caret', line: Math.max(0, range.startLine - 1), offset: range.caretOffset })
+    },
+  }), [activeTags, recentTags])
+
   return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor}>
+    <EditorActionsProvider value={actions}>
     <MDXEditor
       ref={editorRef}
-      markdown={markdownForEditor(value).markdown}
+      markdown={markdownForEditor(commentsToTagDirectives(value)).markdown}
       autoFocus={autoFocus}
       toMarkdownOptions={{ bullet: '-' }}
       onChange={(markdown) => {
@@ -338,5 +492,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       }}
       plugins={plugins}
     />
+    </EditorActionsProvider>
   </div>
 }

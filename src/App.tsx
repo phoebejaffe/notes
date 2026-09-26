@@ -1244,7 +1244,7 @@ function NotesApp() {
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
               {hasLegacyTags && <button className="tag-migration-button" type="button" onClick={() => { if (window.confirm('Migrate this day’s legacy comment tags to Markdown directives?')) updateSource(documentDay, migratedSource) }}>Migrate legacy tags</button>}
-              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} />
+              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
             </div>

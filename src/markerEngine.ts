@@ -209,6 +209,19 @@ export function addTagToRange(source: string, startLine: number, endLine: number
   return { source: lines.join('\n') }
 }
 
+export function addTagDirectiveToRange(source: string, startLine: number, endLine: number, tag: string) {
+  const parsed = parseMarkdown(source)
+  const normalized = normalizeTag(tag.trim())
+  const alreadyActive = parsed.ranges.some((range) => range.tag === normalized && range.startLine <= startLine && range.endLine >= endLine)
+  if (alreadyActive) return { source, error: `“${normalized}” is already active in this selection.` }
+
+  const lines = source.split('\n')
+  const escaped = normalized.replaceAll('&', '&amp;').replaceAll('"', '&quot;')
+  lines.splice(endLine + 1, 0, ':::')
+  lines.splice(startLine, 0, `:::tag{name="${escaped}"}`)
+  return { source: lines.join('\n') }
+}
+
 // A line is muted when it contains `%%` anywhere; when muting we append ` %%`
 // at the end of the line so it stays clear of list/heading prefixes.
 export function mutedMarkerPosition(line: string) {
@@ -343,6 +356,69 @@ export function checklistToPlainText(source: string, lineIndex: number) {
   return lines.join('\n')
 }
 
+// Moves a line range past a `:::tag{…}` directive boundary. A line inside a
+// tag at its edge escapes the tag; a line outside jumps the whole tag block —
+// either way the moved lines land as their own blank-separated block so the
+// directive delimiters keep their structure.
+function movePastDirectiveBoundary(
+  lines: string[],
+  startLine: number,
+  endLine: number,
+  direction: 'up' | 'down',
+  segmentStart: number,
+  segmentEnd: number,
+) {
+  const count = endLine - startLine + 1
+  if (direction === 'up') {
+    const boundary = segmentStart > 0 ? lines[segmentStart - 1] : undefined
+    if (boundary === undefined) return null
+    let insertBefore = -1
+    if (DIRECTIVE_OPEN_PATTERN.test(boundary)) insertBefore = segmentStart - 1
+    else if (DIRECTIVE_CLOSE_PATTERN.test(boundary)) {
+      let depth = 1
+      for (let index = segmentStart - 2; index >= 0; index -= 1) {
+        if (DIRECTIVE_CLOSE_PATTERN.test(lines[index])) depth += 1
+        else if (DIRECTIVE_OPEN_PATTERN.test(lines[index])) {
+          depth -= 1
+          if (!depth) { insertBefore = index; break }
+        }
+      }
+    }
+    if (insertBefore < 0) return null
+    const moved = lines.splice(startLine, count)
+    const payload = [...moved, '']
+    let lead = 0
+    if (insertBefore > 0 && lines[insertBefore - 1].trim()) { payload.unshift(''); lead = 1 }
+    lines.splice(insertBefore, 0, ...payload)
+    return { source: lines.join('\n'), startLine: insertBefore + lead, endLine: insertBefore + lead + moved.length - 1 }
+  }
+  const boundary = segmentEnd + 1 < lines.length ? lines[segmentEnd + 1] : undefined
+  if (boundary === undefined) return null
+  let insertAfter = -1
+  if (DIRECTIVE_CLOSE_PATTERN.test(boundary)) insertAfter = segmentEnd + 1
+  else if (DIRECTIVE_OPEN_PATTERN.test(boundary)) {
+    let depth = 1
+    for (let index = segmentEnd + 2; index < lines.length; index += 1) {
+      if (DIRECTIVE_OPEN_PATTERN.test(lines[index])) depth += 1
+      else if (DIRECTIVE_CLOSE_PATTERN.test(lines[index])) {
+        depth -= 1
+        if (!depth) { insertAfter = index; break }
+      }
+    }
+  }
+  if (insertAfter < 0) return null
+  const moved = lines.splice(startLine, count)
+  insertAfter -= count
+  const payload = [...moved]
+  let lead = 0
+  let insertAt = insertAfter + 1
+  if (insertAt < lines.length && !lines[insertAt].trim()) insertAt += 1
+  else { payload.unshift(''); lead = 1 }
+  if (insertAt < lines.length && lines[insertAt].trim()) payload.push('')
+  lines.splice(insertAt, 0, ...payload)
+  return { source: lines.join('\n'), startLine: insertAt + lead, endLine: insertAt + lead + moved.length - 1 }
+}
+
 export function moveLines(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
   return moveLinesDetailed(source, startLine, endLine, direction)?.source ?? source
 }
@@ -350,7 +426,7 @@ export function moveLines(source: string, startLine: number, endLine: number, di
 export function moveLinesDetailed(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
   const lines = source.split('\n')
   if (startLine < 0 || endLine >= lines.length || startLine > endLine) return null
-  const isBoundary = (line: string) => /^\s*(?:::tag\s*\{[^}]*\}|:::\s*$|(?:%%\s+)?<!--[\s\S]*-->\s*)$/u.test(line)
+  const isBoundary = (line: string) => /^\s*(?:(?:%%\s+)?<!--[\s\S]*-->\s*|:::tag\s*\{[^}]*\}|:::\s*)$/u.test(line)
   if (lines.slice(startLine, endLine + 1).some(isBoundary)) return null
   let segmentStart = startLine
   while (segmentStart > 0 && !isBoundary(lines[segmentStart - 1])) segmentStart -= 1
@@ -364,7 +440,9 @@ export function moveLinesDetailed(source: string, startLine: number, endLine: nu
   const firstSelected = slots.indexOf(selectedSlots[0])
   const lastSelected = slots.indexOf(selectedSlots.at(-1)!)
   const adjacentSlot = direction === 'up' ? firstSelected - 1 : lastSelected + 1
-  if (adjacentSlot < 0 || adjacentSlot >= slots.length) return null
+  if (adjacentSlot < 0 || adjacentSlot >= slots.length) {
+    return movePastDirectiveBoundary(lines, startLine, endLine, direction, segmentStart, segmentEnd)
+  }
 
   // Content that isn't part of a list moves past a whole contiguous list run
   // as one block, landing as its own blank-separated paragraph instead of

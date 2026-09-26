@@ -27,6 +27,6 @@ test('selection at a line boundary does not modify neighboring lines', async ({ 
   const root = editorFor(page)
   await selectRenderedRange(root, 'second line', 'second line')
   await page.getByRole('button', { name: 'Mute selected lines' }).click()
-  await expectSource(page, /first line\n%% second line\nthird line/u)
+  await expectSource(page, /first line\nsecond line %%\nthird line/u)
   await expectSource(page, /prefix alpha\n.*\nsuffix omega/s)
 })

@@ -20,8 +20,9 @@ test('plain ArrowUp from the first line crosses to the previous editor', async (
   const day2 = cards.nth(1).locator('.mdxeditor-root-contenteditable')
   await day2.locator('p', { hasText: 'Untagged content after the leading tag' }).click()
   await page.keyboard.press('Home')
-  // Up moves into the leading tag's nested editor, then up again crosses into
-  // the previous day's last line.
+  // Up moves into the leading tag, up again lands in the boundary paragraph
+  // above it, and the third up crosses into the previous day's last line.
+  await page.keyboard.press('ArrowUp')
   await page.keyboard.press('ArrowUp')
   await page.keyboard.press('ArrowUp')
   await page.keyboard.type('!')

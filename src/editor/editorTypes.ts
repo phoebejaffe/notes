@@ -9,4 +9,5 @@ export interface MdxNotesEditorProps {
   onSelection?: (selection: EditorSelection) => void
   autoFocus?: boolean
   hideMutedLines?: boolean
+  tagColors?: Record<string, string>
 }

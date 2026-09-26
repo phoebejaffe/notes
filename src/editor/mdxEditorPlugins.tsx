@@ -4,8 +4,9 @@ import type { RefObject } from 'react'
 import { MdxEditorToolbar } from './MdxEditorToolbar'
 import { DirectiveContentEditor } from './DirectiveContentEditor'
 import { ListItemCheckedImportVisitor, ListItemCheckedVisitor } from './listItemExport'
+import { tagBlockPlugin } from './tagBlockPlugin'
 
-const DIRECTIVE_DESCRIPTORS: DirectiveDescriptor<any>[] = ['tag', 'muted', 'custom-block'].map((name) => ({
+const DIRECTIVE_DESCRIPTORS: DirectiveDescriptor<any>[] = ['muted', 'custom-block'].map((name) => ({
   name,
   type: 'containerDirective' as const,
   testNode: (node) => node.type === 'containerDirective' && (node as { name?: string }).name === name,
@@ -30,6 +31,7 @@ export function mdxEditorPlugins(lexicalEditorRef: RefObject<LexicalEditor | nul
     tablePlugin(),
     thematicBreakPlugin(),
     directivesPlugin({ directiveDescriptors: DIRECTIVE_DESCRIPTORS }),
+    tagBlockPlugin(),
     markdownShortcutPlugin(),
     toolbarPlugin({ toolbarContents: () => <MdxEditorToolbar /> }),
   ]

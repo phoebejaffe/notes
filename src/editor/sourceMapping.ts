@@ -161,9 +161,20 @@ function lineWithinBlock(blockEl: HTMLElement, mdastNode: MdastNode, node: Node,
     return startLine
   }
 
-  if ((mdastNode.type === 'containerDirective' || mdastNode.type === 'leafDirective') && mdastNode.children?.length) {
+  if (mdastNode.type === 'containerDirective' || mdastNode.type === 'leafDirective') {
+    // Tag directives render as a .notes-tag-directive element whose children are
+    // ordinary blocks in this same editable; other directive kinds mount a
+    // nested editor inside a decorator.
+    const tagDiv = blockEl.matches('.notes-tag-directive') ? blockEl : blockEl.querySelector<HTMLElement>(':scope > .notes-tag-directive')
+    if (tagDiv) {
+      const childEl = directChildOf(tagDiv, node)
+      if (!childEl || !mdastNode.children?.length) return startLine
+      const index = [...tagDiv.children].indexOf(childEl)
+      const child = mdastNode.children[Math.min(Math.max(index, 0), mdastNode.children.length - 1)]
+      return lineWithinBlock(childEl, child, node, offset)
+    }
     const nested = blockEl.querySelector<HTMLElement>('[contenteditable="true"]')
-    if (nested && nested.contains(node)) {
+    if (nested && nested.contains(node) && mdastNode.children?.length) {
       return editorLineInChildren(nested, mdastNode.children, node, offset) ?? startLine
     }
     return startLine
@@ -202,7 +213,8 @@ export function renderedOffsetAtPoint(host: HTMLElement, node: Node, offset: num
   const point = normalizeAnchor(node, offset)
   const blockEl = directChildOf(editable, point.node)
   if (!blockEl) return 0
-  const container = closestElement(point.node, 'li') ?? blockEl
+  const tagDiv = closestElement(point.node, '.notes-tag-directive')
+  const container = closestElement(point.node, 'li') ?? (tagDiv ? directChildOf(tagDiv, point.node) : null) ?? blockEl
   return renderedOffsetBefore(container, point.node, point.offset)
 }
 
@@ -292,11 +304,15 @@ function domPointInBlock(blockEl: HTMLElement, mdastNode: MdastNode, editorLine:
     return domInlinePoint(li, editorLine - itemStart, offset)
   }
 
-  if ((mdastNode.type === 'blockquote' || mdastNode.type === 'containerDirective') && mdastNode.children?.length) {
-    if (mdastNode.type === 'containerDirective') {
-      const nested = blockEl.querySelector<HTMLElement>('[contenteditable="true"]')
-      if (nested) return domPointInChildren(nested, mdastNode.children, editorLine, offset)
-    }
+  if (mdastNode.type === 'containerDirective' && mdastNode.children?.length) {
+    const tagDiv = blockEl.matches('.notes-tag-directive') ? blockEl : blockEl.querySelector<HTMLElement>(':scope > .notes-tag-directive')
+    if (tagDiv) return domPointInChildren(tagDiv, mdastNode.children, editorLine, offset)
+    const nested = blockEl.querySelector<HTMLElement>('[contenteditable="true"]')
+    if (nested) return domPointInChildren(nested, mdastNode.children, editorLine, offset)
+    return null
+  }
+
+  if (mdastNode.type === 'blockquote' && mdastNode.children?.length) {
     let index = mdastNode.children.findIndex((child) => {
       const position = child.position
       return !!position && editorLine >= position.start.line - 1 && editorLine <= position.end.line - 1

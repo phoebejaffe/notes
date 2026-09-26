@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagToRange, checklistToPlainText, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, moveLines, normalizeRepeatedOpens, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
+import { addTagDirectiveToRange, addTagToRange, checklistToPlainText, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, moveLines, normalizeRepeatedOpens, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses independent crossing spans and emoji tags', () => {
@@ -223,6 +223,18 @@ describe('marker engine', () => {
     expect(moveLines(source, 5, 5, 'down')).toBe('Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n- Line C\n- Line B\n:::\n\nLine below')
   })
 
+  it('moves an outside line across a whole tag block', () => {
+    const source = 'Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n\nLine below'
+    expect(moveLines(source, 7, 7, 'up')).toBe('Line above\n\nLine below\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n')
+    expect(moveLines(source, 0, 0, 'down')).toBe('\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n\nLine above\n\nLine below')
+  })
+
+  it('moves a line inside a tag out across its boundary', () => {
+    const source = 'Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n\nLine below'
+    expect(moveLines(source, 3, 3, 'up')).toBe('Line above\n\nQuestions for Lyle\n\n:::tag{name="brainstorm"}\n- Line A\n:::\n\nLine below')
+    expect(moveLines(source, 4, 4, 'down')).toBe('Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n:::\n\n- Line A\n\nLine below')
+  })
+
   it('moves non-list content past an entire list as one block', () => {
     const source = 'before\n- parent one\n  - child one\n  - child two\n- parent two\n\nbelow para\nafter'
     expect(moveLines(source, 6, 6, 'up')).toBe('before\n\nbelow para\n\n- parent one\n  - child one\n  - child two\n- parent two\n\nafter')
@@ -238,6 +250,14 @@ describe('marker engine', () => {
   it('keeps text outside a tagged line range unchanged', () => {
     const source = 'before\nfirst\nsecond\nafter'
     expect(addTagToRange(source, 1, 2, 'therapy').source).toBe('before\n<!-- therapy -->\nfirst\nsecond\n<!-- /therapy -->\nafter')
+  })
+
+  it('wraps a line range in a tag directive and rejects duplicate tags', () => {
+    const source = 'before\nfirst\nsecond\nafter'
+    expect(addTagDirectiveToRange(source, 1, 2, 'therapy').source).toBe('before\n:::tag{name="therapy"}\nfirst\nsecond\n:::\nafter')
+    const tagged = ':::tag{name="therapy"}\ncontent\n:::'
+    expect(addTagDirectiveToRange(tagged, 1, 1, 'therapy').error).toBeTruthy()
+    expect(addTagDirectiveToRange(tagged, 1, 1, 'other').source).toBe(':::tag{name="therapy"}\n:::tag{name="other"}\ncontent\n:::\n:::')
   })
 
   it('renames every matching marker while preserving quoted names', () => {
