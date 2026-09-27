@@ -19,7 +19,7 @@ test('keeps the mac formatting bar at window scale when editor zoom is enabled',
   await expect.poll(() => toolbar.evaluate((element) => {
     const style = getComputedStyle(element)
     const rect = element.getBoundingClientRect()
-    return style.position === 'sticky' && Math.abs(parseFloat(style.zoom) - 0.77) < 0.01 && rect.width > 100 && rect.height > 10
+    return style.position === 'fixed' && Math.abs(rect.top - 80) < 4 && Math.abs(parseFloat(style.zoom) - 0.77) < 0.01 && rect.width > 100 && rect.height > 10
   })).toBe(true)
 })
 

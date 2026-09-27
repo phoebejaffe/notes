@@ -40,6 +40,24 @@ test('the formatting toolbar follows selections and stays legible in dark mode',
   await expect(toolbar).toBeVisible()
 })
 
+test('the formatting bar is always rendered and enabled only for the focused editor', async ({ page }) => {
+  await page.goto('/prototype?multi')
+  const cards = page.locator('.day-card')
+  await expect(cards).toHaveCount(3)
+
+  // Nothing focused: exactly one bar shows — the first card's, disabled.
+  const visibleBar = page.locator('.mdxeditor-toolbar:visible')
+  await expect(visibleBar).toHaveCount(1)
+  await expect.poll(() => visibleBar.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none')
+
+  // Focusing another editor enables its bar and hides the placeholder.
+  await cards.nth(1).locator('.mdxeditor-root-contenteditable').click()
+  const focusedBar = cards.nth(1).locator('.mdxeditor-toolbar')
+  await expect(focusedBar).toBeVisible()
+  await expect(cards.nth(0).locator('.mdxeditor-toolbar')).toBeHidden()
+  await expect.poll(() => focusedBar.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('auto')
+})
+
 test('the capture shell keeps the formatting toolbar visible without DOM focus', async ({ page }) => {
   await page.goto('/prototype?scenario=formatting')
   await page.locator('.markdown-prototype-page').evaluate((element) => element.classList.add('capture-shell'))

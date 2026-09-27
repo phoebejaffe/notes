@@ -267,6 +267,20 @@ function NotesApp() {
     return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) }
   }, [])
 
+  // iOS Safari ignores user-scalable=no in the viewport meta; its proprietary
+  // gesture events are the only reliable pinch-zoom hook.
+  useEffect(() => {
+    const preventGesture = (event: Event) => event.preventDefault()
+    document.addEventListener('gesturestart', preventGesture)
+    document.addEventListener('gesturechange', preventGesture)
+    document.addEventListener('gestureend', preventGesture)
+    return () => {
+      document.removeEventListener('gesturestart', preventGesture)
+      document.removeEventListener('gesturechange', preventGesture)
+      document.removeEventListener('gestureend', preventGesture)
+    }
+  }, [])
+
   useEffect(() => {
     const handleInstallPrompt = (event: Event) => { event.preventDefault(); setInstallPrompt(event as BeforeInstallPromptEvent) }
     const handleInstalled = () => { setAppInstalled(true); setInstallPrompt(undefined) }

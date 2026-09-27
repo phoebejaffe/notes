@@ -55,6 +55,44 @@ function applyTagColors(host: HTMLElement, colors: Record<string, string>) {
   })
 }
 
+// A linked `__` marks a line written by the ring transcription workflow. Each
+// gets a `≈` overlay centered on the editor's left border at the link's row.
+// Markers are appended to the host — outside the contenteditable — so Lexical
+// never reconciles them, and are reused per anchor to avoid DOM churn.
+const audioMarkersByHost = new WeakMap<HTMLElement, Map<HTMLAnchorElement, HTMLElement>>()
+
+function refreshAudioMarkers(host: HTMLElement) {
+  let markers = audioMarkersByHost.get(host)
+  if (!markers) {
+    markers = new Map()
+    audioMarkersByHost.set(host, markers)
+  }
+  const hostTop = host.getBoundingClientRect().top
+  const seen = new Set<HTMLAnchorElement>()
+  host.querySelectorAll('a').forEach((anchor) => {
+    if (!/^_+$/u.test(anchor.textContent ?? '')) return
+    const rect = anchor.getBoundingClientRect()
+    if (!rect.height) return
+    seen.add(anchor)
+    let marker = markers.get(anchor)
+    if (!marker) {
+      marker = document.createElement('span')
+      marker.className = 'notes-audio-marker'
+      marker.textContent = '≈'
+      host.appendChild(marker)
+      markers.set(anchor, marker)
+    }
+    const top = `${(rect.top + rect.height / 2 - hostTop).toFixed(1)}px`
+    if (marker.style.top !== top) marker.style.top = top
+  })
+  markers.forEach((marker, anchor) => {
+    if (!seen.has(anchor)) {
+      marker.remove()
+      markers.delete(anchor)
+    }
+  })
+}
+
 // Rendered text leaves of the editor in document order, skipping empty text
 // and nodes with no layout (e.g. hidden muted blocks).
 function renderedTextLeaves(container: HTMLElement): Node[] {
@@ -160,6 +198,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const apply = () => {
       refreshMutedDecorations(host, valueRef.current, hideMutedLinesRef.current)
       applyTagColors(host, tagColorsRef.current)
+      refreshAudioMarkers(host)
     }
     apply()
     requestAnimationFrame(apply)
@@ -188,7 +227,13 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   useEffect(() => {
     refreshDecorationsRef.current()
     const host = hostRef.current
-    return () => { if (host) clearMutedDecorations(host) }
+    // Marker positions depend on line wrapping, so refresh on layout changes.
+    const observer = new ResizeObserver(() => refreshDecorationsRef.current())
+    if (host) observer.observe(host)
+    return () => {
+      observer.disconnect()
+      if (host) clearMutedDecorations(host)
+    }
   }, [])
 
   useEffect(() => {
