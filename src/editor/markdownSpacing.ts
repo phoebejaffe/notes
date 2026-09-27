@@ -2,7 +2,7 @@ import { isMutedLine, stripMutedMarkers } from '../markerEngine'
 
 // The editor gets a slightly expanded version of the canonical source: a list
 // item immediately followed by a non-list line (how the transcription writer
-// emits `💡` paragraphs after tasks, or plain text after a bullet) would
+// emits plain paragraphs after tasks, or plain text after a bullet) would
 // otherwise be parsed as a lazy continuation inside the list item. The
 // injected blank line is stripped back out on export so the canonical source
 // is never changed by rendering alone.

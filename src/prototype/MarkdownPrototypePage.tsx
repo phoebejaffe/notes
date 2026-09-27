@@ -146,9 +146,9 @@ const CHECKLIST_POSITION_MARKDOWN = `prefix alpha
 - [ ] The checklist stays attached to this line
 suffix omega`
 
-const AUDIO_TRANSCRIPTION_MARKDOWN = `💡 Be able to talk to a few other people about that and get their feedback about the business.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=fcb9611553c62fab066af5a3d562601e&t=LKt6bG9IHz6faGOPCknYHtoajtzuKOm9qSa6ir3veqE)
-- [ ] 💡 Find someone to go to the symphony with me.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=8b71347e6846691b4ca4e9598b6ab96f&t=Ovow199-bWVfT-k8WfCoiIQrgMcJa4P87caHuo8t7ck)
-💡 Kept finding blonde pubes on their pants.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=879fc5d90c8afa9217f84bcb6b5cd338&t=Kcu93ypuxY7a_eU9Xziild5ZVq_kTaJQayvPXl4tm7E)`
+const AUDIO_TRANSCRIPTION_MARKDOWN = `Be able to talk to a few other people about that and get their feedback about the business.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=fcb9611553c62fab066af5a3d562601e&t=LKt6bG9IHz6faGOPCknYHtoajtzuKOm9qSa6ir3veqE)
+- [ ] Find someone to go to the symphony with me.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=8b71347e6846691b4ca4e9598b6ab96f&t=Ovow199-bWVfT-k8WfCoiIQrgMcJa4P87caHuo8t7ck)
+Kept finding blonde pubes on their pants.[ ](https://us-central1-pebble-ring-sync-20260911.cloudfunctions.net/recordingAudio?id=879fc5d90c8afa9217f84bcb6b5cd338&t=Kcu93ypuxY7a_eU9Xziild5ZVq_kTaJQayvPXl4tm7E)`
 
 const TAGGED_LIST_MARKDOWN = `:::tag{name="book club"}
 Line 1
