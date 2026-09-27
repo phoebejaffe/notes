@@ -291,7 +291,8 @@ button { cursor: pointer; font: inherit; }
 .app-footer { display: flex; justify-content: space-between; padding-top: 18px; color: #988f86; font-size: 11px; }
 .loading-screen { display: grid; min-height: 100vh; place-items: center; color: #817970; font: 14px Georgia, serif; }
 @media (max-width: 700px) { .app-shell { padding-inline: 12px; } .topbar { padding-inline: 12px; } .app-footer { gap: 8px; flex-direction: column; } .tag-bar { margin-inline: -12px; } }
-@media (pointer: coarse) { input, select, textarea, button { touch-action: pan-x pan-y; } input, select, textarea { font-size: 16px; } .tag-shortcut { display: none; } }
+.notes-mdx-editor .mdxeditor-toolbar .notes-editor-gesture-button { display: none; touch-action: none; }
+@media (pointer: coarse) { input, select, textarea, button { touch-action: pan-x pan-y; } input, select, textarea { font-size: 16px; } .tag-shortcut { display: none; } .notes-mdx-editor .mdxeditor-toolbar .notes-editor-gesture-button { display: inline-flex; touch-action: none; } }
 .offline-indicator { position: relative; display: inline-flex; align-items: center; padding: 4px 7px; border: 1px solid #d99a91; border-radius: 999px; color: #9a5145; background: #fff2ef; font-size: 10px; line-height: 1; }
 .offline-indicator:hover, .offline-indicator:focus-visible { border-color: #b84f43; background: #fbe8e4; }
 .offline-tooltip { position: absolute; z-index: 25; top: calc(100% + 8px); right: 0; display: none; width: 270px; padding: 9px 10px; border: 1px solid #d99a91; border-radius: 7px; color: #8f4035; background: #fff5f2; box-shadow: 0 8px 20px #392c1f22; font-size: 11px; line-height: 1.4; text-align: left; white-space: normal; }

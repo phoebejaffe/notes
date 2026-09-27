@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagDirectiveToRange, checklistToPlainText, lineRangeForSelection, markdownMarkState, moveLines, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
+import { addTagDirectiveToRange, checklistToPlainText, indentLines, lineRangeForSelection, markdownMarkState, moveLines, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses nested tag directives including emoji names', () => {
@@ -163,6 +163,20 @@ describe('marker engine', () => {
     expect(toggleChecklist('- %% [ ] muted task', 0)).toBe('- %% [x] muted task')
     expect(toggleChecklist('muted %%', 0)).toBe('- [ ] muted %%')
     expect(toggleMutedLines('- %% [x] muted task', 0, 0).source).toBe('- [x] muted task')
+  })
+
+  it('indents and outdents list items in source space', () => {
+    const source = '- one\n  - nested\n- two\nplain\n- [ ] task\n1. ordered'
+    // indent affects list lines only; caret delta tracks the start line
+    expect(indentLines(source, 1, 2, 'indent')).toEqual({ source: '- one\n    - nested\n  - two\nplain\n- [ ] task\n1. ordered', caretDelta: 2 })
+    expect(indentLines(source, 0, 0, 'indent')).toEqual({ source: '  - one\n  - nested\n- two\nplain\n- [ ] task\n1. ordered', caretDelta: 2 })
+    // outdent removes up to two leading spaces
+    expect(indentLines(source, 1, 1, 'outdent')).toEqual({ source: '- one\n- nested\n- two\nplain\n- [ ] task\n1. ordered', caretDelta: -2 })
+    // no leading whitespace → nothing to outdent
+    expect(indentLines(source, 0, 0, 'outdent')).toBeNull()
+    // non-list lines are untouched; all-plain ranges report no change
+    expect(indentLines('plain\nmore', 0, 1, 'indent')).toBeNull()
+    expect(indentLines(source, 3, 3, 'outdent')).toBeNull()
   })
 
   it('removes checklist markers and leaves plain list items', () => {

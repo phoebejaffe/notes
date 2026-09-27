@@ -7,7 +7,7 @@ import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
 import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
 import { clearMutedDecorations, inHiddenMutedRange, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
-import { addTagDirectiveToRange, checklistToPlainText, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
+import { addTagDirectiveToRange, checklistToPlainText, indentLines, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 
 import { $isTagBlockNode } from './TagBlockNode'
 import { EditorActionsProvider, type EditorActions } from './editorActions'
@@ -375,6 +375,39 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       return true
     }
 
+    // Alt/Option+Arrow and the mobile gesture button share this path.
+    const moveSelectedLines = (direction: 'up' | 'down') => {
+      const map = buildDocumentMap(valueRef.current)
+      const range = selectionLineRange(host, map)
+      if (!range) return false
+      const moved = moveLinesDetailed(valueRef.current, range.startLine, range.endLine, direction)
+      if (!moved) return true
+      commit(moved.source, range.collapsed
+        ? { type: 'caret', line: moved.startLine, offset: range.caretOffset }
+        : { type: 'range', startLine: moved.startLine, endLine: moved.endLine })
+      return true
+    }
+
+    // Gesture-button indent/outdent — source-space whitespace on list items.
+    const indentSelection = (direction: 'indent' | 'outdent') => {
+      const map = buildDocumentMap(valueRef.current)
+      const range = selectionLineRange(host, map)
+      if (!range) return
+      const next = indentLines(valueRef.current, range.startLine, range.endLine, direction)
+      if (!next) return
+      commit(next.source, range.collapsed
+        ? { type: 'caret', line: range.startLine, offset: Math.max(0, range.caretOffset + next.caretDelta) }
+        : { type: 'range', startLine: range.startLine, endLine: range.endLine })
+    }
+
+    // Drag gestures on the mobile toolbar button: up/down move lines,
+    // left/right indent and outdent.
+    const handleLineGesture = (event: Event) => {
+      const direction = ((event as CustomEvent).detail as { direction?: string } | undefined)?.direction
+      if (direction === 'up' || direction === 'down') moveSelectedLines(direction)
+      else if (direction === 'indent' || direction === 'outdent') indentSelection(direction)
+    }
+
     const lexicalPointFor = (node: Node, offset: number): [string, number, 'text' | 'element'] | null => {
       const lexicalNode = $getNearestNodeFromDOMNode(node)
       if (!lexicalNode) return null
@@ -500,14 +533,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       }
 
       if (event.altKey && !mod && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-        const map = buildDocumentMap(valueRef.current)
-        const range = selectionLineRange(host, map)
-        if (!range) return false
-        const moved = moveLinesDetailed(valueRef.current, range.startLine, range.endLine, event.key === 'ArrowUp' ? 'up' : 'down')
-        if (!moved) return true
-        commit(moved.source, range.collapsed
-          ? { type: 'caret', line: moved.startLine, offset: range.caretOffset }
-          : { type: 'range', startLine: moved.startLine, endLine: moved.endLine })
+        moveSelectedLines(event.key === 'ArrowUp' ? 'up' : 'down')
         return true
       }
 
@@ -572,12 +598,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('keydown', handler, true)
     host.addEventListener('paste', handlePaste, true)
     host.addEventListener('notes-mute-toggle', muteSelection)
+    host.addEventListener('notes-line-gesture', handleLineGesture)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
     document.addEventListener('selectionchange', updateSelection)
     return () => {
       host.removeEventListener('keydown', handler, true)
       host.removeEventListener('paste', handlePaste, true)
       host.removeEventListener('notes-mute-toggle', muteSelection)
+      host.removeEventListener('notes-line-gesture', handleLineGesture)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
       document.removeEventListener('selectionchange', updateSelection)
     }

@@ -203,6 +203,33 @@ export function toggleMutedLines(source: string, startLine: number, endLine: num
 const LIST_ITEM_PATTERN = /^(\s*)([-*+] |\d+[.)] )(.*)$/u
 const CHECKLIST_ITEM_PATTERN = /^(\s*(?:[-*+]|\d+[.)]) (?:%% )?)\[([ xX])\](.*)$/u
 
+// Indent/outdent operates in source space on list items only — Markdown has
+// no paragraph indentation, so non-list lines are untouched. `indent`
+// prepends two spaces; `outdent` removes up to two leading spaces (or one
+// tab). Returns the new source plus the caret-column delta on startLine, or
+// null when nothing changed.
+export function indentLines(source: string, startLine: number, endLine: number, direction: 'indent' | 'outdent') {
+  const lines = source.split('\n')
+  let changed = false
+  let caretDelta = 0
+  for (let index = Math.max(0, startLine); index <= Math.min(endLine, lines.length - 1); index += 1) {
+    const line = lines[index]
+    const item = line.match(/^(\s*)(?:[-*+]|\d+[.)] )/u)
+    if (!item) continue
+    if (direction === 'indent') {
+      lines[index] = `  ${line}`
+      if (index === startLine) caretDelta += 2
+    } else {
+      const removed = line.startsWith('\t') ? 1 : Math.min(2, item[1].length)
+      if (!removed) continue
+      lines[index] = line.slice(removed)
+      if (index === startLine) caretDelta -= removed
+    }
+    changed = true
+  }
+  return changed ? { source: lines.join('\n'), caretDelta } : null
+}
+
 export function toggleChecklist(source: string, lineIndex: number) {
   const lines = source.split('\n')
   const line = lines[lineIndex]
