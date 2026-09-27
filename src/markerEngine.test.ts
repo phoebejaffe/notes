@@ -227,10 +227,18 @@ describe('marker engine', () => {
     expect(moveLines(source, 5, 5, 'down')).toBe('Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n- Line C\n- Line B\n:::\n\nLine below')
   })
 
-  it('moves an outside line across a whole tag block', () => {
+  it('moves an outside line into a tag at its edge, then keeps walking inside', () => {
     const source = 'Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n\nLine below'
-    expect(moveLines(source, 7, 7, 'up')).toBe('Line above\n\nLine below\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n')
-    expect(moveLines(source, 0, 0, 'down')).toBe('\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n\nLine above\n\nLine below')
+    // Below the tag: up enters at the bottom, blank-separated from the last
+    // content line.
+    const entered = 'Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n\nLine below\n:::'
+    expect(moveLines(source, 7, 7, 'up')).toBe(entered)
+    // Up again moves it above the tag's last line (jumping the list); the
+    // separator blank stays behind before the closer.
+    expect(moveLines(entered, 6, 6, 'up')).toBe('Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n\nLine below\n\n- Line A\n\n:::')
+    // Above the tag: down enters at the top, and the redundant separator is
+    // consumed.
+    expect(moveLines(source, 0, 0, 'down')).toBe(':::tag{name="brainstorm"}\nLine above\n\nQuestions for Lyle\n- Line A\n:::\n\nLine below')
   })
 
   it('moves a line inside a tag out across its boundary', () => {

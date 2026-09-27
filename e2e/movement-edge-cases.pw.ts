@@ -6,28 +6,35 @@ const sourceText = async (page: import('@playwright/test').Page) => sourceFor(pa
 const expectCaretBlock = (page: import('@playwright/test').Page, text: string) =>
   expect.poll(async () => (await selectionSnapshot(page)).blockText).toBe(text)
 
-test('a line outside a tag jumps the whole tag block', async ({ page }) => {
+test('a line outside a tag enters it, then keeps moving inside', async ({ page }) => {
   await page.goto('/prototype?scenario=tagged-line-movement')
   const root = editorFor(page)
   await expect(root).toContainText('Line above')
 
-  // Caret above the tag: Alt+ArrowDown lands the line below the whole block.
-  await setCaretAtText(root, 'Line above', 0)
-  await page.keyboard.press('Alt+ArrowDown')
-  await expect.poll(() => sourceText(page)).toMatch(
-    /:::tag\{name="brainstorm"\}\nQuestions for Lyle\n- Line A\n- Line B\n- Line C\n:::\n\nLine above\n\nLine below$/,
-  )
-  await expectCaretBlock(page, 'Line above')
-
-  // Caret below the tag: Alt+ArrowUp lands the line above the whole block.
-  await page.goto('/prototype?scenario=tagged-line-movement')
-  await expect(root).toContainText('Line below')
+  // Caret below the tag: Alt+ArrowUp pulls the line inside the tag, landing
+  // as its own block above the closing delimiter.
   await setCaretAtText(root, 'Line below', 0)
   await page.keyboard.press('Alt+ArrowUp')
   await expect.poll(() => sourceText(page)).toMatch(
-    /^Line above\n\nLine below\n\n:::tag\{name="brainstorm"\}\nQuestions for Lyle\n- Line A\n- Line B\n- Line C\n:::\n?$/,
+    /^Line above\n\n:::tag\{name="brainstorm"\}\nQuestions for Lyle\n- Line A\n- Line B\n- Line C\n\nLine below\n:::$/,
   )
   await expectCaretBlock(page, 'Line below')
+
+  // Alt+ArrowUp again moves it above the tag's last block (the list).
+  await page.keyboard.press('Alt+ArrowUp')
+  await expect.poll(() => sourceText(page)).toMatch(
+    /^Line above\n\n:::tag\{name="brainstorm"\}\nQuestions for Lyle\n\nLine below\n\n- Line A\n- Line B\n- Line C\n\n:::$/,
+  )
+  await expectCaretBlock(page, 'Line below')
+
+  // Caret above the tag: Alt+ArrowDown enters at the top.
+  await page.goto('/prototype?scenario=tagged-line-movement')
+  await setCaretAtText(root, 'Line above', 0)
+  await page.keyboard.press('Alt+ArrowDown')
+  await expect.poll(() => sourceText(page)).toMatch(
+    /^:::tag\{name="brainstorm"\}\nLine above\n\nQuestions for Lyle\n- Line A\n- Line B\n- Line C\n:::\n\nLine below$/,
+  )
+  await expectCaretBlock(page, 'Line above')
 })
 
 test('a line inside a tag escapes across its boundary', async ({ page }) => {

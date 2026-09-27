@@ -283,10 +283,11 @@ export function checklistToPlainText(source: string, lineIndex: number) {
   return lines.join('\n')
 }
 
-// Moves a line range past a `:::tag{…}` directive boundary. A line inside a
-// tag at its edge escapes the tag; a line outside jumps the whole tag block —
-// either way the moved lines land as their own blank-separated block so the
-// directive delimiters keep their structure.
+// Moves a line range across a `:::tag{…}` directive boundary. A line inside
+// a tag at its edge escapes the tag, landing as its own blank-separated
+// block; a line outside ENTERS the tag, landing as a blank-separated block
+// just inside the delimiter — so lines walk into a tag step by step and keep
+// moving through its contents.
 function movePastDirectiveBoundary(
   lines: string[],
   startLine: number,
@@ -296,54 +297,60 @@ function movePastDirectiveBoundary(
   segmentEnd: number,
 ) {
   const count = endLine - startLine + 1
+  const isBoundaryLine = (line: string) => DIRECTIVE_OPEN_PATTERN.test(line) || DIRECTIVE_CLOSE_PATTERN.test(line)
   if (direction === 'up') {
     const boundary = segmentStart > 0 ? lines[segmentStart - 1] : undefined
     if (boundary === undefined) return null
-    let insertBefore = -1
-    if (DIRECTIVE_OPEN_PATTERN.test(boundary)) insertBefore = segmentStart - 1
-    else if (DIRECTIVE_CLOSE_PATTERN.test(boundary)) {
-      let depth = 1
-      for (let index = segmentStart - 2; index >= 0; index -= 1) {
-        if (DIRECTIVE_CLOSE_PATTERN.test(lines[index])) depth += 1
-        else if (DIRECTIVE_OPEN_PATTERN.test(lines[index])) {
-          depth -= 1
-          if (!depth) { insertBefore = index; break }
-        }
-      }
+    if (DIRECTIVE_OPEN_PATTERN.test(boundary)) {
+      // Inside a tag at its top edge: escape above the opener.
+      const insertBefore = segmentStart - 1
+      const moved = lines.splice(startLine, count)
+      const payload = [...moved, '']
+      let lead = 0
+      if (insertBefore > 0 && lines[insertBefore - 1].trim()) { payload.unshift(''); lead = 1 }
+      lines.splice(insertBefore, 0, ...payload)
+      return { source: lines.join('\n'), startLine: insertBefore + lead, endLine: insertBefore + lead + moved.length - 1 }
     }
-    if (insertBefore < 0) return null
+    if (!DIRECTIVE_CLOSE_PATTERN.test(boundary)) return null
+    // Below a tag: enter it, landing blank-separated just above the closer.
+    // The separator line that divided the moved block from the tag is
+    // redundant once the block is inside.
     const moved = lines.splice(startLine, count)
-    const payload = [...moved, '']
+    const closeIndex = segmentStart - 1
+    if (lines[closeIndex + 1] === '') lines.splice(closeIndex + 1, 1)
+    const payload = [...moved]
     let lead = 0
-    if (insertBefore > 0 && lines[insertBefore - 1].trim()) { payload.unshift(''); lead = 1 }
-    lines.splice(insertBefore, 0, ...payload)
-    return { source: lines.join('\n'), startLine: insertBefore + lead, endLine: insertBefore + lead + moved.length - 1 }
+    if (closeIndex > 0 && lines[closeIndex - 1].trim() && !isBoundaryLine(lines[closeIndex - 1])) { payload.unshift(''); lead = 1 }
+    lines.splice(closeIndex, 0, ...payload)
+    return { source: lines.join('\n'), startLine: closeIndex + lead, endLine: closeIndex + lead + moved.length - 1 }
   }
   const boundary = segmentEnd + 1 < lines.length ? lines[segmentEnd + 1] : undefined
   if (boundary === undefined) return null
-  let insertAfter = -1
-  if (DIRECTIVE_CLOSE_PATTERN.test(boundary)) insertAfter = segmentEnd + 1
-  else if (DIRECTIVE_OPEN_PATTERN.test(boundary)) {
-    let depth = 1
-    for (let index = segmentEnd + 2; index < lines.length; index += 1) {
-      if (DIRECTIVE_OPEN_PATTERN.test(lines[index])) depth += 1
-      else if (DIRECTIVE_CLOSE_PATTERN.test(lines[index])) {
-        depth -= 1
-        if (!depth) { insertAfter = index; break }
-      }
-    }
+  if (DIRECTIVE_CLOSE_PATTERN.test(boundary)) {
+    // Inside a tag at its bottom edge: escape below the closer.
+    let insertAfter = segmentEnd + 1
+    const moved = lines.splice(startLine, count)
+    insertAfter -= count
+    const payload = [...moved]
+    let lead = 0
+    let insertAt = insertAfter + 1
+    if (insertAt < lines.length && !lines[insertAt].trim()) insertAt += 1
+    else { payload.unshift(''); lead = 1 }
+    if (insertAt < lines.length && lines[insertAt].trim()) payload.push('')
+    lines.splice(insertAt, 0, ...payload)
+    return { source: lines.join('\n'), startLine: insertAt + lead, endLine: insertAt + lead + moved.length - 1 }
   }
-  if (insertAfter < 0) return null
+  if (!DIRECTIVE_OPEN_PATTERN.test(boundary)) return null
+  // Above a tag: enter it, landing blank-separated just below the opener. The
+  // separator line between the moved block and the tag becomes redundant.
   const moved = lines.splice(startLine, count)
-  insertAfter -= count
+  let openIndex = segmentEnd + 1 - count
+  if (lines[openIndex - 1] === '') { lines.splice(openIndex - 1, 1); openIndex -= 1 }
+  const insertAt = openIndex + 1
   const payload = [...moved]
-  let lead = 0
-  let insertAt = insertAfter + 1
-  if (insertAt < lines.length && !lines[insertAt].trim()) insertAt += 1
-  else { payload.unshift(''); lead = 1 }
-  if (insertAt < lines.length && lines[insertAt].trim()) payload.push('')
+  if (lines[insertAt] !== undefined && lines[insertAt].trim() && !isBoundaryLine(lines[insertAt])) payload.push('')
   lines.splice(insertAt, 0, ...payload)
-  return { source: lines.join('\n'), startLine: insertAt + lead, endLine: insertAt + lead + moved.length - 1 }
+  return { source: lines.join('\n'), startLine: insertAt, endLine: insertAt + moved.length - 1 }
 }
 
 export function moveLines(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
