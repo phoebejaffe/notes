@@ -112,6 +112,7 @@ Preferences are persisted locally and currently cover:
 - Backup retention: keep all, one week, one month, or three months (mac app only).
 - Onboarding and cloud-sync prompt dismissal.
 - macOS failure notifications.
+- Ring phone alerts (browser/PWA only): when enabled, the app subscribes to Web Push on its service worker and stores the subscription at `users/{uid}/pushSubscriptions`. A ring recording whose transcription begins with `notify` or `urgent` pushes a `Noteses` notification (`🗒️`/`🚨` prefix) to every subscribed device; `urgent` sends at high urgency. The VAPID public key is provisioned by the receiver into `metadata/pushConfig` so no build-time config is needed and rotations propagate automatically.
 - Capture shortcut, always-on-top behavior, window opacity, launch at login, menu-bar visibility, and dock-icon visibility.
 - Custom keyboard shortcuts.
 

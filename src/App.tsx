@@ -13,6 +13,7 @@ import { diffLines } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
 import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'
 import { mergeMarkdown } from './markdownMerge'
+import { disablePush, enablePush, pushStatus, type PushStatus } from './pushNotifications'
 import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
 import type { User } from 'firebase/auth'
 import { MarkdownPrototypePage } from './prototype/MarkdownPrototypePage'
@@ -202,6 +203,8 @@ function NotesApp() {
   const [loaded, setLoaded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pushState, setPushState] = useState<PushStatus>('disabled')
+  const [pushBusy, setPushBusy] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(() => !loadPreferences().onboardingDismissed)
   const [commandQuery, setCommandQuery] = useState('')
@@ -652,6 +655,21 @@ function NotesApp() {
   function setDocumentMarkdown(day: string, markdown: string) {
     documentsRef.current = { ...documentsRef.current, [day]: markdown }
     setDocuments((current) => ({ ...current, [day]: markdown }))
+  }
+
+  useEffect(() => {
+    if (!settingsOpen || !firebaseUser) return
+    void pushStatus(firebaseUser.uid).then(setPushState).catch(() => undefined)
+  }, [firebaseUser, settingsOpen])
+
+  async function togglePush() {
+    if (!firebaseUser) return
+    setPushBusy(true)
+    try {
+      setPushState(pushState === 'enabled' ? await disablePush(firebaseUser.uid) : await enablePush(firebaseUser.uid))
+    } finally {
+      setPushBusy(false)
+    }
   }
 
   function persistLocalDocument(day: string, markdown: string, updatedAt: number, syncBase = syncBasesRef.current[day]) {
@@ -1333,6 +1351,8 @@ function NotesApp() {
 
           <fieldset className="settings-group"><legend>Notifications</legend>
             <label className="settings-row"><span className="settings-label">Failure notifications</span><input type="checkbox" checked={preferences.notificationsEnabled} onChange={(event) => setPreferences((current) => ({ ...current, notificationsEnabled: event.target.checked }))} /></label>
+            {!isTauriEnvironment() && firebaseUser && <div className="settings-row"><span className="settings-label">Ring phone alerts</span><button className="settings-action" type="button" disabled={pushBusy || pushState === 'unsupported' || pushState === 'unconfigured' || pushState === 'denied'} onClick={() => { void togglePush() }}>{pushBusy ? 'Working…' : pushState === 'enabled' ? 'Disable' : 'Enable'}</button></div>}
+            {!isTauriEnvironment() && firebaseUser && pushState !== 'unsupported' && <p className="settings-help">{pushState === 'unconfigured' ? 'Ring alerts are not ready yet — the receiver provisions push keys when it next processes a recording.' : pushState === 'denied' ? 'Notifications are blocked for this app — allow them in the device settings.' : 'Sends a notification to this device when a ring recording starts with “notify” or “urgent”.'}</p>}
             <p className="settings-help">macOS notifications will be used for sync and backup failures when native notification support is available.</p>
           </fieldset>
 

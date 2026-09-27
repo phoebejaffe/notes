@@ -10,6 +10,14 @@ service cloud.firestore {
       allow read, write: if signedInAs(userId);
     }
 
+    match /users/{userId}/metadata/pushConfig {
+      allow read, write: if signedInAs(userId);
+    }
+
+    match /users/{userId}/pushSubscriptions/{subscriptionId} {
+      allow read, write: if signedInAs(userId);
+    }
+
     match /users/{userId}/documents/{day} {
       allow read: if signedInAs(userId);
       allow create, update, delete: if signedInAs(userId)

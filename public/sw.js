@@ -12,6 +12,33 @@ self.addEventListener('activate', (event) => {
   self.clients.claim()
 })
 
+self.addEventListener('push', (event) => {
+  let data = {}
+  try {
+    data = event.data ? event.data.json() : {}
+  } catch {
+    data = {}
+  }
+  event.waitUntil(self.registration.showNotification(data.title || 'Noteses', {
+    body: data.body || '',
+    icon: `${BASE_PATH}favicon.svg`,
+    badge: `${BASE_PATH}favicon.svg`,
+    tag: data.tag || 'noteses-ring',
+    renotify: true,
+    data: { url: data.url || BASE_PATH },
+  }))
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const target = event.notification.data?.url || BASE_PATH
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    const client = list.find((item) => item.url.includes(BASE_PATH)) ?? list[0]
+    if (client) return client.focus()
+    return clients.openWindow(target)
+  }))
+})
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return
   const requestUrl = new URL(event.request.url)
