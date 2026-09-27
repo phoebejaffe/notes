@@ -6,7 +6,7 @@ import { INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
 import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
-import { clearMutedDecorations, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
+import { clearMutedDecorations, inHiddenMutedRange, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
 import { addTagDirectiveToRange, checklistToPlainText, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 
 import { $isTagBlockNode } from './TagBlockNode'
@@ -72,7 +72,9 @@ function refreshAudioMarkers(host: HTMLElement) {
   host.querySelectorAll('a').forEach((anchor) => {
     if (!/^_+$/u.test(anchor.textContent ?? '')) return
     const rect = anchor.getBoundingClientRect()
-    if (!rect.height) return
+    // Ghosted muted lines (soft-break lines in partially muted paragraphs)
+    // keep layout but shouldn't show a marker while muted content is hidden.
+    if (!rect.height || inHiddenMutedRange(host, anchor)) return
     seen.add(anchor)
     let marker = markers.get(anchor)
     if (!marker) {
@@ -118,7 +120,9 @@ function caretAtEditorEdge(host: HTMLElement, direction: 'up' | 'down'): boolean
   if (!outer?.contains(selection.anchorNode)) return false
   const leaves = renderedTextLeaves(outer)
   const leaf = direction === 'up' ? leaves[0] : leaves[leaves.length - 1]
-  if (!leaf) return false
+  // No rendered text (empty editor or every line muted-and-hidden): the caret
+  // counts as sitting at both edges, so either arrow crosses out.
+  if (!leaf) return true
   const range = document.createRange()
   range.selectNodeContents(leaf)
   const rects = range.getClientRects()
@@ -157,6 +161,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const lastRangeRef = useRef<SelectionLineRange | null>(null)
   const boundaryParagraphRef = useRef<{ key: string; armed: boolean } | null>(null)
   const commitRef = useRef<((markdown: string, restore?: Restore) => void) | null>(null)
+  // Lexical's history can't see source-space commits (e.g. muting strips `%%`
+  // before the editor sees it, leaving an identical Lexical state), so commits
+  // keep their own undo stack. Meta/Ctrl+Z pops it only when the most recent
+  // change was a commit; typing undos stay with Lexical.
+  const undoStackRef = useRef<Array<{ source: string; range: SelectionLineRange | null; prevOp: string }>>([])
+  const lastOpRef = useRef<'commit' | 'lexical' | 'external'>('lexical')
   const [activeTags, setActiveTags] = useState<string[]>([])
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
 
@@ -238,9 +248,20 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   useEffect(() => {
     if (valueRef.current === value) return
+    const host = hostRef.current
+    // External update (sync/merge): capture the caret's canonical line in the
+    // outgoing source so the re-import doesn't yank it mid-typing.
+    const range = host && contentEditable(host)?.contains(window.getSelection()?.anchorNode ?? null)
+      ? selectionLineRange(host, buildDocumentMap(valueRef.current))
+      : null
     valueRef.current = value
     editorRef.current?.setMarkdown(markdownForEditor(value).markdown)
+    lastOpRef.current = 'external'
     refreshDecorationsRef.current()
+    if (range && host) {
+      const map = buildDocumentMap(value)
+      reapplyUntilSettled(() => placeCaretAtCanonicalLine(host, map, range.startLine, range.caretOffset))
+    }
   }, [value])
 
   // Editor commands run on keydown capture so Lexical never sees them. Line
@@ -252,14 +273,21 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     if (!host) return
 
     const commit = (markdown: string, restore?: Restore) => {
+      const map = buildDocumentMap(valueRef.current)
+      undoStackRef.current.push({
+        source: valueRef.current,
+        range: selectionLineRange(host, map),
+        prevOp: lastOpRef.current,
+      })
+      lastOpRef.current = 'commit'
       valueRef.current = markdown
       editorRef.current?.setMarkdown(markdownForEditor(markdown).markdown)
       onChangeRef.current(markdown)
       if (!restore) return
-      const map = buildDocumentMap(markdown)
+      const nextMap = buildDocumentMap(markdown)
       reapplyUntilSettled(() => restore.type === 'caret'
-        ? placeCaretAtCanonicalLine(host, map, restore.line, restore.offset)
-        : selectCanonicalLines(host, map, restore.startLine, restore.endLine))
+        ? placeCaretAtCanonicalLine(host, nextMap, restore.line, restore.offset)
+        : selectCanonicalLines(host, nextMap, restore.startLine, restore.endLine))
       refreshDecorationsRef.current()
     }
     commitRef.current = commit
@@ -389,7 +417,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (!outer) return
       const leaves = renderedTextLeaves(outer)
       const leaf = direction === 'up' ? leaves[leaves.length - 1] : leaves[0]
-      if (!leaf) return
+      if (!leaf) {
+        // Empty editor — no text leaf to land on, so place the caret directly
+        // at the start (or end) of the editable.
+        outer.focus()
+        const position = direction === 'up' ? outer.childNodes.length : 0
+        window.getSelection()?.setBaseAndExtent(outer, position, outer, position)
+        return
+      }
       const editable = leaf.parentElement?.closest<HTMLElement>('[contenteditable="true"]') ?? outer
       const offset = direction === 'up' ? (leaf.textContent?.length ?? 0) : 0
       editable.focus()
@@ -398,6 +433,24 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
     const runCommand = (event: KeyboardEvent): boolean => {
       const mod = event.metaKey || event.ctrlKey
+
+      // Undo a source-space commit (mute, tag wrap, line move) when it was the
+      // most recent change — Lexical's own history can't see these edits.
+      if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z' && lastOpRef.current === 'commit') {
+        const entry = undoStackRef.current.pop()
+        if (!entry) return false
+        const { prevOp, range } = entry
+        lastOpRef.current = prevOp as typeof lastOpRef.current
+        valueRef.current = entry.source
+        editorRef.current?.setMarkdown(markdownForEditor(entry.source).markdown)
+        onChangeRef.current(entry.source)
+        if (range) {
+          const map = buildDocumentMap(entry.source)
+          reapplyUntilSettled(() => placeCaretAtCanonicalLine(host, map, range.startLine, range.caretOffset))
+        }
+        refreshDecorationsRef.current()
+        return true
+      }
 
       // Plain arrows only — never Cmd/Alt/Shift-modified arrows.
       if (!mod && !event.altKey && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
@@ -470,12 +523,24 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         event.stopPropagation()
       }
     }
+    // Plain-text paste is canonical markdown — parse it through the editor's
+    // own import pipeline instead of inserting it as literal text. Rich HTML
+    // paste stays with Lexical.
+    const handlePaste = (event: ClipboardEvent) => {
+      if (event.clipboardData?.getData('text/html')) return
+      const text = event.clipboardData?.getData('text/plain')
+      if (!text) return
+      event.preventDefault()
+      editorRef.current?.insertMarkdown(text)
+    }
     host.addEventListener('keydown', handler, true)
+    host.addEventListener('paste', handlePaste, true)
     host.addEventListener('notes-mute-toggle', muteSelection)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
     document.addEventListener('selectionchange', updateSelection)
     return () => {
       host.removeEventListener('keydown', handler, true)
+      host.removeEventListener('paste', handlePaste, true)
       host.removeEventListener('notes-mute-toggle', muteSelection)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
       document.removeEventListener('selectionchange', updateSelection)
@@ -530,6 +595,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         const tight = restoreMarkdownSpacing(valueRef.current, markdown)
         const restored = preserveMutedLines(valueRef.current, tight)
         if (restored === valueRef.current) return
+        lastOpRef.current = 'lexical'
         valueRef.current = restored
         onChangeRef.current(restored)
         refreshDecorationsRef.current()

@@ -3,7 +3,7 @@ import { addTagDirectiveToRange, checklistToPlainText, lineRangeForSelection, ma
 
 describe('marker engine', () => {
   it('parses nested tag directives including emoji names', () => {
-    const source = [':::tag{name="therapy 🧠"}', 'session', ':::tag{name="👩‍⚕️"}', 'follow up', ':::', ':::'].join('\n')
+    const source = ['::::tag{name="therapy 🧠"}', 'session', ':::tag{name="👩‍⚕️"}', 'follow up', ':::', '::::'].join('\n')
     const parsed = parseMarkdown(source)
     expect(parsed.diagnostics).toEqual([])
     expect(parsed.ranges.map(({ tag }) => tag)).toEqual(['👩‍⚕️', 'therapy 🧠'])
@@ -14,6 +14,12 @@ describe('marker engine', () => {
     const parsed = parseMarkdown(':::tag{name="mental health"}\nnotes\n:::')
     expect(parsed.diagnostics).toEqual([])
     expect(parsed.ranges.map(({ tag }) => tag)).toEqual(['mental health'])
+  })
+
+  it('round-trips tag names containing quotes and ampersands', () => {
+    const tagged = addTagDirectiveToRange('note', 0, 0, 'a"b & c').source
+    expect(tagged).toBe(':::tag{name="a&quot;b &amp; c"}\nnote\n:::')
+    expect(parseMarkdown(tagged).ranges[0].tag).toBe('a"b & c')
   })
 
   it('reports directives without a name and closes without opens', () => {
@@ -46,14 +52,21 @@ describe('marker engine', () => {
     expect(sourceMatchesFilter(source, ['other'], false)).toBe(false)
   })
 
-  it('parses nested tag directives', () => {
-    const source = ':::tag{name="therapy"}\ncontent\n:::tag{name="private"}\nsecret\n:::\n:::'
+  it('parses nested tag directives with longer outer fences', () => {
+    const source = '::::tag{name="therapy"}\ncontent\n:::tag{name="private"}\nsecret\n:::\n::::'
     const parsed = parseMarkdown(source)
     expect(parsed.diagnostics).toEqual([])
     expect(parsed.ranges.map(({ tag, startLine, endLine }) => ({ tag, startLine, endLine }))).toEqual([
       { tag: 'private', startLine: 2, endLine: 4 },
       { tag: 'therapy', startLine: 0, endLine: 5 },
     ])
+  })
+
+  it('still parses same-length nested directives as nested ranges', () => {
+    // lenient stack parsing — micromark needs longer outer fences to render
+    // nesting, but app-level tooling accepts the plain form too.
+    const parsed = parseMarkdown(':::tag{name="a"}\n:::tag{name="b"}\nx\n:::\n:::')
+    expect(parsed.ranges.map(({ tag }) => tag)).toEqual(['b', 'a'])
   })
 
   it('parses directive tag names containing spaces', () => {
@@ -74,8 +87,8 @@ describe('marker engine', () => {
   })
 
   it('removes only the innermost matching tag when nested', () => {
-    const source = ':::tag{name="therapy"}\n:::tag{name="private"}\nsecret\n:::\n:::'
-    expect(removeTagAtPosition(source, 2, 'private').source).toBe(':::tag{name="therapy"}\nsecret\n:::')
+    const source = '::::tag{name="therapy"}\n:::tag{name="private"}\nsecret\n:::\n::::'
+    expect(removeTagAtPosition(source, 2, 'private').source).toBe('::::tag{name="therapy"}\nsecret\n::::')
     expect(removeTagAtPosition(source, 2, 'therapy').source).toBe(':::tag{name="private"}\nsecret\n:::')
   })
 
@@ -234,7 +247,7 @@ describe('marker engine', () => {
     expect(addTagDirectiveToRange(source, 1, 2, 'therapy').source).toBe('before\n:::tag{name="therapy"}\nfirst\nsecond\n:::\nafter')
     const tagged = ':::tag{name="therapy"}\ncontent\n:::'
     expect(addTagDirectiveToRange(tagged, 1, 1, 'therapy').error).toBeTruthy()
-    expect(addTagDirectiveToRange(tagged, 1, 1, 'other').source).toBe(':::tag{name="therapy"}\n:::tag{name="other"}\ncontent\n:::\n:::')
+    expect(addTagDirectiveToRange(tagged, 1, 1, 'other').source).toBe('::::tag{name="therapy"}\n:::tag{name="other"}\ncontent\n:::\n::::')
   })
 
   it('renames every matching directive while preserving quoted names', () => {

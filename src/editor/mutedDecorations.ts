@@ -1,5 +1,5 @@
 import { isMutedLine } from '../markerEngine'
-import { buildDocumentMap, canonicalLineRange, contentEditable, type DocumentMap } from './sourceMapping'
+import { blockChildren, buildDocumentMap, canonicalLineRange, contentEditable, type DocumentMap } from './sourceMapping'
 
 // Muted lines are styled with CSS highlights, not DOM mutation: `%%` markers
 // never reach the editor's text, so the muted decoration maps canonical source
@@ -30,8 +30,9 @@ export function refreshMutedDecorations(host: HTMLElement, canonical: string, hi
   // partially muted blocks keep the line visible (transparent text).
   const editable = contentEditable(host)
   if (editable) {
+    const children = blockChildren(editable)
     map.blocks.forEach((block, index) => {
-      const element = editable.children[index] as HTMLElement | undefined
+      const element = children[index]
       const start = block.position?.start.line
       const end = block.position?.end.line
       if (!element || !start || !end) return
@@ -48,6 +49,13 @@ export function refreshMutedDecorations(host: HTMLElement, canonical: string, hi
 
 export function clearMutedDecorations(host: HTMLElement) {
   if (hosts.delete(host)) applyHighlights()
+}
+
+// Whether a node sits on a muted line that is currently hidden — covers the
+// soft-break case where the line ghosts (transparent) instead of collapsing.
+export function inHiddenMutedRange(host: HTMLElement, node: Node) {
+  const entry = hosts.get(host)
+  return !!entry?.hidden && entry.ranges.some((range) => range.intersectsNode(node))
 }
 
 // Whether a canonical line sits inside a block that collapses when muted

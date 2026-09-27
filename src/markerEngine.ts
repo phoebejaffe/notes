@@ -18,8 +18,10 @@ export interface ParsedMarkdown {
   diagnostics: MarkerDiagnostic[]
 }
 
-const DIRECTIVE_OPEN_PATTERN = /^\s*:::tag\s*\{([^}]*)\}\s*$/u
-const DIRECTIVE_CLOSE_PATTERN = /^\s*:::\s*$/u
+// Nested tags need strictly longer fences outward (`::::` around `:::`) —
+// micromark closes a directive on the first fence of equal length.
+const DIRECTIVE_OPEN_PATTERN = /^\s*:{3,}tag\s*\{([^}]*)\}\s*$/u
+const DIRECTIVE_CLOSE_PATTERN = /^\s*:{3,}\s*$/u
 
 function normalizeTag(tag: string) {
   return tag.normalize('NFC')
@@ -27,7 +29,8 @@ function normalizeTag(tag: string) {
 
 function directiveTag(attributes: string) {
   const match = attributes.match(/(?:^|\s)name\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s}]+))/u)
-  return normalizeTag(match?.[1] ?? match?.[2] ?? match?.[3] ?? '')
+  const raw = match?.[1] ?? match?.[2] ?? match?.[3] ?? ''
+  return normalizeTag(raw.replace(/&(?:quot|amp|lt|gt|#39);/gu, (entity) => ({ '&quot;': '"', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&#39;': "'" })[entity] ?? entity))
 }
 
 export function markdownMarkState(source: string, from: number, to: number) {
@@ -97,6 +100,25 @@ export function addTagDirectiveToRange(source: string, startLine: number, endLin
   const escaped = normalized.replaceAll('&', '&amp;').replaceAll('"', '&quot;')
   lines.splice(endLine + 1, 0, ':::')
   lines.splice(startLine, 0, `:::tag{name="${escaped}"}`)
+
+  // Nested container directives need strictly longer fences outward, so grow
+  // any enclosing tag fences past the new inner `:::`.
+  const setFence = (lineIndex: number, length: number) => {
+    lines[lineIndex] = lines[lineIndex].replace(/^(\s*):+/u, `$1${':'.repeat(length)}`)
+  }
+  let required = 4
+  parsed.ranges
+    .filter((range) => range.startLine < startLine && range.endLine > endLine)
+    .sort((a, b) => b.startLine - a.startLine)
+    .forEach((range) => {
+      const current = lines[range.startLine].match(/^\s*(:+)tag/u)?.[1].length ?? 3
+      const length = Math.max(current, required)
+      if (length !== current) {
+        setFence(range.startLine, length)
+        setFence(range.endLine + 2, length)
+      }
+      required = length + 1
+    })
   return { source: lines.join('\n') }
 }
 

@@ -40,6 +40,13 @@ export function editorLineForCanonical(map: DocumentMap, canonicalLine: number) 
   return index < 0 ? Math.min(Math.max(canonicalLine, 0), map.editorLineToCanonical.length - 1) : index
 }
 
+// Lexical injects chrome such as <div contenteditable="false"
+// data-lexical-cursor> into block containers — only real block elements align
+// with mdast child indices, so chrome must be filtered out of child indexing.
+export function blockChildren(container: HTMLElement): HTMLElement[] {
+  return [...container.children].filter((el): el is HTMLElement => el instanceof HTMLElement && !el.hasAttribute('data-lexical-cursor'))
+}
+
 export function contentEditable(host: HTMLElement | null): HTMLElement | null {
   return host?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable [contenteditable="true"], .mdxeditor-root-contenteditable[contenteditable="true"]') ?? null
 }
@@ -154,7 +161,7 @@ function lineWithinBlock(blockEl: HTMLElement, mdastNode: MdastNode, node: Node,
   if (mdastNode.type === 'blockquote' && mdastNode.children?.length) {
     const childEl = directChildOf(blockEl, node)
     if (childEl) {
-      const index = [...blockEl.children].indexOf(childEl)
+      const index = blockChildren(blockEl).indexOf(childEl)
       const child = mdastNode.children[Math.min(index, mdastNode.children.length - 1)]
       if (child) return lineWithinBlock(childEl, child, node, offset)
     }
@@ -169,7 +176,7 @@ function lineWithinBlock(blockEl: HTMLElement, mdastNode: MdastNode, node: Node,
     if (tagDiv) {
       const childEl = directChildOf(tagDiv, node)
       if (!childEl || !mdastNode.children?.length) return startLine
-      const index = [...tagDiv.children].indexOf(childEl)
+      const index = blockChildren(tagDiv).indexOf(childEl)
       const child = mdastNode.children[Math.min(Math.max(index, 0), mdastNode.children.length - 1)]
       return lineWithinBlock(childEl, child, node, offset)
     }
@@ -186,7 +193,7 @@ function lineWithinBlock(blockEl: HTMLElement, mdastNode: MdastNode, node: Node,
 function editorLineInChildren(container: HTMLElement, nodes: MdastNode[], node: Node, offset: number): number | null {
   const blockEl = directChildOf(container, node)
   if (!blockEl) return null
-  const index = [...container.children].indexOf(blockEl)
+  const index = blockChildren(container).indexOf(blockEl)
   if (index < 0) return null
   if (index >= nodes.length) {
     // Rendered block with no mdast counterpart (e.g. Lexical's trailing empty paragraph).
@@ -319,7 +326,7 @@ function domPointInBlock(blockEl: HTMLElement, mdastNode: MdastNode, editorLine:
     })
     if (index < 0) index = mdastNode.children.findLastIndex((child) => (child.position?.start.line ?? 0) - 1 <= editorLine)
     if (index < 0) index = 0
-    const childEl = blockEl.children[Math.min(index, blockEl.children.length - 1)] as HTMLElement | undefined
+    const childEl = blockChildren(blockEl)[Math.min(index, blockEl.children.length - 1)] as HTMLElement | undefined
     if (!childEl) return null
     return domPointInBlock(childEl, mdastNode.children[Math.min(index, mdastNode.children.length - 1)], editorLine, offset)
   }
@@ -335,7 +342,8 @@ function domPointInChildren(container: HTMLElement, nodes: MdastNode[], editorLi
   if (index < 0) index = nodes.findLastIndex((node) => (node.position?.start.line ?? 0) - 1 <= editorLine)
   if (index < 0) index = 0
   const node = nodes[Math.min(index, nodes.length - 1)]
-  const blockEl = container.children[Math.min(index, container.children.length - 1)] as HTMLElement | undefined
+  const children = blockChildren(container)
+  const blockEl = children[Math.min(index, children.length - 1)]
   if (!node || !blockEl) return null
   return domPointInBlock(blockEl, node, editorLine, offset)
 }

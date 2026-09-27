@@ -43,6 +43,19 @@ Untagged content after the leading tag`,
 Second paragraph here.`,
 }
 
+const MULTI_DAY_VARIANTS: Record<string, Record<string, string>> = {
+  edges: {
+    day1: 'Intro line\n\n> trailing quote',
+    day2: '- [ ] leading task\n\nmiddle text',
+    day3: '## Leading heading\n\nrest of day three',
+  },
+  'muted-edges': {
+    day1: 'day one text',
+    day2: '%% hidden top\n\nvisible middle\n\n%% hidden bottom',
+    day3: 'day three text',
+  },
+}
+
 const LINE_MOVEMENT_MARKDOWN = `prefix alpha
 first line
 second line
@@ -204,6 +217,58 @@ tagged target
 :::
 suffix omega`
 
+const NESTED_TAGS_MARKDOWN = `intro line
+::::tag{name="outer"}
+outer first
+:::tag{name="inner"}
+inner line
+:::
+outer last
+::::
+outro line`
+
+const SPECIAL_TAG_NAMES_MARKDOWN = `:::tag{name="spring launch"}
+spaced
+:::
+:::tag{name="üñícode ✨"}
+unicode
+:::
+:::tag{name="a&quot;b"}
+quoted
+:::`
+
+const TAG_EDGES_MARKDOWN = `:::tag{name="edge"}
+tag first line
+tag last line
+:::`
+
+const AUDIO_VARIANTS_MARKDOWN = `A line that is deliberately long enough to wrap onto a second visual row inside this editor panel so the link lands below the first row of rendered text.[__](https://example.com/a)
+%% muted line with a marker.[__](https://example.com/b)
+Two recordings on one line.[__](https://example.com/c) and again.[__](https://example.com/d)
+:::tag{name="audio"}
+Tagged line.[__](https://example.com/e)
+:::
+- [ ] Task line.[__](https://example.com/f)
+Ordinary [link text](https://example.com/g) gets no marker.`
+
+const UNICODE_MARKDOWN = `emoji 🧠 and flags 👩‍⚕️ mixed in
+café naïve résumé
+%% muted emoji 🎉 line
+tail`
+
+const MALFORMED_DIRECTIVE_MARKDOWN = `before
+:::tag{
+broken open
+:::
+after
+:::`
+
+const MUTED_EDGES_MARKDOWN = `%% hidden top
+
+visible middle
+
+%% hidden bottom`
+
 const LONG_SCROLL_MARKDOWN = `top marker
 ${Array.from({ length: 30 }, (_, index) => `scroll filler ${index + 1}`).join('\n')}
 - [ ] scrolled task
@@ -242,12 +307,23 @@ suffix omega`,
   'plain-text': PLAIN_TEXT_MARKDOWN,
   structure: STRUCTURE_MARKDOWN,
   scroll: LONG_SCROLL_MARKDOWN,
+  'nested-tags': NESTED_TAGS_MARKDOWN,
+  'special-tag-names': SPECIAL_TAG_NAMES_MARKDOWN,
+  'tag-edges': TAG_EDGES_MARKDOWN,
+  'audio-variants': AUDIO_VARIANTS_MARKDOWN,
+  unicode: UNICODE_MARKDOWN,
+  'malformed-directive': MALFORMED_DIRECTIVE_MARKDOWN,
+  'muted-edges': MUTED_EDGES_MARKDOWN,
 }
 
 function MultiEditorPrototype() {
-  const [day1, setDay1] = useState(MULTI_DAY_MARKDOWN.day1)
-  const [day2, setDay2] = useState(MULTI_DAY_MARKDOWN.day2)
-  const [day3, setDay3] = useState(MULTI_DAY_MARKDOWN.day3)
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  const variant = MULTI_DAY_VARIANTS[params?.get('variant') ?? ''] ?? MULTI_DAY_MARKDOWN
+  const emptyMiddle = params?.has('empty') ?? false
+  const hideMuted = params?.has('hide-muted') ?? false
+  const [day1, setDay1] = useState(variant.day1)
+  const [day2, setDay2] = useState(emptyMiddle ? '' : variant.day2)
+  const [day3, setDay3] = useState(variant.day3)
   const docs: Record<string, [string, (markdown: string) => void]> = {
     day1: [day1, setDay1],
     day2: [day2, setDay2],
@@ -258,7 +334,7 @@ function MultiEditorPrototype() {
       <article className="day-card" data-day={day} key={day}>
         <div className="editor-card">
           <h1 className="day-title">{day}</h1>
-          <MdxNotesEditor value={source} onChange={setSource} />
+          <MdxNotesEditor value={source} onChange={setSource} hideMutedLines={hideMuted} />
         </div>
       </article>
     ))}
@@ -289,6 +365,7 @@ export function MarkdownPrototypePage() {
       </div>
       <div className="prototype-actions">
         <button type="button" onClick={() => setHideMuted((hidden) => !hidden)} aria-pressed={hideMuted}>{hideMuted ? 'Show muted content' : 'Hide muted content'}</button>
+        <button type="button" onClick={() => window.setTimeout(() => setMarkdown((current) => `${current}\nexternal update`), 400)}>External update</button>
         <button type="button" onClick={() => setMarkdown(SAMPLE_MARKDOWN)}>Reset sample</button>
       </div>
     </header>
