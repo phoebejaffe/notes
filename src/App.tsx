@@ -248,6 +248,7 @@ function NotesApp() {
   const latestRemoteRef = useRef<Record<string, DailyDocument>>({})
   const dirtyDaysRef = useRef(new Set<string>())
   const uploadingDaysRef = useRef(new Map<string, string>())
+  const ownWriteIdsRef = useRef(new Set<string>())
   const handleRemoteDocumentsRef = useRef<(documents: DailyDocument[]) => void>(() => undefined)
   const uploadPendingDocumentsRef = useRef<() => Promise<void>>(async () => undefined)
   const streamEndRef = useRef<HTMLDivElement>(null)
@@ -657,6 +658,10 @@ function NotesApp() {
     void saveDailyDocument({ day, markdown, updatedAt, syncBase }).catch(() => undefined)
   }
 
+  function trackOwnWriteId(writeId: string) {
+    ownWriteIdsRef.current.add(writeId)
+  }
+
   function showSyncConflict(conflict: SyncConflict) {
     setSyncConflicts((current) => [...current.filter((item) => item.day !== conflict.day), conflict])
     setConflictDrafts((current) => ({ ...current, [conflict.day]: current[conflict.day] ?? conflict.local.markdown }))
@@ -684,6 +689,16 @@ function NotesApp() {
 
       const currentMarkdown = documentsRef.current[remote.day] ?? ''
       const syncBase = { markdown: remote.markdown, updatedAt: remote.updatedAt }
+      // A snapshot carrying a write id this app stamped is our own commit
+      // echoing back — possibly a transaction-merged result that differs from
+      // the submitted markdown. Adopt it as the merge base without touching
+      // the editor, or the merge can resurrect just-deleted text or flash a
+      // false conflict that the upload resolution clears a moment later.
+      if (remote.writeId && ownWriteIdsRef.current.has(remote.writeId)) {
+        syncBasesRef.current[remote.day] = syncBase
+        persistLocalDocument(remote.day, currentMarkdown, documentUpdatedAtRef.current[remote.day] ?? currentTimestamp(), syncBase)
+        return
+      }
       if (remote.markdown === uploadingDaysRef.current.get(remote.day)) {
         // This snapshot is our own in-flight upload landing, not an external
         // edit. Adopt it as the merge base so typing during the upload is
@@ -779,7 +794,7 @@ function NotesApp() {
     }
     uploadingDaysRef.current.set(day, submitted.markdown)
     try {
-      const result = await uploadEncryptedDocument(firebaseUser.uid, submitted, dataKey)
+      const result = await uploadEncryptedDocument(firebaseUser.uid, submitted, dataKey, { onWriteId: trackOwnWriteId })
       if (result.status === 'conflict') {
         handleUploadConflict(result.conflict)
         return 'conflict'
@@ -987,7 +1002,7 @@ function NotesApp() {
       await Promise.all(Object.entries(documents).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() })))
       const localDocuments = await listDailyDocuments()
       localDocuments.forEach((document) => uploadingDaysRef.current.set(document.day, document.markdown))
-      const result = await syncDocuments(firebaseUser.uid, localDocuments, dataKey)
+      const result = await syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId })
         .finally(() => localDocuments.forEach((document) => uploadingDaysRef.current.delete(document.day)))
       dirtyDaysRef.current.clear()
       result.documents.forEach((document) => {
@@ -1027,6 +1042,7 @@ function NotesApp() {
       syncBasesRef.current = {}
       latestRemoteRef.current = {}
       dirtyDaysRef.current.clear()
+      ownWriteIdsRef.current.clear()
       await clearSyncBases()
       setDataKey(undefined)
       setRecoveryPhrase('')
@@ -1057,7 +1073,7 @@ function NotesApp() {
       } else {
         const document = { day: conflict.day, markdown, updatedAt: currentTimestamp(), syncBase }
         uploadingDaysRef.current.set(conflict.day, markdown)
-        const result = await uploadEncryptedDocument(firebaseUser.uid, document, dataKey, { strategy: 'replace' })
+        const result = await uploadEncryptedDocument(firebaseUser.uid, document, dataKey, { strategy: 'replace', onWriteId: trackOwnWriteId })
           .finally(() => { uploadingDaysRef.current.delete(conflict.day) })
         if (result.status === 'conflict') {
           handleUploadConflict(result.conflict)

@@ -19,6 +19,14 @@ describe('encrypted sync foundation', () => {
     expect(await decryptDailyDocument(encrypted, key)).toEqual(document)
   })
 
+  it('round-trips the write id used to recognize own-write echoes', async () => {
+    const { recoveryKey, bundle } = await createKeyBundle()
+    const key = await recoverDataKey(recoveryKey, bundle)
+    const document = { day: '2026-09-01', markdown: '# Private', updatedAt: 123 }
+    const encrypted = await encryptDailyDocument(document, key, 'write-123')
+    expect(await decryptDailyDocument(encrypted, key)).toEqual({ ...document, writeId: 'write-123' })
+  })
+
   it('creates a validated recovery-key backup', async () => {
     const recoveryPhrase = createRecoveryPhrase()
     expect(recoveryPhrase.split(' ')).toHaveLength(12)

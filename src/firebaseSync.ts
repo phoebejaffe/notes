@@ -34,6 +34,11 @@ export type EncryptedDocumentUploadResult =
 
 export interface EncryptedDocumentUploadOptions {
   strategy?: 'merge' | 'replace'
+  // Called synchronously inside the transaction with the id stamped into the
+  // encrypted payload, so the watcher can recognize this write's snapshot —
+  // which may land before the transaction resolves — as our own echo even when
+  // the committed markdown is a merge result that differs from what we sent.
+  onWriteId?: (writeId: string) => void
 }
 
 function withSyncBase(document: DailyDocument): DailyDocument {
@@ -78,14 +83,16 @@ export async function uploadEncryptedDocument(
 ): Promise<EncryptedDocumentUploadResult> {
   if (!firestore) throw new Error('Firebase is not configured')
   const documentRef = doc(documentsPath(uid), document.day)
+  const writeId = crypto.randomUUID()
   return runTransaction(firestore, async (transaction) => {
     const snapshot = await transaction.get(documentRef)
     const remote = snapshot.exists()
       ? await decryptDailyDocument(asEncryptedDocument(snapshot.data()), key)
       : undefined
     const writeDocument = async (markdown: string) => {
-      const next = { day: document.day, markdown, updatedAt: Date.now() }
-      transaction.set(documentRef, await encryptDailyDocument(next, key))
+      options.onWriteId?.(writeId)
+      const next = { day: document.day, markdown, updatedAt: Date.now(), writeId }
+      transaction.set(documentRef, await encryptDailyDocument(next, key, writeId))
       return { status: 'written' as const, document: withSyncBase(next) }
     }
 
@@ -100,7 +107,7 @@ function asEncryptedDocument(value: DocumentData) {
   return value as EncryptedDailyDocument
 }
 
-export async function syncDocuments(uid: string, localDocuments: DailyDocument[], key: CryptoKey) {
+export async function syncDocuments(uid: string, localDocuments: DailyDocument[], key: CryptoKey, options: EncryptedDocumentUploadOptions = {}) {
   if (!firestore) throw new Error('Firebase is not configured')
   const remote = await getDocs(query(documentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)))
   const localByDay = new Map(localDocuments.map((document) => [document.day, document]))
@@ -129,7 +136,7 @@ export async function syncDocuments(uid: string, localDocuments: DailyDocument[]
     if (!remoteByDay.has(document.day)) uploads.push({ local: document })
   }
 
-  const uploadResults = await Promise.all(uploads.map(({ local }) => uploadEncryptedDocument(uid, local, key)))
+  const uploadResults = await Promise.all(uploads.map(({ local }) => uploadEncryptedDocument(uid, local, key, options)))
   uploadResults.forEach((result, index) => {
     const { local, remote } = uploads[index]
     if (result.status === 'written') {

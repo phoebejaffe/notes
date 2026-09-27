@@ -8,6 +8,7 @@ export interface DailyDocument {
   markdown: string
   updatedAt: number
   syncBase?: DocumentSyncBase
+  writeId?: string
 }
 
 const databaseName = 'notes-local'
