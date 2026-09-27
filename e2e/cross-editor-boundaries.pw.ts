@@ -45,12 +45,13 @@ test('crossing into a day whose edge lines are muted and hidden lands on the fir
   await expect(day2.locator('p', { hasText: 'hidden bottom' })).toBeHidden()
   await expect(day2.locator('p', { hasText: 'visible middle' })).toBeVisible()
 
-  // Down from the bottom of day1 must skip the hidden top edge line.
+  // Down from the bottom of day1 must skip the hidden top edge line, landing
+  // at the caret's carried x position (near the end here, not offset 0).
   await setCaretAtText(day1, 'day one text', 'day one text'.length)
   await page.keyboard.press('ArrowDown')
   await expect.poll(async () => (await selectionSnapshot(page)).blockText).toBe('visible middle')
   await expect.poll(async () => (await caretContext(page)).cardDay).toBe('day2')
-  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBe(0)
+  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBeGreaterThan(5)
 
   // Up from the top of day3 must skip the hidden bottom edge line.
   await setCaretAtText(day3, 'day three text', 0)
@@ -72,12 +73,13 @@ test('crossing onto non-paragraph edge blocks', async ({ page }) => {
   await expect.poll(async () => (await caretContext(page)).insideLi).toBe(true)
   await expect.poll(async () => (await caretContext(page)).cardDay).toBe('day2')
 
-  // Up from day2's checklist item lands at the end of day1's trailing quote.
+  // Up from day2's checklist item lands on day1's trailing quote — near the
+  // caret's x (line start), not the line end.
   await setCaretAtText(day2, 'leading task', 0)
   await page.keyboard.press('ArrowUp')
   await expect.poll(async () => (await selectionSnapshot(page)).blockText).toBe('trailing quote')
   await expect.poll(async () => (await caretContext(page)).insideBlockquote).toBe(true)
-  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBe('trailing quote'.length)
+  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBeLessThanOrEqual(2)
 
   // Down from day2's last paragraph lands on day3's leading heading.
   await setCaretAtText(day2, 'middle text', 'middle text'.length)

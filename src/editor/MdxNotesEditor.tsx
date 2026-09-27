@@ -146,7 +146,17 @@ function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down') {
   const cards = [...(card?.parentElement?.querySelectorAll<HTMLElement>('.day-card') ?? [])]
   const index = card ? cards.indexOf(card) : -1
   const targetEditor = (direction === 'up' ? cards[index - 1] : cards[index + 1])?.querySelector<HTMLElement>('.notes-mdx-editor')
-  targetEditor?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction }, bubbles: false }))
+  // Carry the caret's x across so the destination can land on the same
+  // horizontal position, like vertical movement within a paragraph. A caret
+  // in an empty block reports a zero rect — use the anchor element's box.
+  const selection = window.getSelection()
+  let x: number | undefined
+  if (selection?.rangeCount) {
+    const rect = selection.getRangeAt(0).getBoundingClientRect()
+    const anchorElement = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
+    x = rect.width || rect.height ? rect.left : anchorElement?.getBoundingClientRect().left
+  }
+  targetEditor?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction, x }, bubbles: false }))
 }
 
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {} }: MdxNotesEditorProps) {
@@ -407,11 +417,13 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       return !!editable && !!editableAtCaret && editableAtCaret !== editable
     }
 
-    // A sibling editor asks us to take focus at an edge: land the caret at
-    // the start of the first rendered line or the end of the last, even when
-    // that line lives inside a nested directive editor.
+    // A sibling editor asks us to take focus at an edge: land the caret on
+    // the first or last rendered line — at the same x position when the
+    // source editor passed one, otherwise at the line's start or end — even
+    // when that line lives inside a nested directive editor.
     const handleFocusEdge = (event: Event) => {
-      const direction = ((event as CustomEvent).detail as { direction?: 'up' | 'down' } | undefined)?.direction ?? 'down'
+      const detail = (event as CustomEvent).detail as { direction?: 'up' | 'down'; x?: number } | undefined
+      const direction = detail?.direction ?? 'down'
       userInteractedRef.current = true
       const outer = contentEditable(host)
       if (!outer) return
@@ -426,8 +438,32 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         return
       }
       const editable = leaf.parentElement?.closest<HTMLElement>('[contenteditable="true"]') ?? outer
-      const offset = direction === 'up' ? (leaf.textContent?.length ?? 0) : 0
       editable.focus()
+      if (typeof detail?.x === 'number') {
+        // Hit-test the edge line's first/last visual row at the carried x;
+        // caretRangeFromPoint clamps horizontally, so an x beyond the line's
+        // end lands at its end. Fall back to the line edge if the hit lands
+        // outside the editable (e.g. on a gutter overlay).
+        const range = document.createRange()
+        range.selectNodeContents(leaf)
+        const rects = range.getClientRects()
+        const row = direction === 'up' ? rects[rects.length - 1] : rects[0]
+        const hit = row ? document.caretRangeFromPoint(detail.x, row.top + row.height / 2) : null
+        if (hit && editable.contains(hit.startContainer)) {
+          let node: Node = hit.startContainer
+          let offset = hit.startOffset
+          if (!(node instanceof Text)) {
+            // The point missed the text itself (e.g. a tag directive's border
+            // or padding) — an element offset can sit *after* the block, so
+            // clamp to the leaf's start or end by which edge is closer.
+            node = leaf
+            offset = detail.x - row.left < row.right - detail.x ? 0 : (leaf.textContent?.length ?? 0)
+          }
+          window.getSelection()?.setBaseAndExtent(node, offset, node, offset)
+          return
+        }
+      }
+      const offset = direction === 'up' ? (leaf.textContent?.length ?? 0) : 0
       window.getSelection()?.setBaseAndExtent(leaf, offset, leaf, offset)
     }
 

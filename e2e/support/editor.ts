@@ -148,6 +148,7 @@ export async function selectionSnapshot(page: Page) {
       anchorOffset: selection?.anchorOffset ?? -1,
       focusOffset: selection?.focusOffset ?? -1,
       caretTop: range?.getBoundingClientRect().top ?? -1,
+      caretLeft: range?.getBoundingClientRect().left ?? -1,
       scrollTop: scrollElement?.scrollTop ?? 0,
     }
   })

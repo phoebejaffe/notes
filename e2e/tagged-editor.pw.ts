@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { setCaretAtText } from './support/editor'
 
 const BLOCK_SELECTOR = '.notes-tag-directive, h1,h2,h3,h4,h5,h6,li,blockquote,pre,p:not(li p):not(blockquote p):not(.notes-tag-directive p)'
 
@@ -92,9 +93,9 @@ test('arrow down crosses into a day that starts with a tag', async ({ page }) =>
   const day1Editor = cards.nth(0).locator('.mdxeditor-root-contenteditable')
   const day2Editor = cards.nth(1).locator('.mdxeditor-root-contenteditable')
 
-  // Place caret at the very end of day1 (Cmd+End to skip past any trailing empty paragraph)
-  await day1Editor.click()
-  await page.keyboard.press('Meta+ArrowDown')
+  // Caret at the start of day1's last line carries x=0 across, landing at the
+  // start of day2's first editable line.
+  await setCaretAtText(day1Editor, 'Tagged content in day one', 0)
   await page.keyboard.press('ArrowDown')
 
   // Type to verify the caret landed at the start of the first editable line of day2
@@ -130,10 +131,11 @@ test('arrow up moves below tag → into tag → above tag → previous day', asy
     return !!first && first.tagName === 'P' && !first.classList.contains('notes-tag-directive') && first.contains(anchorEl ?? null)
   }, BLOCK_SELECTOR)).toBe(true)
 
-  // Up 3: caret crosses into the previous day's last line
+  // Up 3: caret crosses into the previous day's last line — the boundary
+  // paragraph's caret sits at the left edge, so it lands at the line start
   await page.keyboard.press('ArrowUp')
   await page.keyboard.type('!')
-  await expect(day1Editor).toContainText('Tagged content in day one!')
+  await expect(day1Editor).toContainText('!Tagged content in day one')
 
   // The empty boundary paragraph should be cleaned up, not left in day2
   await expect.poll(() => day2Editor.evaluate((el, blockSelector) => el.querySelector(blockSelector)?.classList.contains('notes-tag-directive'), BLOCK_SELECTOR)).toBe(true)
