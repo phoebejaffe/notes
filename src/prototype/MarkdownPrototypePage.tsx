@@ -12,15 +12,15 @@ This document includes **bold**, *italic*, and <u>underlined</u> text.
 
 Untagged before
 
-<!-- first -->
+:::tag{name="first"}
 First tagged
-<!-- /first -->
+:::
 
 Untagged between
 
-<!-- second -->
+:::tag{name="second"}
 Second tagged
-<!-- /second -->
+:::
 
 - [ ] A checklist item
 - [x] A completed item`
@@ -30,12 +30,12 @@ const MULTI_DAY_MARKDOWN: Record<string, string> = {
 
 Some untagged content here that wraps across multiple lines when the editor is narrow enough to test visual line boundary detection for cross-editor navigation.
 
-<!-- tag -->
+:::tag{name="tag"}
 Tagged content in day one
-<!-- /tag -->`,
-  day2: `<!-- leading -->
+:::`,
+  day2: `:::tag{name="leading"}
 This day starts with a tag
-<!-- /leading -->
+:::
 
 Untagged content after the leading tag`,
   day3: `Plain day with only untagged content.

@@ -4,7 +4,6 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { MdxNotesEditor } from './editor/MdxNotesEditor'
-import { commentsToTagDirectives } from './editor/tagSyntax'
 import { parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { clearSyncBases, listDailyDocuments, replaceDailyDocuments, saveDailyDocument, type DailyDocument, type DocumentSyncBase } from './storage'
@@ -19,21 +18,21 @@ import type { User } from 'firebase/auth'
 import { MarkdownPrototypePage } from './prototype/MarkdownPrototypePage'
 import './App.css'
 
-const SAMPLE = `<!-- therapy 🧠 -->
+const SAMPLE = `:::tag{name="therapy 🧠"}
 ## Therapy session
 
 I noticed I am more comfortable setting boundaries.
 
 - Practice **bold**, *italic*, and <u>underlined</u> text.
-<!-- /therapy -->
-<!-- project "spring launch" -->
+:::
+:::tag{name="spring launch"}
 ## Project notes
 
 Draft the onboarding flow and ask Sam for feedback.
-<!-- /"spring launch" -->
-<!-- therapy -->
+:::
+:::tag{name="therapy"}
 A follow-up thought from later in the day.
-<!-- /therapy -->`
+:::`
 
 const DEFAULT_TAG_COLORS = ['#6d9b91', '#8975aa', '#c88968', '#7190b0', '#b28a55']
 const SHORTCUT_LABELS = {
@@ -1252,12 +1251,9 @@ function NotesApp() {
         {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
           const source = documents[documentDay] ?? ''
           const parsed = parseMarkdown(source)
-          const migratedSource = commentsToTagDirectives(source)
-          const hasLegacyTags = migratedSource !== source
           return <article className="day-card" data-day={documentDay} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
             <div className="editor-card">
               <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              {hasLegacyTags && <button className="tag-migration-button" type="button" onClick={() => { if (window.confirm('Migrate this day’s legacy comment tags to Markdown directives?')) updateSource(documentDay, migratedSource) }}>Migrate legacy tags</button>}
               <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} />
 
               {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}

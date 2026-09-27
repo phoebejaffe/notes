@@ -1,31 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { addTagDirectiveToRange, addTagToRange, checklistToPlainText, findMarkerTagRename, formatMarker, lineRangeForSelection, markdownMarkState, moveLines, normalizeRepeatedOpens, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameMatchingTag, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
+import { addTagDirectiveToRange, checklistToPlainText, lineRangeForSelection, markdownMarkState, moveLines, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
-  it('parses independent crossing spans and emoji tags', () => {
-    const source = ['<!-- therapy 🧠 -->', 'session', '<!-- /therapy -->', '<!-- 👩‍⚕️ -->', 'follow up', '<!-- /🧠 /👩‍⚕️ -->'].join('\n')
+  it('parses nested tag directives including emoji names', () => {
+    const source = [':::tag{name="therapy 🧠"}', 'session', ':::tag{name="👩‍⚕️"}', 'follow up', ':::', ':::'].join('\n')
     const parsed = parseMarkdown(source)
     expect(parsed.diagnostics).toEqual([])
-    expect(parsed.ranges.map(({ tag }) => tag)).toEqual(['therapy', '🧠', '👩‍⚕️'])
+    expect(parsed.ranges.map(({ tag }) => tag)).toEqual(['👩‍⚕️', 'therapy 🧠'])
     expect(parsed.ranges[1]).toMatchObject({ startLine: 0, endLine: 5 })
   })
 
-  it('supports quoted tag names and keeps marker lines intact', () => {
-    const marker = formatMarker('open', ['mental health', '🧠'])
-    expect(marker).toBe('<!-- "mental health" 🧠 -->')
-    expect(parseMarkdown(`${marker}\nnotes\n<!-- /"mental health" /🧠 -->`).ranges).toHaveLength(2)
+  it('parses quoted directive tag names', () => {
+    const parsed = parseMarkdown(':::tag{name="mental health"}\nnotes\n:::')
+    expect(parsed.diagnostics).toEqual([])
+    expect(parsed.ranges.map(({ tag }) => tag)).toEqual(['mental health'])
   })
 
-  it('rejects mixed operations on one marker line', () => {
-    const parsed = parseMarkdown('<!-- therapy /work -->\nnote')
-    expect(parsed.diagnostics[0].message).toContain('separate lines')
-  })
-
-  it('normalizes a repeated opening without deleting text', () => {
-    const source = '<!-- therapy -->\none\n<!-- therapy -->\ntwo'
-    const result = normalizeRepeatedOpens(source)
-    expect(result.changed).toBe(true)
-    expect(result.source).toBe('<!-- therapy -->\none\n<!-- /therapy -->\n<!-- therapy -->\ntwo')
+  it('reports directives without a name and closes without opens', () => {
+    const unnamed = parseMarkdown(':::tag{}\nnote\n:::')
+    expect(unnamed.diagnostics[0].message).toContain('name attribute')
+    const orphan = parseMarkdown('note\n:::')
+    expect(orphan.diagnostics[0].message).toContain('without a matching open')
+    const unclosed = parseMarkdown(':::tag{name="work"}\nnote')
+    expect(unclosed.diagnostics[0].message).toContain('still open')
   })
 
   it('expands a partial selection to complete lines', () => {
@@ -33,31 +30,20 @@ describe('marker engine', () => {
     expect(lineRangeForSelection(source, 8, 14)).toEqual({ startLine: 1, endLine: 2 })
   })
 
-  it('adds separate opening and closing marker lines', () => {
-    const result = addTagToRange('one\ntwo\nthree', 1, 1, 'therapy')
-    expect(result.source).toBe('one\n<!-- therapy -->\ntwo\n<!-- /therapy -->\nthree')
+  it('adds separate opening and closing directive lines', () => {
+    const result = addTagDirectiveToRange('one\ntwo\nthree', 1, 1, 'therapy')
+    expect(result.source).toBe('one\n:::tag{name="therapy"}\ntwo\n:::\nthree')
   })
 
   it('wraps every line in a multi-line tag selection', () => {
-    const result = addTagToRange('one\ntwo\nthree\nafter', 0, 2, 'therapy')
-    expect(result.source).toBe('<!-- therapy -->\none\ntwo\nthree\n<!-- /therapy -->\nafter')
+    const result = addTagDirectiveToRange('one\ntwo\nthree\nafter', 0, 2, 'therapy')
+    expect(result.source).toBe(':::tag{name="therapy"}\none\ntwo\nthree\n:::\nafter')
   })
 
   it('matches one-word tags when filtering a tagged range', () => {
-    const source = '<!-- work -->\n\n<!-- /work -->'
+    const source = ':::tag{name="work"}\n\n:::'
     expect(sourceMatchesFilter(source, ['work'], false)).toBe(true)
     expect(sourceMatchesFilter(source, ['other'], false)).toBe(false)
-  })
-
-  it('parses muted tag marker lines without changing their muted state', () => {
-    const source = '%% <!-- foo -->\n%% escalation of privilege\n%% <!-- /foo -->\n%% boo\n%% '
-    const parsed = parseMarkdown(source)
-    expect(parsed.markers.map(({ kind, tags }) => ({ kind, tags }))).toEqual([
-      { kind: 'open', tags: ['foo'] },
-      { kind: 'close', tags: ['foo'] },
-    ])
-    expect(parsed.ranges).toEqual([{ tag: 'foo', startLine: 0, endLine: 2, start: 0, end: 43 }])
-    expect(parsed.lines.every(isMutedLine)).toBe(true)
   })
 
   it('parses nested tag directives', () => {
@@ -82,24 +68,15 @@ describe('marker engine', () => {
     expect(markdownMarkState('***both***', 3, 7)).toEqual({ bold: true, italic: true, strikethrough: false })
   })
 
-  it('renames the matching close when a rendered opening chip changes', () => {
-    const before = '<!-- therapy -->\nnote\n<!-- /therapy -->'
-    const after = '<!-- wellness -->\nnote\n<!-- /therapy -->'
-    expect(findMarkerTagRename(before, after)).toEqual({ line: 0, oldTag: 'therapy', newTag: 'wellness' })
-    expect(renameMatchingTag(after, 0, 'therapy', 'wellness')).toBe('<!-- wellness -->\nnote\n<!-- /wellness -->')
-  })
-
-  it('removes an active tag and both marker lines without deleting note text', () => {
-    const source = '<!-- therapy -->\nprivate note\n<!-- /therapy -->'
+  it('removes an active tag directive without deleting note text', () => {
+    const source = ':::tag{name="therapy"}\nprivate note\n:::'
     expect(removeTagAtPosition(source, 1, 'therapy').source).toBe('private note')
   })
 
-  it('does not interpret inserted nested markers as a tag rename', () => {
-    const before = '<!-- therapy -->\nprivate note\n<!-- /therapy -->'
-    const after = addTagToRange(before, 1, 1, 'meeting').source
-    expect(findMarkerTagRename(before, after)).toBeUndefined()
-    expect(after).toContain('<!-- therapy -->')
-    expect(after).toContain('<!-- meeting -->')
+  it('removes only the innermost matching tag when nested', () => {
+    const source = ':::tag{name="therapy"}\n:::tag{name="private"}\nsecret\n:::\n:::'
+    expect(removeTagAtPosition(source, 2, 'private').source).toBe(':::tag{name="therapy"}\nsecret\n:::')
+    expect(removeTagAtPosition(source, 2, 'therapy').source).toBe(':::tag{name="private"}\nsecret\n:::')
   })
 
   it('mutes and unmutes plain, list, and heading lines with a trailing marker', () => {
@@ -249,7 +226,7 @@ describe('marker engine', () => {
 
   it('keeps text outside a tagged line range unchanged', () => {
     const source = 'before\nfirst\nsecond\nafter'
-    expect(addTagToRange(source, 1, 2, 'therapy').source).toBe('before\n<!-- therapy -->\nfirst\nsecond\n<!-- /therapy -->\nafter')
+    expect(addTagDirectiveToRange(source, 1, 2, 'therapy').source).toBe('before\n:::tag{name="therapy"}\nfirst\nsecond\n:::\nafter')
   })
 
   it('wraps a line range in a tag directive and rejects duplicate tags', () => {
@@ -260,8 +237,9 @@ describe('marker engine', () => {
     expect(addTagDirectiveToRange(tagged, 1, 1, 'other').source).toBe(':::tag{name="therapy"}\n:::tag{name="other"}\ncontent\n:::\n:::')
   })
 
-  it('renames every matching marker while preserving quoted names', () => {
-    const source = '<!-- therapy -->\none\n<!-- /therapy -->\n<!-- "therapy notes" therapy -->\ntwo\n<!-- /therapy /"therapy notes" -->'
-    expect(renameTagEverywhere(source, 'therapy', 'wellness')).toBe('<!-- wellness -->\none\n<!-- /wellness -->\n<!-- "therapy notes" wellness -->\ntwo\n<!-- /wellness /"therapy notes" -->')
+  it('renames every matching directive while preserving quoted names', () => {
+    const source = ':::tag{name="therapy"}\none\n:::\n:::tag{name="therapy notes"}\ntwo\n:::'
+    expect(renameTagEverywhere(source, 'therapy', 'wellness')).toBe(':::tag{name="wellness"}\none\n:::\n:::tag{name="therapy notes"}\ntwo\n:::')
+    expect(renameTagEverywhere(source, 'therapy notes', 'journal')).toBe(':::tag{name="therapy"}\none\n:::\n:::tag{name="journal"}\ntwo\n:::')
   })
 })

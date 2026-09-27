@@ -8,7 +8,7 @@ import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
 import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
 import { clearMutedDecorations, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
 import { addTagDirectiveToRange, checklistToPlainText, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
-import { commentsToTagDirectives } from './tagSyntax'
+
 import { $isTagBlockNode } from './TagBlockNode'
 import { EditorActionsProvider, type EditorActions } from './editorActions'
 import type { MdxNotesEditorProps } from './editorTypes'
@@ -149,7 +149,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const editorRef = useRef<MDXEditorMethods>(null)
   const lexicalEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
   const hostRef = useRef<HTMLDivElement>(null)
-  const valueRef = useRef(commentsToTagDirectives(value))
+  const valueRef = useRef(value)
   const onChangeRef = useRef(onChange)
   const hideMutedLinesRef = useRef(hideMutedLines)
   const tagColorsRef = useRef(tagColors)
@@ -237,10 +237,9 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   }, [])
 
   useEffect(() => {
-    const editorValue = commentsToTagDirectives(value)
-    if (valueRef.current === editorValue) return
-    valueRef.current = editorValue
-    editorRef.current?.setMarkdown(markdownForEditor(editorValue).markdown)
+    if (valueRef.current === value) return
+    valueRef.current = value
+    editorRef.current?.setMarkdown(markdownForEditor(value).markdown)
     refreshDecorationsRef.current()
   }, [value])
 
@@ -523,7 +522,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     <EditorActionsProvider value={actions}>
     <MDXEditor
       ref={editorRef}
-      markdown={markdownForEditor(commentsToTagDirectives(value)).markdown}
+      markdown={markdownForEditor(value).markdown}
       autoFocus={autoFocus}
       toMarkdownOptions={{ bullet: '-' }}
       onChange={(markdown) => {
