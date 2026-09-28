@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { editorFor, expectSource, selectionSnapshot, setCaretAtText } from './support/editor'
+import { editorFor, expectSource, selectRenderedRange, selectionSnapshot, setCaretAtText, sourceFor } from './support/editor'
 
 test('nested tags render nested directive blocks with distinct colors', async ({ page }) => {
   await page.goto('/prototype?scenario=nested-tags')
@@ -91,4 +91,28 @@ test('creating a tag with a space via the toolbar input', async ({ page }) => {
   await page.keyboard.type('spring launch')
   await page.keyboard.press('Enter')
   await expectSource(page, /:::tag\{name="spring launch"\}\nsecond line\n:::/u)
+})
+
+test('tagging a selection overlapping an existing tag nests instead of overlapping', async ({ page }) => {
+  await page.goto('/prototype?scenario=tagged-line-movement')
+  const root = editorFor(page)
+  await expect(root).toContainText('Questions for Lyle')
+
+  // Select across the whole 'brainstorm' tag — from the line above through
+  // the line below. The new tag wraps each contiguous region separately:
+  // siblings outside, a nested tag inside, and the existing tag's fences
+  // grow to keep the nesting valid.
+  await selectRenderedRange(root, 'Line above', 'Line below')
+  await page.getByLabel('Tag name').click()
+  await page.keyboard.type('wrapped')
+  await page.keyboard.press('Enter')
+
+  await expect.poll(() => sourceFor(page).textContent()).toBe(
+    ':::tag{name="wrapped"}\nLine above\n\n:::\n::::tag{name="brainstorm"}\n:::tag{name="wrapped"}\nQuestions for Lyle\n- Line A\n- Line B\n- Line C\n:::\n::::\n:::tag{name="wrapped"}\n\nLine below\n:::',
+  )
+  // Three sibling 'wrapped' directives, one nested inside 'brainstorm'.
+  await expect(page.locator('.notes-tag-directive[data-tag-tag="wrapped"]')).toHaveCount(3)
+  await expect(
+    page.locator('.notes-tag-directive[data-tag-tag="brainstorm"] .notes-tag-directive[data-tag-tag="wrapped"]'),
+  ).toHaveCount(1)
 })

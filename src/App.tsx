@@ -513,7 +513,19 @@ function NotesApp() {
         const range = selection && selection.rangeCount > 0 && !selection.isCollapsed && anchorElement?.closest('.mdxeditor-root-contenteditable')
           ? selection.getRangeAt(0).cloneRange()
           : null
-        tagInput.focus()
+        // Defer the focus past keydown dispatch — Lexical's selection
+        // reconcile (and WKWebView in the mac capture window) can hand DOM
+        // focus straight back to the editor when it happens synchronously.
+        // Retry a couple of frames if something steals it right back.
+        let attempts = 0
+        const focusTagInput = () => {
+          tagInput.focus()
+          attempts += 1
+          if (document.activeElement !== tagInput && attempts < 4) {
+            window.requestAnimationFrame(focusTagInput)
+          }
+        }
+        window.requestAnimationFrame(focusTagInput)
         if (range && typeof Highlight !== 'undefined') {
           CSS.highlights.set('notes-preserved-selection', new Highlight(range))
         }

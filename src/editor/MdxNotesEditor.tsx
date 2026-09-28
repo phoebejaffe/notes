@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
-import { $createParagraphNode, $createRangeSelection, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $setSelection, type LexicalEditor } from 'lexical'
+import { $createParagraphNode, $createRangeSelection, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $isTextNode, $setSelection, type LexicalEditor } from 'lexical'
 import { $getNearestNodeOfType } from '@lexical/utils'
-import { INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
+import { $createListNode, $isListItemNode, $isListNode, INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
 import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
@@ -162,6 +162,7 @@ function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down') {
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {} }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const lexicalEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
+  const activeEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
   const hostRef = useRef<HTMLDivElement>(null)
   const valueRef = useRef(value)
   const onChangeRef = useRef(onChange)
@@ -443,6 +444,65 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (insert) editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined)
     }
 
+    // "- [ ] " typed in a bullet: Lexical's element transformers only run on
+    // root-level blocks, so the `[ ] ` typed inside a list item would land as
+    // literal text. When space is pressed right after a leading `[ ]`/`[x]`,
+    // strip the marker and make the item a task — splitting it into its own
+    // check list, since Lexical clears `checked` on non-check lists and a
+    // whole-list conversion would check the neighbors too.
+    const convertTypedCheckMarker = () => {
+      const selection = window.getSelection()
+      const anchor = selection?.anchorNode
+      if (!(anchor instanceof Text)) return false
+      // The caret may sit in a nested directive editor, which is a separate
+      // LexicalEditor — pick whichever editor actually owns the anchor.
+      const editor = [activeEditorRef.current, lexicalEditorRef.current]
+        .find((candidate) => candidate?.getRootElement()?.contains(anchor))
+      if (!editor) return false
+      const match = anchor.textContent?.match(/^\[([ xX])\]/u)
+      if (!match || selection?.anchorOffset !== match[0].length) return false
+      let converted = false
+      editor.update(() => {
+        const node = $getNearestNodeFromDOMNode(anchor)
+        const item = node ? $getNearestNodeOfType(node, ListItemNode) : null
+        if (!item || !$isTextNode(node) || item.getFirstChild() !== node) return
+        const list = item.getParent()
+        if (!$isListNode(list)) return
+        node.spliceText(0, match[0].length, '')
+        if (list.getListType() === 'check') {
+          item.setChecked(match[1].toLowerCase() === 'x')
+        } else {
+          const checkList = $createListNode('check')
+          list.insertAfter(checkList)
+          // An item's nested list lives in a dedicated sibling ListItemNode
+          // directly after it (first child is a ListNode) — it belongs to the
+          // item, so move it into the check list too rather than the rest.
+          const nested: ListItemNode[] = []
+          let next = item.getNextSibling()
+          while ($isListItemNode(next) && $isListNode(next.getFirstChild())) {
+            nested.push(next)
+            next = next.getNextSibling()
+          }
+          if (next) {
+            const rest = $createListNode(list.getListType() as 'bullet' | 'number')
+            checkList.insertAfter(rest)
+            if (list.getListType() === 'number') rest.setStart(item.getValue() + 1)
+            while (next) {
+              const sibling = next
+              next = next.getNextSibling()
+              rest.append(sibling)
+            }
+          }
+          checkList.append(item, ...nested)
+          item.setChecked(match[1].toLowerCase() === 'x')
+          if (list.getChildrenSize() === 0) list.remove()
+        }
+        item.selectStart()
+        converted = true
+      })
+      return converted
+    }
+
     const caretInNestedEditor = () => {
       const editable = contentEditable(host)
       const anchor = window.getSelection()?.anchorNode
@@ -580,6 +640,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const target = event.target as HTMLElement | null
       if (!target || target.closest('input, textarea, select')) return
       if (!target.closest('.mdxeditor-root-contenteditable')) return
+      if (event.key === ' ' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && convertTypedCheckMarker()) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
       if (runCommand(event)) {
         event.preventDefault()
         event.stopPropagation()
@@ -609,7 +674,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
       document.removeEventListener('selectionchange', updateSelection)
     }
-  }, [lexicalEditorRef])
+  }, [lexicalEditorRef, activeEditorRef])
 
   function focusEditor(event: MouseEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement
@@ -617,7 +682,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     editorRef.current?.focus()
   }
 
-  const plugins = useMemo(() => mdxEditorPlugins(lexicalEditorRef), [lexicalEditorRef])
+  const plugins = useMemo(() => mdxEditorPlugins(lexicalEditorRef, activeEditorRef), [lexicalEditorRef, activeEditorRef])
 
   const actions = useMemo<EditorActions>(() => ({
     activeTags,
@@ -631,9 +696,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (!range) return
       const result = addTagDirectiveToRange(valueRef.current, range.startLine, range.endLine, tag)
       if (result.error || result.source === valueRef.current) return
+      const mappedStart = result.startLine ?? range.startLine + 1
+      const mappedEnd = result.endLine ?? range.endLine + 1
       commitRef.current?.(result.source, range.collapsed
-        ? { type: 'caret', line: range.startLine + 1, offset: range.caretOffset }
-        : { type: 'range', startLine: range.startLine + 1, endLine: range.endLine + 1 })
+        ? { type: 'caret', line: mappedStart, offset: range.caretOffset }
+        : { type: 'range', startLine: mappedStart, endLine: mappedEnd })
       const nextRecentTags = [tag, ...recentTags.filter((recent) => recent !== tag)].slice(0, 12)
       setRecentTags(nextRecentTags)
       localStorage.setItem(RECENT_TAGS_KEY, JSON.stringify(nextRecentTags))

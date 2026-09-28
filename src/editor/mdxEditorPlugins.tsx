@@ -1,4 +1,4 @@
-import { directivesPlugin, exportVisitors$, headingsPlugin, importVisitors$, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, realmPlugin, rootEditor$, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
+import { activeEditor$, directivesPlugin, exportVisitors$, headingsPlugin, importVisitors$, linkPlugin, listsPlugin, markdownShortcutPlugin, quotePlugin, realmPlugin, rootEditor$, tablePlugin, thematicBreakPlugin, toolbarPlugin, type DirectiveDescriptor } from '@mdxeditor/editor'
 import type { LexicalEditor } from 'lexical'
 import type { RefObject } from 'react'
 import { MdxEditorToolbar } from './MdxEditorToolbar'
@@ -15,11 +15,12 @@ const DIRECTIVE_DESCRIPTORS: DirectiveDescriptor<any>[] = ['muted', 'custom-bloc
   Editor: DirectiveContentEditor,
 }))
 
-export function mdxEditorPlugins(lexicalEditorRef: RefObject<LexicalEditor | null>) {
+export function mdxEditorPlugins(lexicalEditorRef: RefObject<LexicalEditor | null>, activeEditorRef: RefObject<LexicalEditor | null>) {
   return [
     realmPlugin({
       postInit(realm) {
         lexicalEditorRef.current = realm.getValue(rootEditor$)
+        realm.sub(activeEditor$, (editor) => { activeEditorRef.current = editor })
         realm.pub(exportVisitors$, [ListItemCheckedVisitor as never, ...realm.getValue(exportVisitors$)])
         realm.pub(importVisitors$, [ListItemCheckedImportVisitor as never, ...realm.getValue(importVisitors$)])
       },

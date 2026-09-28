@@ -37,6 +37,31 @@ test('a line outside a tag enters it, then keeps moving inside', async ({ page }
   await expectCaretBlock(page, 'Line above')
 })
 
+test('a selection straddling a tag boundary moves the fence, not the text', async ({ page }) => {
+  await page.goto('/prototype?scenario=tagged-line-movement')
+  const root = editorFor(page)
+  await expect(root).toContainText('Questions for Lyle')
+
+  // Select from inside the tag through the line below it — the source range
+  // straddles the closing fence.
+  await selectRenderedRange(root, 'Line C', 'Line below')
+  await page.keyboard.press('Alt+ArrowUp')
+  // Moving toward the interior encloses the whole selection: the fence
+  // slides below "Line below".
+  await expect.poll(() => sourceText(page)).toMatch(
+    /^Line above\n\n:::tag\{name="brainstorm"\}\nQuestions for Lyle\n- Line A\n- Line B\n- Line C\n\nLine below\n:::$/,
+  )
+
+  await page.goto('/prototype?scenario=tagged-line-movement')
+  await selectRenderedRange(root, 'Line C', 'Line below')
+  await page.keyboard.press('Alt+ArrowDown')
+  // Moving away shrinks the tag to exclude the selection: the fence slides
+  // above it, leaving an empty tag behind.
+  await expect.poll(() => sourceText(page)).toMatch(
+    /^Line above\n\n:::tag\{name="brainstorm"\}\nQuestions for Lyle\n- Line A\n- Line B\n:::\n- Line C\n\nLine below$/,
+  )
+})
+
 test('a line inside a tag escapes across its boundary', async ({ page }) => {
   await page.goto('/prototype?scenario=tagged-line-movement')
   const root = editorFor(page)

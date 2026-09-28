@@ -90,36 +90,73 @@ export function parseMarkdown(source: string): ParsedMarkdown {
   return { lines, ranges, diagnostics }
 }
 
-export function addTagDirectiveToRange(source: string, startLine: number, endLine: number, tag: string) {
-  const parsed = parseMarkdown(source)
-  const normalized = normalizeTag(tag.trim())
-  const alreadyActive = parsed.ranges.some((range) => range.tag === normalized && range.startLine <= startLine && range.endLine >= endLine)
-  if (alreadyActive) return { source, error: `“${normalized}” is already active in this selection.` }
-
-  const lines = source.split('\n')
-  const escaped = normalized.replaceAll('&', '&amp;').replaceAll('"', '&quot;')
-  lines.splice(endLine + 1, 0, ':::')
-  lines.splice(startLine, 0, `:::tag{name="${escaped}"}`)
-
-  // Nested container directives need strictly longer fences outward, so grow
-  // any enclosing tag fences past the new inner `:::`.
-  const setFence = (lineIndex: number, length: number) => {
-    lines[lineIndex] = lines[lineIndex].replace(/^(\s*):+/u, `$1${':'.repeat(length)}`)
-  }
-  let required = 4
-  parsed.ranges
-    .filter((range) => range.startLine < startLine && range.endLine > endLine)
-    .sort((a, b) => b.startLine - a.startLine)
-    .forEach((range) => {
-      const current = lines[range.startLine].match(/^\s*(:+)tag/u)?.[1].length ?? 3
-      const length = Math.max(current, required)
-      if (length !== current) {
-        setFence(range.startLine, length)
-        setFence(range.endLine + 2, length)
+// Keeps directive nesting valid: every directive's fence must be strictly
+// longer than any directive fence it encloses, or micromark treats a same-
+// length inner fence as the outer close. Repairs in place, innermost first
+// so growth cascades outward.
+function growDirectiveFences(lines: string[]) {
+  const parsed = parseMarkdown(lines.join('\n'))
+  const innermostFirst = [...parsed.ranges].sort((a, b) => b.startLine - a.startLine)
+  for (const range of innermostFirst) {
+    let required = 3
+    for (let index = range.startLine + 1; index < range.endLine; index += 1) {
+      const fenceLength = lines[index].match(/^\s*(:+)/u)?.[1].length
+      if (fenceLength && (DIRECTIVE_OPEN_PATTERN.test(lines[index]) || DIRECTIVE_CLOSE_PATTERN.test(lines[index]))) {
+        required = Math.max(required, fenceLength + 1)
       }
-      required = length + 1
-    })
-  return { source: lines.join('\n') }
+    }
+    for (const fenceIndex of [range.startLine, range.endLine]) {
+      const match = lines[fenceIndex].match(/^\s*(:+)/u)
+      if (match && match[1].length < required) {
+        lines[fenceIndex] = lines[fenceIndex].replace(/^(\s*):+/u, `$1${':'.repeat(required)}`)
+      }
+    }
+  }
+}
+
+export function addTagDirectiveToRange(source: string, startLine: number, endLine: number, tag: string) {
+  const normalized = normalizeTag(tag.trim())
+  const lines = source.split('\n')
+  const isBoundary = (line: string) => DIRECTIVE_OPEN_PATTERN.test(line) || DIRECTIVE_CLOSE_PATTERN.test(line)
+
+  // A selection crossing existing tag boundaries tags each contiguous region
+  // separately — inside an existing tag the new tag nests; outside it becomes
+  // a sibling. Like HTML, tags nest but never overlap.
+  const segments: Array<{ startLine: number; endLine: number }> = []
+  let segmentStart = -1
+  for (let index = startLine; index <= endLine; index += 1) {
+    if (isBoundary(lines[index])) {
+      if (segmentStart >= 0) segments.push({ startLine: segmentStart, endLine: index - 1 })
+      segmentStart = -1
+    } else if (segmentStart < 0) segmentStart = index
+  }
+  if (segmentStart >= 0) segments.push({ startLine: segmentStart, endLine })
+  const targets = segments.filter(({ startLine: start, endLine: end }) =>
+    lines.slice(start, end + 1).some((line) => line.trim()))
+
+  let delta = 0
+  let mappedStart = -1
+  let mappedEnd = -1
+  let error: string | undefined
+  const escaped = normalized.replaceAll('&', '&amp;').replaceAll('"', '&quot;')
+  for (const segment of targets) {
+    const parsed = parseMarkdown(lines.join('\n'))
+    const alreadyActive = parsed.ranges.some((range) => range.tag === normalized && range.startLine <= segment.startLine + delta && range.endLine >= segment.endLine + delta)
+    if (alreadyActive) {
+      error = `“${normalized}” is already active in this selection.`
+      continue
+    }
+    const insertStart = segment.startLine + delta
+    const insertEnd = segment.endLine + delta
+    lines.splice(insertEnd + 1, 0, ':::')
+    lines.splice(insertStart, 0, `:::tag{name="${escaped}"}`)
+    growDirectiveFences(lines)
+    if (mappedStart < 0) mappedStart = insertStart + 1
+    mappedEnd = insertEnd + 1
+    delta += 2
+  }
+  if (mappedStart < 0) return { source, error: error ?? 'Nothing to tag in this selection.' }
+  return { source: lines.join('\n'), startLine: mappedStart, endLine: mappedEnd }
 }
 
 // A line is muted when it contains `%%` anywhere; when muting we append ` %%`
@@ -353,6 +390,31 @@ function movePastDirectiveBoundary(
   return { source: lines.join('\n'), startLine: insertAt, endLine: insertAt + moved.length - 1 }
 }
 
+// A move whose selection straddles exactly one `:::tag` fence shifts the
+// fence instead of the text: moving toward the tag's interior extends the
+// tag to enclose the whole selection; moving away shrinks the tag to exclude
+// it. Selections spanning more than one fence are ambiguous and no-op.
+function shiftDirectiveBoundary(
+  lines: string[],
+  startLine: number,
+  endLine: number,
+  direction: 'up' | 'down',
+) {
+  const boundaries: number[] = []
+  for (let index = startLine; index <= endLine; index += 1) {
+    if (DIRECTIVE_OPEN_PATTERN.test(lines[index]) || DIRECTIVE_CLOSE_PATTERN.test(lines[index])) boundaries.push(index)
+  }
+  if (boundaries.length !== 1) return null
+  const fenceIndex = boundaries[0]
+  const isClose = DIRECTIVE_CLOSE_PATTERN.test(lines[fenceIndex])
+  // Toward the interior is up across a close or down across an open.
+  const enclose = isClose === (direction === 'up')
+  const fence = lines.splice(fenceIndex, 1)[0]
+  lines.splice(enclose === isClose ? endLine : startLine, 0, fence)
+  growDirectiveFences(lines)
+  return { source: lines.join('\n'), startLine, endLine }
+}
+
 export function moveLines(source: string, startLine: number, endLine: number, direction: 'up' | 'down') {
   return moveLinesDetailed(source, startLine, endLine, direction)?.source ?? source
 }
@@ -361,7 +423,7 @@ export function moveLinesDetailed(source: string, startLine: number, endLine: nu
   const lines = source.split('\n')
   if (startLine < 0 || endLine >= lines.length || startLine > endLine) return null
   const isBoundary = (line: string) => DIRECTIVE_OPEN_PATTERN.test(line) || DIRECTIVE_CLOSE_PATTERN.test(line)
-  if (lines.slice(startLine, endLine + 1).some(isBoundary)) return null
+  if (lines.slice(startLine, endLine + 1).some(isBoundary)) return shiftDirectiveBoundary(lines, startLine, endLine, direction)
   let segmentStart = startLine
   while (segmentStart > 0 && !isBoundary(lines[segmentStart - 1])) segmentStart -= 1
   let segmentEnd = endLine

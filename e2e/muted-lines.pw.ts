@@ -139,3 +139,21 @@ test('muting lines inside a tag stays muted and leaves sibling lines unchanged',
     await expect.poll(async () => (await selectionSnapshot(page)).blockText).toContain(target)
   }
 })
+
+test('a hand-typed %% marker mutes the line on the next import', async ({ page }) => {
+  await page.goto('/prototype?scenario=muted')
+  const root = editorFor(page)
+
+  // The typed marker is literal editor text until the next import strips it.
+  await setCaretAtText(root, 'plain target', 'plain target'.length)
+  await page.keyboard.type(' %%')
+  await expectSource(page, /^plain target %%$/mu)
+  await expect(root).toContainText('%%')
+
+  // An external update re-imports the source: the line mutes and the marker
+  // disappears from the rendered text.
+  await page.getByRole('button', { name: 'External update' }).click()
+  await expect.poll(() => sourceFor(page).textContent()).toMatch(/^plain target %%$/mu)
+  await expect.poll(() => mutedHighlights(page)).toContain('plain target')
+  await expect(root).not.toContainText('%%')
+})

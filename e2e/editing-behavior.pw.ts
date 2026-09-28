@@ -241,9 +241,11 @@ const SHORTCUTS: Array<{ input: string; expected: RegExp }> = [
   { input: '> ', expected: /^> Line B$/mu },
   { input: '1. ', expected: /^1\. Line B$/mu },
   { input: '# ', expected: /^# Line B$/mu },
-  // `- ` fires the bullet transformer first, so `[ ] ` lands as literal text
-  // inside the list item — task creation goes through Cmd+Enter instead.
-  { input: '- [ ] ', expected: /^- \\\[ \] Line B$/mu },
+  // `- ` fires the bullet transformer first; the `[ ] ` typed inside the new
+  // list item is then converted to a checkbox by the editor's own handler
+  // (Lexical element transformers don't run inside list items).
+  { input: '- [ ] ', expected: /^- \[ \] Line B$/mu },
+  { input: '- [x] ', expected: /^- \[x\] Line B$/mu },
 ]
 
 test.describe('markdown input shortcuts produce canonical syntax', () => {

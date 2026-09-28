@@ -241,6 +241,22 @@ describe('marker engine', () => {
     expect(moveLines(source, 0, 0, 'down')).toBe(':::tag{name="brainstorm"}\nLine above\n\nQuestions for Lyle\n- Line A\n:::\n\nLine below')
   })
 
+  it('moves a tag boundary instead of text when the selection straddles it', () => {
+    const source = 'a\n\n:::tag{name="t"}\nb\nc\n:::\n\nd\ne'
+    // Selection c..d straddles the close fence (lines 4..7). Moving up pulls
+    // the outside part into the tag: the fence slides below the selection.
+    expect(moveLines(source, 4, 7, 'up')).toBe('a\n\n:::tag{name="t"}\nb\nc\n\nd\n:::\ne')
+    // Moving down shrinks the tag to exclude the inside part: the fence
+    // slides above the selection.
+    expect(moveLines(source, 4, 7, 'down')).toBe('a\n\n:::tag{name="t"}\nb\n:::\nc\n\nd\ne')
+    // Straddling the open fence mirrors it: down encloses, up excludes.
+    expect(moveLines(source, 1, 4, 'down')).toBe('a\n:::tag{name="t"}\n\nb\nc\n:::\n\nd\ne')
+    expect(moveLines(source, 1, 4, 'up')).toBe('a\n\nb\nc\n:::tag{name="t"}\n:::\n\nd\ne')
+    // More than one fence in the range is ambiguous — no move.
+    const wrapped = 'x\n:::tag{name="t"}\ny\n:::\nz'
+    expect(moveLines(wrapped, 0, 4, 'down')).toBe(wrapped)
+  })
+
   it('moves a line inside a tag out across its boundary', () => {
     const source = 'Line above\n\n:::tag{name="brainstorm"}\nQuestions for Lyle\n- Line A\n:::\n\nLine below'
     expect(moveLines(source, 3, 3, 'up')).toBe('Line above\n\nQuestions for Lyle\n\n:::tag{name="brainstorm"}\n- Line A\n:::\n\nLine below')
@@ -270,6 +286,24 @@ describe('marker engine', () => {
     const tagged = ':::tag{name="therapy"}\ncontent\n:::'
     expect(addTagDirectiveToRange(tagged, 1, 1, 'therapy').error).toBeTruthy()
     expect(addTagDirectiveToRange(tagged, 1, 1, 'other').source).toBe('::::tag{name="therapy"}\n:::tag{name="other"}\ncontent\n:::\n::::')
+  })
+
+  it('tags a selection overlapping an existing tag as sibling + nested ranges', () => {
+    // Lines 0-7 straddle `:::tag{t}` at 2 and `:::` at 5. The new tag wraps
+    // the outside parts as siblings and nests inside the existing tag.
+    const source = 'a\n\n:::tag{name="t"}\nb\nc\n:::\n\nd'
+    expect(addTagDirectiveToRange(source, 0, 7, 'x').source).toBe(
+      ':::tag{name="x"}\na\n\n:::\n::::tag{name="t"}\n:::tag{name="x"}\nb\nc\n:::\n::::\n:::tag{name="x"}\n\nd\n:::',
+    )
+    // The result is itself well-formed nested directives.
+    const reparsed = parseMarkdown(addTagDirectiveToRange(source, 0, 7, 'x').source)
+    expect(reparsed.diagnostics).toEqual([])
+    expect(reparsed.ranges.map((range) => range.tag).sort()).toEqual(['t', 'x', 'x', 'x'])
+    // A segment already inside the same tag is skipped; the rest still apply.
+    const partiallyTagged = ':::tag{name="x"}\nb\n:::'
+    const res = addTagDirectiveToRange('a\n\n' + partiallyTagged + '\n\nd', 0, 6, 'x')
+    expect(res.error).toBeUndefined()
+    expect(res.source).toBe(':::tag{name="x"}\na\n\n:::\n:::tag{name="x"}\nb\n:::\n:::tag{name="x"}\n\nd\n:::')
   })
 
   it('renames every matching directive while preserving quoted names', () => {
