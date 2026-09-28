@@ -4,6 +4,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { MdxNotesEditor } from './editor/MdxNotesEditor'
+import { ensureCaretVisible } from './editor/caretVisibility'
 import { parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { clearSyncBases, listDailyDocuments, replaceDailyDocuments, saveDailyDocument, type DailyDocument, type DocumentSyncBase } from './storage'
@@ -607,7 +608,8 @@ function NotesApp() {
       window.setTimeout(() => {
         if (settingsOpen || tagsOpen) return
         const editorHost = document.querySelector<HTMLElement>(`[data-day="${today}"] .notes-mdx-editor`)
-        editorHost?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction: 'down' }, bubbles: false }))
+        // 'up' lands the caret at the end of the last rendered line.
+        editorHost?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction: 'up' }, bubbles: false }))
       }, 0)
     }
     function focusTodayIfIdle() {
@@ -618,6 +620,20 @@ function NotesApp() {
     }
     function handleWindowFocus() {
       setCaptureFocused(true)
+      if (settingsOpen || tagsOpen) return
+      // A focused input keeps its caret — don't steal it.
+      const activeElement = document.activeElement
+      if (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement) return
+      // A caret somewhere in an editor: make sure it's actually in view —
+      // scrolling instantly, preferring the stream top when the caret is in
+      // the first screenful. Deferred a frame so WKWebView finishes any
+      // focus-driven scroll restore first.
+      const anchor = window.getSelection()?.anchorNode
+      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
+      if (anchorElement?.closest('.mdxeditor-root-contenteditable')) {
+        window.requestAnimationFrame(() => ensureCaretVisible({ preferTop: true }))
+        return
+      }
       focusTodayIfIdle()
     }
     function handleWindowBlur() {

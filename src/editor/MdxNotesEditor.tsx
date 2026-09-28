@@ -7,6 +7,7 @@ import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
 import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
 import { clearMutedDecorations, inHiddenMutedRange, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
+import { ensureCaretVisible } from './caretVisibility'
 import { addTagDirectiveToRange, checklistToPlainText, indentLines, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 
 import { $isTagBlockNode } from './TagBlockNode'
@@ -178,6 +179,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   // change was a commit; typing undos stay with Lexical.
   const undoStackRef = useRef<Array<{ source: string; range: SelectionLineRange | null; prevOp: string }>>([])
   const lastOpRef = useRef<'commit' | 'lexical' | 'external'>('lexical')
+  const visibilityRafRef = useRef(0)
   const [activeTags, setActiveTags] = useState<string[]>([])
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
 
@@ -360,6 +362,16 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
             .map((tagRange) => tagRange.tag))]
         : []
       setActiveTags((current) => current.length === tags.length && current.every((tag, index) => tag === tags[index]) ? current : tags)
+      // Keep the caret inside the visible band — typing and native navigation
+      // already scroll to the nearest edge, but fixed overlay bars (and any
+      // programmatic caret move, which browsers never scroll for) can leave
+      // the caret hidden. Deferred a frame so we measure post-browser-scroll.
+      cancelAnimationFrame(visibilityRafRef.current)
+      visibilityRafRef.current = requestAnimationFrame(() => {
+        const active = document.activeElement
+        if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+        ensureCaretVisible()
+      })
     }
 
     // Cmd+/ and the toolbar mute button both toggle ` %%` on the selected
@@ -510,29 +522,26 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       return !!editable && !!editableAtCaret && editableAtCaret !== editable
     }
 
-    // A sibling editor asks us to take focus at an edge: land the caret on
-    // the first or last rendered line — at the same x position when the
-    // source editor passed one, otherwise at the line's start or end — even
-    // when that line lives inside a nested directive editor.
-    const handleFocusEdge = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { direction?: 'up' | 'down'; x?: number } | undefined
-      const direction = detail?.direction ?? 'down'
-      userInteractedRef.current = true
+    // Place the caret on the editor's first ('start') or last ('end') rendered
+    // line — at the given x position when provided, otherwise at the line's
+    // start or end — even when that line lives inside a nested directive
+    // editor. Used both for sibling-editor focus requests and Cmd-Up/Down.
+    const focusEdge = (edge: 'start' | 'end', x?: number) => {
       const outer = contentEditable(host)
       if (!outer) return
       const leaves = renderedTextLeaves(outer)
-      const leaf = direction === 'up' ? leaves[leaves.length - 1] : leaves[0]
+      const leaf = edge === 'end' ? leaves[leaves.length - 1] : leaves[0]
       if (!leaf) {
         // Empty editor — no text leaf to land on, so place the caret directly
         // at the start (or end) of the editable.
         outer.focus()
-        const position = direction === 'up' ? outer.childNodes.length : 0
+        const position = edge === 'end' ? outer.childNodes.length : 0
         window.getSelection()?.setBaseAndExtent(outer, position, outer, position)
         return
       }
       const editable = leaf.parentElement?.closest<HTMLElement>('[contenteditable="true"]') ?? outer
       editable.focus()
-      if (typeof detail?.x === 'number') {
+      if (typeof x === 'number') {
         // Hit-test the edge line's first/last visual row at the carried x;
         // caretRangeFromPoint clamps horizontally, so an x beyond the line's
         // end lands at its end. Fall back to the line edge if the hit lands
@@ -540,8 +549,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         const range = document.createRange()
         range.selectNodeContents(leaf)
         const rects = range.getClientRects()
-        const row = direction === 'up' ? rects[rects.length - 1] : rects[0]
-        const hit = row ? document.caretRangeFromPoint(detail.x, row.top + row.height / 2) : null
+        const row = edge === 'end' ? rects[rects.length - 1] : rects[0]
+        const hit = row ? document.caretRangeFromPoint(x, row.top + row.height / 2) : null
         if (hit && editable.contains(hit.startContainer)) {
           let node: Node = hit.startContainer
           let offset = hit.startOffset
@@ -550,14 +559,22 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
             // or padding) — an element offset can sit *after* the block, so
             // clamp to the leaf's start or end by which edge is closer.
             node = leaf
-            offset = detail.x - row.left < row.right - detail.x ? 0 : (leaf.textContent?.length ?? 0)
+            offset = x - row.left < row.right - x ? 0 : (leaf.textContent?.length ?? 0)
           }
           window.getSelection()?.setBaseAndExtent(node, offset, node, offset)
           return
         }
       }
-      const offset = direction === 'up' ? (leaf.textContent?.length ?? 0) : 0
+      const offset = edge === 'end' ? (leaf.textContent?.length ?? 0) : 0
       window.getSelection()?.setBaseAndExtent(leaf, offset, leaf, offset)
+    }
+
+    // A sibling editor asks us to take focus at an edge.
+    const handleFocusEdge = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { direction?: 'up' | 'down'; x?: number } | undefined
+      userInteractedRef.current = true
+      // direction is travel direction: 'up' arrives from below → last line.
+      focusEdge(detail?.direction === 'up' ? 'end' : 'start', detail?.x)
     }
 
     const runCommand = (event: KeyboardEvent): boolean => {
@@ -594,6 +611,16 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
       if (event.altKey && !mod && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
         moveSelectedLines(event.key === 'ArrowUp' ? 'up' : 'down')
+        return true
+      }
+
+      // Cmd-Opt-Arrow jumps straight to the adjacent editor; Cmd-Arrow goes to
+      // this editor's top or bottom edge. Cmd-Shift+Arrow stays native (it
+      // extends the selection).
+      if (mod && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        const direction = event.key === 'ArrowUp' ? 'up' : 'down'
+        if (event.altKey) focusAdjacentEditor(host, direction)
+        else focusEdge(direction === 'up' ? 'start' : 'end')
         return true
       }
 
@@ -673,6 +700,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('notes-line-gesture', handleLineGesture)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
       document.removeEventListener('selectionchange', updateSelection)
+      cancelAnimationFrame(visibilityRafRef.current)
     }
   }, [lexicalEditorRef, activeEditorRef])
 

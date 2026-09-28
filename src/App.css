@@ -257,9 +257,9 @@ button { cursor: pointer; font: inherit; }
 .capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar button:hover { background: #48434a; }
 .capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar button[data-state='on'] { color: #fff; background: #806790; }
 .capture-shell:not(.web-shell) .notes-editor-tag-suggestions { top: auto; bottom: calc(100% + 6px); }
-.capture-shell:not(.web-shell) .day-stream { padding-top: 56px; scroll-padding-top: 56px; }
+.capture-shell:not(.web-shell) .day-stream { padding-top: 56px; scroll-padding-top: 56px; scroll-padding-bottom: 34px; }
 .capture-shell:not(.web-shell) .raw-mode-banner { top: 32px; }
-.raw-mode.capture-shell:not(.web-shell) .day-stream { padding-top: 56px; scroll-padding-top: 56px; }
+.raw-mode.capture-shell:not(.web-shell) .day-stream { padding-top: 56px; scroll-padding-top: 56px; scroll-padding-bottom: 34px; }
 .theme-dark .notes-mdx-editor .mdxeditor { --basePageBg: #201e21; --baseBase: #2f2c31; --baseBgSubtle: #2f2c31; --baseBg: #383538; --baseBgHover: #48434a; --baseBgActive: #48434a; --baseLine: #4d4649; --baseBorder: #5a5358; --baseBorderHover: #6f666d; --baseText: #d9d1d5; --baseTextContrast: #f5f1ed; --accentText: #e6d7f2; --accentTextContrast: #fff; }
 .theme-dark .notes-mdx-editor, .theme-dark .notes-mdx-editor .mdxeditor { color: #e8e2dc; border-color: #4d4649; background: #201e21; }
 .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable, .theme-dark .notes-mdx-editor .mdxeditor-contenteditable-wrapper, .theme-dark .notes-mdx-editor [contenteditable='true'] { color: #f5f1ed !important; background: #201e21; caret-color: #f5f1ed; }

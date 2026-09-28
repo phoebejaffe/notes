@@ -97,6 +97,45 @@ test('arrows cross into and out of an empty editor', async ({ page }) => {
   await expect(day1).toContainText('%')
 })
 
+test('Cmd-Opt-Arrow jumps to the editor below or above from anywhere', async ({ page }) => {
+  await page.goto('/prototype?multi')
+  const cards = page.locator('.day-card')
+  const day1 = cards.nth(0).locator('.mdxeditor-root-contenteditable')
+  const day2 = cards.nth(1).locator('.mdxeditor-root-contenteditable')
+  const day3 = cards.nth(2).locator('.mdxeditor-root-contenteditable')
+
+  // From mid-line in the middle of day2, Cmd-Opt-Down lands on day3's first
+  // line — no need to reach the editor's bottom edge first.
+  await setCaretAtText(day2, 'Untagged content after the leading tag', 10)
+  await page.keyboard.press('Meta+Alt+ArrowDown')
+  await expect.poll(async () => (await selectionSnapshot(page)).blockText).toBe('Plain day with only untagged content.')
+  await page.keyboard.type('!')
+  await expect(day3).toContainText('!')
+
+  // And back up: Cmd-Opt-Up lands on day2's last line.
+  await page.keyboard.press('Meta+Alt+ArrowUp')
+  await expect.poll(async () => (await selectionSnapshot(page)).blockText).toBe('Untagged content after the leading tag')
+  await page.keyboard.type('@')
+  await expect(day2).toContainText('@')
+  await expect(day1).not.toContainText('@')
+})
+
+test('Cmd-Arrow moves the caret to the top or bottom of the editor', async ({ page }) => {
+  await page.goto('/prototype?multi')
+  const day2 = page.locator('.day-card').nth(1).locator('.mdxeditor-root-contenteditable')
+
+  await setCaretAtText(day2, 'Untagged content after the leading tag', 5)
+  await page.keyboard.press('Meta+ArrowDown')
+  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBe('Untagged content after the leading tag'.length)
+  const end = await selectionSnapshot(page)
+  expect(end.blockText).toBe('Untagged content after the leading tag')
+
+  await page.keyboard.press('Meta+ArrowUp')
+  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBe(0)
+  const start = await selectionSnapshot(page)
+  expect(start.blockText).toBe('This day starts with a tag')
+})
+
 test('modified arrows do not invoke cross-editor navigation', async ({ page }) => {
   await page.goto('/prototype?multi')
   const day2 = page.locator('.day-card').nth(1).locator('.mdxeditor-root-contenteditable')
