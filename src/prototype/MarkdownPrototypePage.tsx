@@ -330,8 +330,8 @@ function MultiEditorPrototype() {
     day3: [day3, setDay3],
   }
   return <section className="day-stream" aria-label="Multi-editor prototype">
-    {Object.entries(docs).map(([day, [source, setSource]]) => (
-      <article className="day-card" data-day={day} key={day}>
+    {Object.entries(docs).map(([day, [source, setSource]], index) => (
+      <article className="day-card" data-day={day} data-weekday={index % 7} key={day}>
         <div className="editor-card">
           <h1 className="day-title">{day}</h1>
           <MdxNotesEditor value={source} onChange={setSource} hideMutedLines={hideMuted} />

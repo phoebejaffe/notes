@@ -55,15 +55,22 @@ button { cursor: pointer; font: inherit; }
 .web-shell .day-stream { padding-top: 84px; }
 .ios-pwa .day-stream { padding-top: 108px; padding-bottom: 16px; }
 .capture-shell .day-stream { padding-top: 48px; scroll-padding-top: 48px; }
-.day-card { scroll-margin-top: 78px; background: #fff; }
+.day-card { scroll-margin-top: 78px; background: var(--day-tint, #fff); }
+.day-card[data-weekday="0"] { --day-tint: #fdf2e9; }
+.day-card[data-weekday="1"] { --day-tint: #eff6ea; }
+.day-card[data-weekday="2"] { --day-tint: #eaf4f8; }
+.day-card[data-weekday="3"] { --day-tint: #f4eff8; }
+.day-card[data-weekday="4"] { --day-tint: #faf5ea; }
+.day-card[data-weekday="5"] { --day-tint: #ebf7f1; }
+.day-card[data-weekday="6"] { --day-tint: #f9edf0; }
 .app-shell:not(.web-shell) .day-card { scroll-margin-top: 116px; }
-.day-title { margin: 0 0 6px; color: #817970; font: 500 15px/1.1 Georgia, serif; letter-spacing: .01em; }
+.day-title { margin: 8px 0 6px; color: #817970; font: 500 15px/1.1 Georgia, serif; letter-spacing: .01em; }
 .stream-sentinel { height: 1px; }
 .day-toolbar { display: none; }
 .day-toolbar h1 { margin: 0; color: #302c32; font: 600 25px/1.1 Georgia, serif; letter-spacing: -.02em; }
 .day-arrow { width: 29px; height: 29px; padding: 0; color: #756c64; background: transparent; border: 1px solid #d9d4cb; border-radius: 7px; font-size: 16px; }
 .day-arrow:hover { background: #e8e3dc; }
-.editor-card { position: relative; min-width: 0; padding: 0 0 8px; border: 0; border-bottom: 0; border-radius: 0; background: #fff; box-shadow: none; }
+.editor-card { position: relative; min-width: 0; padding: 0 0 8px; border: 0; border-bottom: 0; border-radius: 0; background: var(--day-tint, #fff); box-shadow: none; }
 .editor-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
 .eyebrow { color: #9b9185; text-transform: uppercase; letter-spacing: .14em; font-size: 10px; font-weight: 700; }
 .line-note { color: #9b9185; font-size: 11px; }
@@ -151,7 +158,15 @@ button { cursor: pointer; font: inherit; }
 .compact-spacing .editor-card { padding-bottom: 2px; }
 .theme-dark.app-shell, .theme-dark.capture-shell { --tag-chip-base: #000; --tag-chip-text: #e8e2dc; color: #e8e2dc; background: #201e21; }
 .theme-dark .topbar { color: #e8e2dc; border-bottom-color: #403b3f; background: #201e21; box-shadow: 0 4px 14px #00000030; }
-.theme-dark .search-panel, .theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: #201e21; }
+.theme-dark .search-panel { color: #e8e2dc; background: #201e21; }
+.theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: var(--day-tint, #201e21); }
+.theme-dark .day-card[data-weekday="0"] { --day-tint: #2b2420; }
+.theme-dark .day-card[data-weekday="1"] { --day-tint: #222a21; }
+.theme-dark .day-card[data-weekday="2"] { --day-tint: #1f262b; }
+.theme-dark .day-card[data-weekday="3"] { --day-tint: #27232c; }
+.theme-dark .day-card[data-weekday="4"] { --day-tint: #29241e; }
+.theme-dark .day-card[data-weekday="5"] { --day-tint: #202a26; }
+.theme-dark .day-card[data-weekday="6"] { --day-tint: #2b2225; }
 .theme-dark .sync-prompt { border-color: #4d4659; color: #cbbbd0; background: #332f3b; }
 .theme-dark .active-tag-chip button { color: #fffaf5; -webkit-text-fill-color: #fffaf5; }
 .theme-dark .menu-panel, .theme-dark .filter-panel, .theme-dark .settings-modal, .theme-dark .tag-modal { border-color: #4d4649; color: #e8e2dc; background: #2a272b; }

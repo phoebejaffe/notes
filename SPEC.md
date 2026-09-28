@@ -38,7 +38,7 @@ The current day is calculated using a configurable rollover hour, from midnight 
 - When the logical day changes at the configured rollover hour, the new day is added automatically without requiring an application restart.
 - A future date can be selected explicitly. Opening a future day creates a local empty day and records it for future-day behavior.
 - Opening a future note displays a reminder that can be dismissed or snoozed for one day.
-- Each day card contains a Markdown editor and marker diagnostics when tag syntax is malformed or unbalanced.
+- Each day card contains a Markdown editor and marker diagnostics when tag syntax is malformed or unbalanced. Day cards carry a subtle background tint that cycles through seven colors by day of week, so a given weekday always shares the same tint in both light and dark themes.
 - The current day can be exported independently. All non-empty notes can be exported as one Markdown file with date headings and separators. The menu can enable a persistent raw-text mode that replaces each rich editor with its exact Markdown source; a fixed banner provides the way to turn raw mode off.
 - A sample-note reset command exists for the current day and is intended as a development/demo affordance, not as a general data-management workflow.
 
