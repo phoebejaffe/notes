@@ -112,9 +112,10 @@ test('Cmd-Opt-Arrow jumps to the editor below or above from anywhere', async ({ 
   await page.keyboard.type('!')
   await expect(day3).toContainText('!')
 
-  // And back up: Cmd-Opt-Up lands on day2's last line.
+  // And back up: Cmd-Opt-Up lands on day2's first line — jumps always land
+  // at the top of the destination editor.
   await page.keyboard.press('Meta+Alt+ArrowUp')
-  await expect.poll(async () => (await selectionSnapshot(page)).blockText).toBe('Untagged content after the leading tag')
+  await expect.poll(async () => (await selectionSnapshot(page)).blockText).toBe('This day starts with a tag')
   await page.keyboard.type('@')
   await expect(day2).toContainText('@')
   await expect(day1).not.toContainText('@')

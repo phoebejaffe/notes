@@ -142,7 +142,7 @@ function caretAtEditorEdge(host: HTMLElement, direction: 'up' | 'down'): boolean
     : caretRect.bottom >= edgeRect.bottom - lineHeight * 0.5
 }
 
-function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down') {
+function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down', landing: 'edge' | 'start' = 'edge') {
   const card = host.closest<HTMLElement>('.day-card')
   const cards = [...(card?.parentElement?.querySelectorAll<HTMLElement>('.day-card') ?? [])]
   const index = card ? cards.indexOf(card) : -1
@@ -152,12 +152,13 @@ function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down') {
   // in an empty block reports a zero rect — use the anchor element's box.
   const selection = window.getSelection()
   let x: number | undefined
-  if (selection?.rangeCount) {
+  if (landing === 'edge' && selection?.rangeCount) {
     const rect = selection.getRangeAt(0).getBoundingClientRect()
     const anchorElement = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
     x = rect.width || rect.height ? rect.left : anchorElement?.getBoundingClientRect().left
   }
-  targetEditor?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction, x }, bubbles: false }))
+  const detail = landing === 'start' ? { edge: 'start' } : { direction, x }
+  targetEditor?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail, bubbles: false }))
 }
 
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {} }: MdxNotesEditorProps) {
@@ -571,10 +572,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
     // A sibling editor asks us to take focus at an edge.
     const handleFocusEdge = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { direction?: 'up' | 'down'; x?: number } | undefined
+      const detail = (event as CustomEvent).detail as { direction?: 'up' | 'down'; edge?: 'start' | 'end'; x?: number } | undefined
       userInteractedRef.current = true
       // direction is travel direction: 'up' arrives from below → last line.
-      focusEdge(detail?.direction === 'up' ? 'end' : 'start', detail?.x)
+      const edge = detail?.edge ?? (detail?.direction === 'up' ? 'end' : 'start')
+      focusEdge(edge, detail?.x)
     }
 
     // Hiding/showing the capture window can drop the DOM selection, so the
@@ -638,12 +640,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         return true
       }
 
-      // Cmd-Opt-Arrow jumps straight to the adjacent editor; Cmd-Arrow goes to
-      // this editor's top or bottom edge. Cmd-Shift+Arrow stays native (it
-      // extends the selection).
+      // Cmd-Opt-Arrow jumps straight to the adjacent editor's top; Cmd-Arrow
+      // goes to this editor's top or bottom edge. Cmd-Shift+Arrow stays
+      // native (it extends the selection).
       if (mod && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
         const direction = event.key === 'ArrowUp' ? 'up' : 'down'
-        if (event.altKey) focusAdjacentEditor(host, direction)
+        if (event.altKey) focusAdjacentEditor(host, direction, 'start')
         else focusEdge(direction === 'up' ? 'start' : 'end')
         return true
       }
