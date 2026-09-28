@@ -252,6 +252,7 @@ function NotesApp() {
   const latestRemoteRef = useRef<Record<string, DailyDocument>>({})
   const dirtyDaysRef = useRef(new Set<string>())
   const uploadingDaysRef = useRef(new Map<string, string>())
+  const lastEditorHostRef = useRef<HTMLElement | null>(null)
   const ownWriteIdsRef = useRef(new Set<string>())
   const handleRemoteDocumentsRef = useRef<(documents: DailyDocument[]) => void>(() => undefined)
   const uploadPendingDocumentsRef = useRef<() => Promise<void>>(async () => undefined)
@@ -608,22 +609,28 @@ function NotesApp() {
       window.setTimeout(() => {
         if (settingsOpen || tagsOpen) return
         const editorHost = document.querySelector<HTMLElement>(`[data-day="${today}"] .notes-mdx-editor`)
-        // 'up' lands the caret at the end of the last rendered line.
-        editorHost?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction: 'up' }, bubbles: false }))
+        // 'down' arrives from above → caret at the start of the first line.
+        editorHost?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { direction: 'down' }, bubbles: false }))
       }, 0)
     }
-    function focusTodayIfIdle() {
-      if (settingsOpen || tagsOpen) return
-      const activeElement = document.activeElement
-      if (activeElement && activeElement !== document.body && activeElement !== document.documentElement) return
-      focusTodayEditor()
+    // Remember which editor last held a caret — hiding the window can drop
+    // the DOM selection, and we restore it in that same editor on refocus.
+    function trackCaretHost() {
+      const anchor = window.getSelection()?.anchorNode
+      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
+      const editorHost = anchorElement?.closest<HTMLElement>('.notes-mdx-editor')
+      if (editorHost) lastEditorHostRef.current = editorHost
     }
-    function handleWindowFocus() {
-      setCaptureFocused(true)
+    // Window regained focus (or the quick-entry shortcut summoned it): keep a
+    // live caret, restore one the hide dropped, or focus the top of today.
+    function restoreOrFocusToday() {
       if (settingsOpen || tagsOpen) return
-      // A focused input keeps its caret — don't steal it.
+      // A focused control (input, button, …) outside the editors keeps its
+      // focus — don't steal it. A focused editor with a dropped selection
+      // still falls through to the caret checks below.
       const activeElement = document.activeElement
-      if (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement) return
+      const focusedInEditor = !!activeElement?.closest?.('.mdxeditor-root-contenteditable')
+      if (!focusedInEditor && activeElement && activeElement !== document.body && activeElement !== document.documentElement) return
       // A caret somewhere in an editor: make sure it's actually in view —
       // scrolling instantly, preferring the stream top when the caret is in
       // the first screenful. Deferred a frame so WKWebView finishes any
@@ -634,23 +641,34 @@ function NotesApp() {
         window.requestAnimationFrame(() => ensureCaretVisible({ preferTop: true }))
         return
       }
-      focusTodayIfIdle()
+      const lastHost = lastEditorHostRef.current
+      if (lastHost?.isConnected) {
+        lastHost.dispatchEvent(new CustomEvent('notes-restore-caret', { bubbles: false }))
+        return
+      }
+      focusTodayEditor()
+    }
+    function handleWindowFocus() {
+      setCaptureFocused(true)
+      restoreOrFocusToday()
     }
     function handleWindowBlur() {
       setCaptureFocused(false)
     }
+    document.addEventListener('selectionchange', trackCaretHost)
     window.addEventListener('focus', handleWindowFocus)
     window.addEventListener('blur', handleWindowBlur)
     let disposed = false
     let unlisten: (() => void) | undefined
     if (isTauriEnvironment()) {
-      void listen('quick-entry-focus', focusTodayEditor).then((cleanup) => {
+      void listen('quick-entry-focus', restoreOrFocusToday).then((cleanup) => {
         if (disposed) cleanup()
         else unlisten = cleanup
       })
     }
     return () => {
       disposed = true
+      document.removeEventListener('selectionchange', trackCaretHost)
       window.removeEventListener('focus', handleWindowFocus)
       window.removeEventListener('blur', handleWindowBlur)
       unlisten?.()

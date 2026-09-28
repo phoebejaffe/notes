@@ -577,6 +577,30 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       focusEdge(detail?.direction === 'up' ? 'end' : 'start', detail?.x)
     }
 
+    // Hiding/showing the capture window can drop the DOM selection, so the
+    // app asks whichever editor last held the caret to re-place it at its
+    // remembered canonical line and bring it back into view.
+    const handleRestoreCaret = () => {
+      userInteractedRef.current = true
+      const content = contentEditable(host)
+      const range = lastRangeRef.current
+      const map = buildDocumentMap(valueRef.current)
+      const placed = range
+        ? range.collapsed
+          ? placeCaretAtCanonicalLine(host, map, range.startLine, range.caretOffset)
+          : selectCanonicalLines(host, map, range.startLine, range.endLine)
+        : null
+      if (!placed) {
+        focusEdge('start')
+        return
+      }
+      const anchorElement = placed instanceof Element ? placed : placed.parentElement
+      const editable = anchorElement?.closest<HTMLElement>('[contenteditable="true"]') ?? content
+      editable?.focus()
+      // Deferred a frame so WKWebView finishes any focus-driven scroll first.
+      window.requestAnimationFrame(() => ensureCaretVisible({ preferTop: true }))
+    }
+
     const runCommand = (event: KeyboardEvent): boolean => {
       const mod = event.metaKey || event.ctrlKey
 
@@ -692,6 +716,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('notes-mute-toggle', muteSelection)
     host.addEventListener('notes-line-gesture', handleLineGesture)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
+    host.addEventListener('notes-restore-caret', handleRestoreCaret)
     document.addEventListener('selectionchange', updateSelection)
     return () => {
       host.removeEventListener('keydown', handler, true)
@@ -699,6 +724,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('notes-mute-toggle', muteSelection)
       host.removeEventListener('notes-line-gesture', handleLineGesture)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
+      host.removeEventListener('notes-restore-caret', handleRestoreCaret)
       document.removeEventListener('selectionchange', updateSelection)
       cancelAnimationFrame(visibilityRafRef.current)
     }
