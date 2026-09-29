@@ -257,7 +257,9 @@ button { cursor: pointer; font: inherit; }
 .notes-mdx-editor .mdxeditor-toolbar button:hover { background: #f4eff7; }
 .notes-mdx-editor .mdxeditor-toolbar button[data-state='on'] { color: #fff; background: #806790; }
 .notes-mdx-editor .mdxeditor-toolbar button svg { width: 16px; height: 16px; }
-.capture-shell .notes-mdx-editor .mdxeditor-toolbar { display: flex; }
+/* In capture mode every toolbar is position:fixed to the same strip — show
+   exactly one (the focused editor's, or the first card's when idle) or the
+   stacked bars swallow each other's clicks. */
 .capture-shell .day-stream .notes-mdx-editor .mdxeditor-toolbar { pointer-events: auto; opacity: 1; }
 .web-shell .notes-mdx-editor .mdxeditor-toolbar, .ios-pwa .notes-mdx-editor .mdxeditor-toolbar { top: 42px; border-right: 0; border-left: 0; box-shadow: 0 4px 14px #392c1f10; }
 .app-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar, .capture-shell:not(.web-shell) .notes-mdx-editor .mdxeditor-toolbar { box-shadow: none; }

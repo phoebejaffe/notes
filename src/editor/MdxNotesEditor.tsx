@@ -356,7 +356,10 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (!content || !anchor || !content.contains(anchor)) return
       const map = buildDocumentMap(valueRef.current)
       const range = selectionLineRange(host, map)
-      lastRangeRef.current = range
+      // Keep the last *mappable* range — an anchor inside the editor can still
+      // map to null (e.g. directive chrome), and the tag input relies on this
+      // snapshot after focus leaves the editable.
+      if (range) lastRangeRef.current = range
       const tags = range
         ? [...new Set(parseMarkdown(valueRef.current).ranges
             .filter((tagRange) => tagRange.startLine <= range.endLine && tagRange.endLine >= range.startLine)
