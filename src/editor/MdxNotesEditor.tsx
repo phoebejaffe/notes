@@ -11,6 +11,8 @@ import { ensureCaretVisible } from './caretVisibility'
 import { addTagDirectiveToRange, checklistToPlainText, indentLines, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
 
 import { $isTagBlockNode } from './TagBlockNode'
+import { AudioPlayerPopover } from './AudioPlayerPopover'
+import { preloadRecordingAudio } from './recordingAudio'
 import { EditorActionsProvider, type EditorActions } from './editorActions'
 import type { MdxNotesEditorProps } from './editorTypes'
 
@@ -57,9 +59,13 @@ function applyTagColors(host: HTMLElement, colors: Record<string, string>) {
 }
 
 // A linked `__` marks a line written by the ring transcription workflow. Each
-// gets a `≈` overlay centered on the editor's left border at the link's row.
+// gets a `≈` overlay centered on the editor's left border at the link's row,
+// and clicking one opens the recording popover rather than navigating.
 // Markers are appended to the host — outside the contenteditable — so Lexical
 // never reconciles them, and are reused per anchor to avoid DOM churn.
+function isAudioLink(anchor: HTMLAnchorElement) {
+  return /^_+$/u.test(anchor.textContent ?? '')
+}
 const audioMarkersByHost = new WeakMap<HTMLElement, Map<HTMLAnchorElement, HTMLElement>>()
 
 function refreshAudioMarkers(host: HTMLElement) {
@@ -183,6 +189,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const visibilityRafRef = useRef(0)
   const [activeTags, setActiveTags] = useState<string[]>([])
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
+  const [audioPopover, setAudioPopover] = useState<{ url: string; rect: DOMRect } | null>(null)
 
   useEffect(() => {
     tagColorsRef.current = tagColors
@@ -198,16 +205,27 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const markInteraction = (event: Event) => {
       if (host.contains(event.target as Node)) userInteractedRef.current = true
     }
+    // Warm the audio element on hover/press so the popover plays instantly.
+    const preloadAudioLink = (event: Event) => {
+      const link = (event.target as HTMLElement | null)?.closest?.('a[href]')
+      if (link instanceof HTMLAnchorElement && isAudioLink(link) && host.contains(link)) {
+        preloadRecordingAudio(link.href)
+      }
+    }
     host.addEventListener('beforeinput', markInteraction)
     host.addEventListener('keydown', markInteraction)
     host.addEventListener('paste', markInteraction)
     host.addEventListener('pointerdown', markInteraction, true)
+    host.addEventListener('pointerdown', preloadAudioLink, true)
+    host.addEventListener('pointerover', preloadAudioLink)
     host.addEventListener('click', markInteraction)
     return () => {
       host.removeEventListener('beforeinput', markInteraction)
       host.removeEventListener('keydown', markInteraction)
       host.removeEventListener('paste', markInteraction)
       host.removeEventListener('pointerdown', markInteraction, true)
+      host.removeEventListener('pointerdown', preloadAudioLink, true)
+      host.removeEventListener('pointerover', preloadAudioLink)
       host.removeEventListener('click', markInteraction)
     }
   }, [])
@@ -735,8 +753,23 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
   }, [lexicalEditorRef, activeEditorRef])
 
+  function openExternalLink(href: string) {
+    if ('__TAURI_INTERNALS__' in window) {
+      void import('@tauri-apps/plugin-shell').then(({ open }) => open(href))
+    } else {
+      window.open(href, '_blank', 'noopener,noreferrer')
+    }
+  }
+
   function focusEditor(event: MouseEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement
+    const link = target.closest<HTMLAnchorElement>('a[href]')
+    if (link && hostRef.current?.querySelector('.mdxeditor-root-contenteditable')?.contains(link)) {
+      event.preventDefault()
+      if (isAudioLink(link)) setAudioPopover({ url: link.href, rect: link.getBoundingClientRect() })
+      else openExternalLink(link.href)
+      return
+    }
     if (target.closest('.mdxeditor-toolbar, [contenteditable]:not([contenteditable="false"])')) return
     editorRef.current?.focus()
   }
@@ -793,5 +826,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       plugins={plugins}
     />
     </EditorActionsProvider>
+    {audioPopover && <AudioPlayerPopover url={audioPopover.url} anchorRect={audioPopover.rect} onClose={() => setAudioPopover(null)} />}
   </div>
 }
