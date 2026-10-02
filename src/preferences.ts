@@ -63,6 +63,10 @@ export const defaultPreferences: Preferences = {
     settings: 'Mod-,',
     dayPrevious: 'Mod-Alt-ArrowUp',
     dayNext: 'Mod-Alt-ArrowDown',
+    lanePrevious: 'Mod-Alt-Shift-ArrowLeft',
+    laneNext: 'Mod-Alt-Shift-ArrowRight',
+    todayTop: 'Mod-Alt-Shift-ArrowUp',
+    noteCollapse: 'Mod-\\',
   },
 }
 

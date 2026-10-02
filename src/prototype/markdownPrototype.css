@@ -58,7 +58,7 @@
 .notes-mdx-editor .prototype-directive-card span { color: #988f86; font-size: 11px; }
 .notes-mdx-editor .prototype-directive-card p { margin: 6px 0 0; color: #817970; font-size: 12px; }
 .notes-mdx-editor .prototype-directive-card [contenteditable] { min-height: 20px; }
-.notes-mdx-editor .mdxeditor-toolbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.prototype-panel .notes-mdx-editor .mdxeditor-toolbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .notes-mdx-editor .prototype-toolbar-button { min-height: 28px; padding: 4px 8px; border: 1px solid #d8cbe0; border-radius: 5px; color: #62506f; background: #fff; font-size: 11px; }
 .notes-mdx-editor .prototype-toolbar-button:hover { background: #f4eff7; }
 .prototype-tag-control { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }

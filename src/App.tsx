@@ -4,15 +4,17 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { MdxNotesEditor } from './editor/MdxNotesEditor'
+import { MoveLinesDialog, type MoveLinesTarget } from './editor/MoveLinesDialog'
 import { ensureCaretVisible } from './editor/caretVisibility'
-import { parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
+import { extractLinesForMove, parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
-import { clearSyncBases, listDailyDocuments, replaceDailyDocuments, saveDailyDocument, type DailyDocument, type DocumentSyncBase } from './storage'
+import { clearNamedSyncBases, clearSyncBases, deleteNamedDocument, listDailyDocuments, listNamedDocuments, replaceDailyDocuments, saveDailyDocument, saveNamedDocument, type DailyDocument, type DocumentSyncBase, type NamedDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
 import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
 import { diffLines } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
-import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, uploadEncryptedDocument, watchRemoteDocuments, type SyncConflict } from './firebaseSync'
+import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, syncNamedDocuments, uploadEncryptedDocument, uploadEncryptedNamedDocument, watchRemoteDocuments, watchRemoteNamedDocuments, type SyncConflict } from './firebaseSync'
+import { NoteCard, type NoteMoveTarget } from './NoteCard'
 import { mergeMarkdown } from './markdownMerge'
 import { disablePush, enablePush, pushStatus, type PushStatus } from './pushNotifications'
 import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
@@ -50,6 +52,10 @@ const SHORTCUT_LABELS = {
   help: 'Show keyboard shortcuts',
   dayPrevious: 'Previous day',
   dayNext: 'Next day',
+  lanePrevious: 'Previous lane',
+  laneNext: 'Next lane',
+  todayTop: 'Today, top of note',
+  noteCollapse: 'Collapse or expand note',
 } as const
 const BUILTIN_SHORTCUTS = [
   ['Mod-b', 'Bold'],
@@ -60,6 +66,12 @@ const BUILTIN_SHORTCUTS = [
   ['Mod-Shift-Enter', 'Remove checkbox'],
   ['Alt-ArrowUp', 'Move lines up'],
   ['Alt-ArrowDown', 'Move lines down'],
+  ['Mod-m', 'Move lines to another editor'],
+  ['Mod-Alt-ArrowUp', 'Jump to editor above'],
+  ['Mod-Alt-ArrowDown', 'Jump to editor below'],
+  ['Mod-ArrowUp', 'Caret to editor top'],
+  ['Mod-ArrowDown', 'Caret to editor bottom'],
+  ['Ctrl-1–9', 'Jump to lane 1–9'],
   ['Backspace', 'Delete one character'],
 ] as const
 
@@ -124,6 +136,40 @@ function loadLastBackupSignature() {
 
 function formatDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+// Lane numbers are contiguous starting at 1 (lane 0 is the daily stream) and
+// `order` is the note's index within its lane. Every structural mutation runs
+// the result through this so the invariant survives moves and deletions.
+function normalizeLanes(notes: NamedDocument[]) {
+  // Tombstones don't hold a lane open — only live notes renumber lanes.
+  const renumber = new Map([...new Set(notes.filter((note) => !note.deleted).map((note) => Math.max(1, note.lane || 1)))].sort((a, b) => a - b).map((lane, index) => [lane, index + 1]))
+  const byLane = new Map<number, NamedDocument[]>()
+  notes.forEach((note) => {
+    const lane = renumber.get(Math.max(1, note.lane || 1)) ?? 1
+    const list = byLane.get(lane) ?? []
+    list.push(note)
+    byLane.set(lane, list)
+  })
+  return [...byLane.entries()].flatMap(([lane, laneNotes]) =>
+    laneNotes.sort((a, b) => a.order - b.order).map((note, order) => note.lane === lane && note.order === order ? note : { ...note, lane, order }))
+}
+
+function namedMeta(note: NamedDocument) {
+  return { title: note.title, lane: note.lane, order: note.order, collapsed: note.collapsed, deleted: note.deleted }
+}
+
+function namedMetaSynced(note: NamedDocument) {
+  const meta = note.syncedMeta
+  return !!meta && meta.title === note.title && meta.lane === note.lane && meta.order === note.order && meta.collapsed === note.collapsed && meta.deleted === note.deleted
+}
+
+function sameNamedMeta(a: NamedDocument, b: NamedDocument) {
+  return a.title === b.title && a.lane === b.lane && a.order === b.order && a.collapsed === b.collapsed && a.deleted === b.deleted
+}
+
+function namedAsDailyShape(note: NamedDocument): DailyDocument {
+  return { day: note.id, markdown: note.markdown, updatedAt: note.updatedAt, syncBase: note.syncBase, writeId: note.writeId }
 }
 
 function FilterIcon({ active }: { active: boolean }) {
@@ -246,16 +292,29 @@ function NotesApp() {
   const [syncMessage, setSyncMessage] = useState('')
   const [deleteCloudDataOpen, setDeleteCloudDataOpen] = useState(false)
   const [syncConflicts, setSyncConflicts] = useState<SyncConflict[]>([])
+  const [moveRequest, setMoveRequest] = useState<{ source: { kind: 'day'; day: string } | { kind: 'note'; id: string }; startLine: number; endLine: number; host: HTMLElement } | null>(null)
   const documentUpdatedAtRef = useRef<Record<string, number>>({})
   const documentsRef = useRef<Record<string, string>>({})
   const syncBasesRef = useRef<Record<string, DocumentSyncBase>>({})
   const latestRemoteRef = useRef<Record<string, DailyDocument>>({})
   const dirtyDaysRef = useRef(new Set<string>())
   const uploadingDaysRef = useRef(new Map<string, string>())
+  const [namedDocs, setNamedDocs] = useState<Record<string, NamedDocument>>({})
+  const namedDocsRef = useRef<Record<string, NamedDocument>>({})
+  const latestRemoteNotesRef = useRef<Record<string, NamedDocument>>({})
+  const dirtyNotesRef = useRef(new Set<string>())
+  const uploadingNotesRef = useRef(new Map<string, string>())
   const lastEditorHostRef = useRef<HTMLElement | null>(null)
   const ownWriteIdsRef = useRef(new Set<string>())
   const handleRemoteDocumentsRef = useRef<(documents: DailyDocument[]) => void>(() => undefined)
+  const handleRemoteNamedDocumentsRef = useRef<(documents: NamedDocument[]) => void>(() => undefined)
   const uploadPendingDocumentsRef = useRef<() => Promise<void>>(async () => undefined)
+  const uploadPendingNotesRef = useRef<() => Promise<void>>(async () => undefined)
+  const toggleNoteCollapsedRef = useRef<(id: string) => void>(() => undefined)
+  const [activeLane, setActiveLane] = useState(0)
+  const laneViewportRef = useRef<HTMLDivElement>(null)
+  const laneScrollIdleRef = useRef(0)
+  const laneSwipeAccumRef = useRef(0)
   const streamEndRef = useRef<HTMLDivElement>(null)
   const todayRef = useRef<HTMLElement>(null)
   const recoveryWarningNotifiedRef = useRef(false)
@@ -308,6 +367,23 @@ function NotesApp() {
     recoveryWarningNotifiedRef.current = true
     void notifyMac(preferences.notificationsEnabled, 'Noteses encrypted sync needs setup', 'Sign in to Noteses and configure your recovery phrase to unlock encrypted sync.')
   }, [authLoading, dataKey, firebaseUser, loaded, preferences.notificationsEnabled])
+
+  // Editors bubble `notes-move-lines` (Cmd/Ctrl-M) up from their host; the
+  // source card is identified by the enclosing day-card or note-card element.
+  useEffect(() => {
+    function handleMoveLinesRequest(event: Event) {
+      const detail = (event as CustomEvent<{ startLine?: number; endLine?: number }>).detail
+      const host = event.target instanceof HTMLElement ? event.target : null
+      if (!host || detail?.startLine === undefined || detail?.endLine === undefined) return
+      const day = host.closest<HTMLElement>('.day-card')?.dataset.day
+      const noteId = host.closest<HTMLElement>('.note-card')?.dataset.noteId
+      const source = day ? { kind: 'day' as const, day } : noteId ? { kind: 'note' as const, id: noteId } : null
+      if (!source) return
+      setMoveRequest({ source, startLine: detail.startLine, endLine: detail.endLine, host })
+    }
+    window.addEventListener('notes-move-lines', handleMoveLinesRequest)
+    return () => window.removeEventListener('notes-move-lines', handleMoveLinesRequest)
+  }, [])
 
   useEffect(() => {
     function handlePaletteShortcut(event: KeyboardEvent) {
@@ -398,7 +474,127 @@ function NotesApp() {
   }, [documents])
 
   useEffect(() => {
-    listDailyDocuments().then((stored) => {
+    namedDocsRef.current = namedDocs
+  }, [namedDocs])
+
+  // Lanes: track index 0 is the daily stream; named lanes occupy 1..laneCount
+  // (note.lane maps directly to the track index); laneCount+1 is the ghost
+  // "new lane" placeholder at the end.
+  const sortedNotes = useMemo(() => Object.values(namedDocs).filter((note) => !note.deleted).sort((a, b) => a.lane - b.lane || a.order - b.order), [namedDocs])
+  const laneCount = useMemo(() => sortedNotes.reduce((max, note) => Math.max(max, note.lane), 0), [sortedNotes])
+  const lanes = useMemo(() => {
+    const byLane = new Map<number, NamedDocument[]>()
+    sortedNotes.forEach((note) => {
+      const list = byLane.get(note.lane) ?? []
+      list.push(note)
+      byLane.set(note.lane, list)
+    })
+    return byLane
+  }, [sortedNotes])
+  const totalLanes = laneCount + 2
+
+  const goToLane = useCallback((index: number) => {
+    const viewport = laneViewportRef.current
+    if (!viewport) return
+    const clamped = Math.max(0, Math.min(totalLanes - 1, index))
+    const target = clamped * viewport.clientWidth
+    if (Math.abs(viewport.scrollLeft - target) < 2) {
+      setActiveLane(clamped)
+      return
+    }
+    // `mandatory` snap halts a smooth scroll at the first boundary it crosses,
+    // so release it for the animation; the scroll-idle handler restores it.
+    viewport.style.scrollSnapType = 'none'
+    viewport.scrollTo({ left: target, behavior: 'smooth' })
+    window.clearTimeout(laneScrollIdleRef.current)
+    laneScrollIdleRef.current = window.setTimeout(() => {
+      viewport.classList.remove('lane-scrolling')
+      viewport.style.scrollSnapType = ''
+    }, 160)
+  }, [totalLanes])
+
+  function handleLaneScroll() {
+    const viewport = laneViewportRef.current
+    if (!viewport) return
+    // Hide fixed toolbars while the track is moving so a focused editor's bar
+    // on a departing lane can't linger over the incoming lane.
+    viewport.classList.add('lane-scrolling')
+    window.clearTimeout(laneScrollIdleRef.current)
+    laneScrollIdleRef.current = window.setTimeout(() => {
+      viewport.classList.remove('lane-scrolling')
+      viewport.style.scrollSnapType = ''
+    }, 160)
+    const width = viewport.clientWidth || 1
+    setActiveLane(Math.max(0, Math.min(totalLanes - 1, Math.round(viewport.scrollLeft / width))))
+  }
+
+  // Keep the track aligned to the active lane across resizes/zoom changes.
+  // ResizeObserver fires once on observe — the effect re-runs on every lane
+  // change, so skip that initial callback or the instant realign would cancel
+  // a smooth scroll mid-flight at the first intermediate lane.
+  useEffect(() => {
+    const viewport = laneViewportRef.current
+    if (!viewport) return
+    let initial = true
+    const observer = new ResizeObserver(() => {
+      if (initial) {
+        initial = false
+        return
+      }
+      const target = activeLane * viewport.clientWidth
+      if (Math.abs(viewport.scrollLeft - target) > 2) viewport.scrollTo({ left: target, behavior: 'instant' })
+    })
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [activeLane])
+
+  // mac app: a horizontal trackpad swipe should step one lane even while the
+  // window is unfocused — macOS scroll-through still delivers wheel events to
+  // the webview. Convert a gesture's accumulated deltaX into discrete lane
+  // steps and suppress native track scrolling so the two don't compete. On
+  // web, native scroll + snap already handles swipes.
+  useEffect(() => {
+    if (!isTauriEnvironment()) return
+    let idle = 0
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return
+      if (event.target instanceof Element && event.target.closest('.modal-backdrop, .menu-panel')) return
+      const scale = event.deltaMode === 1 ? 16 : 1
+      const deltaX = event.deltaX * scale
+      if (Math.abs(deltaX) <= Math.abs(event.deltaY * scale)) return
+      event.preventDefault()
+      laneSwipeAccumRef.current += deltaX
+      window.clearTimeout(idle)
+      idle = window.setTimeout(() => { laneSwipeAccumRef.current = 0 }, 200)
+      if (Math.abs(laneSwipeAccumRef.current) >= 80) {
+        goToLane(activeLane + Math.sign(laneSwipeAccumRef.current))
+        laneSwipeAccumRef.current = 0
+      }
+    }
+    window.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => {
+      window.removeEventListener('wheel', onWheel, true)
+      window.clearTimeout(idle)
+    }
+  }, [activeLane, goToLane])
+
+  useEffect(() => {
+    if (!loaded) return
+    const timer = window.setTimeout(() => {
+      setSaveState('saving')
+      Promise.all(Object.values(namedDocs).map((note) => saveNamedDocument(note))).then(() => setSaveState('saved')).catch(() => setSaveState('saved'))
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [namedDocs, loaded])
+
+  useEffect(() => {
+    Promise.all([listDailyDocuments(), listNamedDocuments()]).then(([stored, storedNotes]) => {
+      // Tombstones that were never synced can't exist remotely — purge them.
+      storedNotes.filter((note) => note.deleted && !note.syncBase && !note.syncedMeta).forEach((note) => { void deleteNamedDocument(note.id) })
+      const noteRecords = Object.fromEntries(normalizeLanes(storedNotes.filter((note) => !(note.deleted && !note.syncBase && !note.syncedMeta))).map((note) => [note.id, note]))
+      namedDocsRef.current = noteRecords
+      setNamedDocs(noteRecords)
+      dirtyNotesRef.current = new Set(Object.values(noteRecords).filter((note) => note.syncBase ? note.markdown !== note.syncBase.markdown || !namedMetaSynced(note) : !note.deleted).map((note) => note.id))
       const savedDocuments = Object.fromEntries(stored.map((document) => [document.day, document.markdown]))
       documentUpdatedAtRef.current = Object.fromEntries(stored.map((document) => [document.day, document.updatedAt]))
       syncBasesRef.current = Object.fromEntries(stored.flatMap((document) => document.syncBase ? [[document.day, document.syncBase]] : []))
@@ -437,7 +633,7 @@ function NotesApp() {
       .catch(() => setBackupState('error'))
   }, [loaded, preferences.backupFolder, preferences.backupFrequency])
 
-  const allTags = useMemo(() => [...new Set(Object.values(documents).flatMap((markdown) => parseMarkdown(markdown).ranges.map((range) => range.tag)))].sort((left, right) => left.localeCompare(right)), [documents])
+  const allTags = useMemo(() => [...new Set([...Object.values(documents), ...sortedNotes.map((note) => note.markdown)].flatMap((markdown) => parseMarkdown(markdown).ranges.map((range) => range.tag)))].sort((left, right) => left.localeCompare(right)), [documents, sortedNotes])
   const shortcutConflicts = useMemo(() => {
     const values = Object.values(preferences.shortcuts).filter(Boolean)
     return new Set(values.filter((shortcut, index) => values.indexOf(shortcut) !== index))
@@ -559,11 +755,47 @@ function NotesApp() {
         downloadMarkdown(documents[today] ?? '', `${today}.md`)
         return
       }
+      const laneDirection = matchesShortcut(event, preferences.shortcuts.lanePrevious) ? -1 : matchesShortcut(event, preferences.shortcuts.laneNext) ? 1 : 0
+      if (laneDirection) {
+        event.preventDefault()
+        goToLane(activeLane + laneDirection)
+        return
+      }
+      if (matchesShortcut(event, preferences.shortcuts.todayTop)) {
+        event.preventDefault()
+        goToLane(0)
+        document.querySelector(`[data-day="${today}"] .notes-mdx-editor`)?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { edge: 'start' }, bubbles: false }))
+        return
+      }
+      // Ctrl-1 jumps to the first lane (daily), Ctrl-2 the second, etc.
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        event.preventDefault()
+        goToLane(Number(event.key) - 1)
+        return
+      }
+      // The lane viewport is a native horizontal scroller — a bare ←/→ (or
+      // any non-lane arrow chord) with focus outside an editable scrolls it
+      // and snaps to another lane. Lanes only move via the lane shortcuts,
+      // swipes, or the dots.
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const target = event.target
+        if (!(target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select')))) event.preventDefault()
+      }
+      if (matchesShortcut(event, preferences.shortcuts.noteCollapse)) {
+        const anchor = window.getSelection()?.anchorNode
+        const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
+        const card = (document.activeElement instanceof Element ? document.activeElement.closest('.note-card') : null) ?? anchorElement?.closest('.note-card')
+        const noteId = card instanceof HTMLElement ? card.dataset.noteId : undefined
+        if (!noteId) return
+        event.preventDefault()
+        toggleNoteCollapsedRef.current(noteId)
+        return
+      }
       const direction = matchesShortcut(event, preferences.shortcuts.dayPrevious) ? -1 : matchesShortcut(event, preferences.shortcuts.dayNext) ? 1 : 0
       if (!direction) return
-      const activeCard = document.activeElement?.closest('.day-card') as HTMLElement | null
+      const activeCard = document.activeElement?.closest('.day-card, .note-card') as HTMLElement | null
       if (!activeCard) return
-      const cards = [...document.querySelectorAll<HTMLElement>('.day-card')]
+      const cards = [...(activeCard.parentElement?.querySelectorAll<HTMLElement>('.day-card, .note-card') ?? [])]
       const currentIndex = cards.indexOf(activeCard)
       const nextEditor = cards[currentIndex + direction]?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable')
       if (nextEditor) {
@@ -574,7 +806,7 @@ function NotesApp() {
     }
     window.addEventListener('keydown', handleInterfaceShortcuts, true)
     return () => window.removeEventListener('keydown', handleInterfaceShortcuts, true)
-  }, [documents, preferences.shortcuts, today])
+  }, [activeLane, documents, goToLane, preferences.shortcuts, today])
 
   useEffect(() => {
     function closeTransientPanels(event: KeyboardEvent) {
@@ -585,6 +817,7 @@ function NotesApp() {
         setSettingsOpen(false)
         setShortcutHelpOpen(false)
         setTagsOpen(false)
+        setMoveRequest(null)
       }
     }
     function closeOnOutsideClick(event: MouseEvent) {
@@ -686,17 +919,25 @@ function NotesApp() {
 
   useEffect(() => {
     if (!loaded || !firebaseUser || !dataKey) return
-    return watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteDocumentsRef.current(remoteDocuments), (error) => {
+    const unwatchDays = watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteDocumentsRef.current(remoteDocuments), (error) => {
       setSyncState('error')
       setSyncMessage(error.message || 'Realtime sync failed.')
     })
+    const unwatchNotes = watchRemoteNamedDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteNamedDocumentsRef.current(remoteDocuments), (error) => {
+      setSyncState('error')
+      setSyncMessage(error.message || 'Realtime sync failed.')
+    })
+    return () => { unwatchDays(); unwatchNotes() }
   }, [dataKey, firebaseUser, loaded])
 
   useEffect(() => {
     if (!loaded || !firebaseUser || !dataKey || !isOnline) return
-    const timer = window.setTimeout(() => { void uploadPendingDocumentsRef.current() }, 600)
+    const timer = window.setTimeout(() => {
+      void uploadPendingDocumentsRef.current()
+      void uploadPendingNotesRef.current()
+    }, 600)
     return () => window.clearTimeout(timer)
-  }, [dataKey, documents, firebaseUser, isOnline, loaded])
+  }, [dataKey, documents, namedDocs, firebaseUser, isOnline, loaded])
 
   function setDocumentMarkdown(day: string, markdown: string) {
     documentsRef.current = { ...documentsRef.current, [day]: markdown }
@@ -927,9 +1168,336 @@ function NotesApp() {
     })
   }
 
+  // --- Named notes ---------------------------------------------------------
+
+  function persistNamedDocument(note: NamedDocument) {
+    void saveNamedDocument(note).catch(() => undefined)
+  }
+
+  function writeNamedDoc(note: NamedDocument) {
+    namedDocsRef.current = { ...namedDocsRef.current, [note.id]: note }
+    setNamedDocs(namedDocsRef.current)
+  }
+
+  // Applies a structural mutation (create/move/reorder/rename/delete):
+  // renormalizes lane/order, stamps updatedAt on anything that changed, marks
+  // it dirty for sync, and persists it.
+  function commitNamedDocuments(notes: NamedDocument[]) {
+    const stamp = currentTimestamp()
+    const current = namedDocsRef.current
+    const records: Record<string, NamedDocument> = {}
+    for (const note of normalizeLanes(notes)) {
+      const existing = current[note.id]
+      const changed = !existing || existing.title !== note.title || existing.markdown !== note.markdown || existing.lane !== note.lane || existing.order !== note.order || existing.collapsed !== note.collapsed || existing.deleted !== note.deleted
+      const record = changed ? { ...note, updatedAt: stamp } : note
+      records[note.id] = record
+      if (changed) {
+        dirtyNotesRef.current.add(note.id)
+        persistNamedDocument(record)
+      }
+    }
+    namedDocsRef.current = records
+    setNamedDocs(records)
+  }
+
+  function updateNoteMarkdown(id: string, markdown: string) {
+    const note = namedDocsRef.current[id]
+    if (!note) return
+    writeNamedDoc({ ...note, markdown, updatedAt: currentTimestamp() })
+    dirtyNotesRef.current.add(id)
+  }
+
+  function createNote(lane: number) {
+    const notes = Object.values(namedDocsRef.current)
+    const order = notes.filter((note) => note.lane === lane && !note.deleted).length
+    commitNamedDocuments([...notes, { id: crypto.randomUUID(), title: '', markdown: '', lane, order, collapsed: false, updatedAt: currentTimestamp() }])
+  }
+
+  function renameNote(id: string, title: string) {
+    const note = namedDocsRef.current[id]
+    if (!note || note.title === title.trim()) return
+    commitNamedDocuments(Object.values(namedDocsRef.current).map((current) => current.id === id ? { ...current, title: title.trim() } : current))
+  }
+
+  function toggleNoteCollapsed(id: string) {
+    const note = namedDocsRef.current[id]
+    if (!note) return
+    commitNamedDocuments(Object.values(namedDocsRef.current).map((current) => current.id === id ? { ...current, collapsed: !current.collapsed } : current))
+  }
+
+  function deleteNote(id: string) {
+    // Deletion syncs via tombstone: the remote doc gets `deleted: true` so
+    // other devices mark their copy deleted instead of resurrecting it.
+    commitNamedDocuments(Object.values(namedDocsRef.current).map((current) => current.id === id ? { ...current, deleted: true } : current))
+  }
+
+  function moveNote(id: string, target: NoteMoveTarget) {
+    const notes = Object.values(namedDocsRef.current)
+    const note = notes.find((current) => current.id === id)
+    if (!note) return
+    const maxLane = notes.reduce((max, current) => current.deleted ? max : Math.max(max, current.lane), 0)
+    let lane = note.lane
+    let order = note.order
+    if (target === 'up' || target === 'down') {
+      const laneNotes = notes.filter((current) => current.lane === note.lane && !current.deleted).sort((a, b) => a.order - b.order)
+      const index = laneNotes.findIndex((current) => current.id === id)
+      const swap = laneNotes[index + (target === 'up' ? -1 : 1)]
+      if (!swap) return
+      commitNamedDocuments(notes.map((current) => current.id === id ? { ...current, order: swap.order } : current.id === swap.id ? { ...current, order: note.order } : current))
+      return
+    }
+    if (target === 'new-lane') lane = maxLane + 1
+    else lane = Math.max(1, Math.min(maxLane, note.lane + (target === 'left' ? -1 : 1)))
+    order = notes.filter((current) => current.lane === lane && !current.deleted && current.id !== id).length
+    const updated = notes.map((current) => current.id === id ? { ...current, lane, order } : current)
+    // The note's lane can shift when normalization collapses an emptied lane —
+    // navigate to its final position.
+    const moved = normalizeLanes(updated).find((current) => current.id === id)
+    commitNamedDocuments(updated)
+    if (moved) goToLane(moved.lane)
+  }
+
+  // Live reorder during a handle drag: preview without dirty stamps; the
+  // commit (pointerup) stamps changed records so the new order propagates.
+  const reorderSnapshotRef = useRef<Record<string, NamedDocument> | null>(null)
+
+  function reorderNotePreview(id: string, index: number) {
+    const note = namedDocsRef.current[id]
+    if (!note) return
+    if (!reorderSnapshotRef.current) reorderSnapshotRef.current = namedDocsRef.current
+    const laneNotes = Object.values(namedDocsRef.current).filter((current) => current.lane === note.lane && !current.deleted && current.id !== id).sort((a, b) => a.order - b.order)
+    laneNotes.splice(Math.max(0, Math.min(laneNotes.length, index)), 0, note)
+    const reordered = new Map(laneNotes.map((current, order) => [current.id, order]))
+    const next = Object.fromEntries(Object.entries(namedDocsRef.current).map(([key, current]) => {
+      const order = reordered.get(current.id)
+      return [key, order === undefined || order === current.order ? current : { ...current, order }] as const
+    }))
+    namedDocsRef.current = next
+    setNamedDocs(next)
+  }
+
+  function commitNoteReorder() {
+    const before = reorderSnapshotRef.current
+    reorderSnapshotRef.current = null
+    if (!before) return
+    const stamp = currentTimestamp()
+    const next = { ...namedDocsRef.current }
+    Object.values(next).forEach((note) => {
+      const previous = before[note.id]
+      if (!previous || previous.order === note.order && previous.lane === note.lane) return
+      next[note.id] = { ...note, updatedAt: stamp }
+      dirtyNotesRef.current.add(note.id)
+    })
+    namedDocsRef.current = next
+    setNamedDocs(next)
+  }
+
+  function handleRemoteNamedDocuments(remoteDocuments: NamedDocument[]) {
+    const remoteIds = new Set(remoteDocuments.map((document) => document.id))
+    remoteDocuments.forEach((remote) => {
+      const latestRemote = latestRemoteNotesRef.current[remote.id]
+      if (latestRemote && remote.updatedAt === latestRemote.updatedAt && remote.markdown === latestRemote.markdown && sameNamedMeta(remote, latestRemote)) return
+      latestRemoteNotesRef.current[remote.id] = remote
+      const local = namedDocsRef.current[remote.id]
+      const syncBase = { markdown: remote.markdown, updatedAt: remote.updatedAt }
+      const remoteMeta = namedMeta(remote)
+
+      if (remote.writeId && ownWriteIdsRef.current.has(remote.writeId)) {
+        // Our own commit echo — adopt it as merge base without touching the
+        // editor, same as the daily-document path.
+        if (local) {
+          const next = { ...local, syncBase, syncedMeta: remoteMeta }
+          writeNamedDoc(next)
+          persistNamedDocument(next)
+        }
+        return
+      }
+      if (remote.markdown === uploadingNotesRef.current.get(remote.id)) {
+        // Our own in-flight upload landing; adopt as base, not a merge.
+        if (local) {
+          const next = { ...local, syncBase, syncedMeta: remoteMeta }
+          writeNamedDoc(next)
+          persistNamedDocument(next)
+        }
+        return
+      }
+      if (!local) {
+        const adopted: NamedDocument = { ...remote, syncBase, syncedMeta: remoteMeta }
+        writeNamedDoc(adopted)
+        persistNamedDocument(adopted)
+        return
+      }
+
+      const base = local.syncBase
+      const markdownDiverged = base ? local.markdown !== base.markdown : Boolean(local.markdown) && local.markdown !== remote.markdown
+      const metaDiverged = !namedMetaSynced(local)
+      const localNewer = local.updatedAt > remote.updatedAt
+
+      if (!markdownDiverged && !metaDiverged) {
+        // Local is unchanged since last sync — remote is authoritative.
+        const next: NamedDocument = { ...remote, syncBase, syncedMeta: remoteMeta }
+        dirtyNotesRef.current.delete(remote.id)
+        writeNamedDoc(next)
+        persistNamedDocument(next)
+        clearSyncConflict(remote.id)
+        return
+      }
+
+      if (!markdownDiverged) {
+        // Content settled; only metadata diverged — last writer wins on
+        // updatedAt. A local win stays dirty so the meta propagates.
+        const next: NamedDocument = localNewer
+          ? { ...local, syncBase }
+          : { ...local, ...remoteMeta, syncBase, syncedMeta: remoteMeta }
+        if (localNewer) dirtyNotesRef.current.add(remote.id)
+        else dirtyNotesRef.current.delete(remote.id)
+        writeNamedDoc(next)
+        persistNamedDocument(next)
+        if (!localNewer) clearSyncConflict(remote.id)
+        return
+      }
+
+      const winnerMeta = localNewer ? namedMeta(local) : remoteMeta
+      if (!base) {
+        dirtyNotesRef.current.add(remote.id)
+        persistNamedDocument(local)
+        showSyncConflict({ day: remote.id, family: 'named', title: winnerMeta.title, local: namedAsDailyShape(local), remote: namedAsDailyShape(remote), base })
+        return
+      }
+
+      const merged = mergeMarkdown(base.markdown, local.markdown, remote.markdown)
+      if (merged.status === 'conflict') {
+        dirtyNotesRef.current.add(remote.id)
+        persistNamedDocument(local)
+        showSyncConflict({ day: remote.id, family: 'named', title: winnerMeta.title, local: namedAsDailyShape(local), remote: namedAsDailyShape(remote), base })
+        return
+      }
+
+      const next: NamedDocument = {
+        ...local,
+        ...winnerMeta,
+        markdown: merged.markdown,
+        updatedAt: merged.markdown === remote.markdown ? remote.updatedAt : currentTimestamp(),
+        syncBase,
+        syncedMeta: remoteMeta,
+      }
+      if (merged.markdown === remote.markdown && !localNewer) dirtyNotesRef.current.delete(remote.id)
+      else dirtyNotesRef.current.add(remote.id)
+      writeNamedDoc(next)
+      persistNamedDocument(next)
+      clearSyncConflict(remote.id)
+    })
+
+    Object.keys(namedDocsRef.current).forEach((id) => {
+      const note = namedDocsRef.current[id]
+      if (!remoteIds.has(id) && (note.markdown || note.deleted)) dirtyNotesRef.current.add(id)
+    })
+    void uploadPendingNotesRef.current()
+  }
+
+  async function uploadPendingNamedDocuments() {
+    if (!firebaseUser || !dataKey || !isOnline) return
+    const ids = [...dirtyNotesRef.current].filter((id) => !uploadingNotesRef.current.has(id) && namedDocsRef.current[id])
+    if (!ids.length) return
+    const outcomes = await Promise.all(ids.map((id) => uploadPendingNote(id)))
+    if (outcomes.includes('failed')) {
+      setSyncState('error')
+      setSyncMessage('Realtime sync failed.')
+      return
+    }
+    if (outcomes.includes('conflict')) {
+      setSyncState('ready')
+      setSyncMessage('Cloud changes need review.')
+    } else {
+      setSyncState('ready')
+      setSyncMessage('Changes synced.')
+    }
+    if (outcomes.includes('retry')) window.setTimeout(() => { void uploadPendingNotesRef.current() }, 0)
+  }
+
+  async function uploadPendingNote(id: string): Promise<'written' | 'conflict' | 'failed' | 'retry'> {
+    if (!firebaseUser || !dataKey) return 'failed'
+    const local = namedDocsRef.current[id]
+    if (!local) return 'written'
+    const submitted = { ...local }
+    uploadingNotesRef.current.set(id, submitted.markdown)
+    try {
+      const result = await uploadEncryptedNamedDocument(firebaseUser.uid, submitted, dataKey, { onWriteId: trackOwnWriteId })
+      if (result.status === 'conflict') {
+        handleUploadNoteConflict(result.conflict)
+        return 'conflict'
+      }
+      return handleCommittedNoteUpload(submitted, result.document)
+    } catch {
+      dirtyNotesRef.current.add(id)
+      return 'failed'
+    } finally {
+      uploadingNotesRef.current.delete(id)
+    }
+  }
+
+  function handleCommittedNoteUpload(submitted: NamedDocument, committed: NamedDocument) {
+    const committedBase = { markdown: committed.markdown, updatedAt: committed.updatedAt }
+    const committedMeta = namedMeta(committed)
+    latestRemoteNotesRef.current[committed.id] = committed
+    const current = namedDocsRef.current[committed.id]
+    if (!current) return 'written' as const
+    const settled = current.markdown === submitted.markdown && sameNamedMeta(current, submitted)
+    if (settled) {
+      const next = { ...current, syncBase: committedBase, syncedMeta: committedMeta, updatedAt: committed.updatedAt }
+      dirtyNotesRef.current.delete(committed.id)
+      writeNamedDoc(next)
+      persistNamedDocument(next)
+      clearSyncConflict(committed.id)
+      return 'written' as const
+    }
+
+    const rebased = mergeMarkdown(submitted.markdown, current.markdown, committed.markdown)
+    if (rebased.status === 'conflict') {
+      const submittedBase = { markdown: submitted.markdown, updatedAt: submitted.updatedAt }
+      const next = { ...current, syncBase: submittedBase, syncedMeta: namedMeta(submitted) }
+      dirtyNotesRef.current.add(committed.id)
+      writeNamedDoc(next)
+      persistNamedDocument(next)
+      showSyncConflict({ day: committed.id, family: 'named', title: current.title, local: namedAsDailyShape(next), remote: namedAsDailyShape(committed), base: submittedBase })
+      return 'conflict' as const
+    }
+
+    const winnerMeta = current.updatedAt > committed.updatedAt ? namedMeta(current) : committedMeta
+    const next: NamedDocument = {
+      ...current,
+      ...winnerMeta,
+      markdown: rebased.markdown,
+      updatedAt: rebased.markdown === committed.markdown ? committed.updatedAt : currentTimestamp(),
+      syncBase: committedBase,
+      syncedMeta: committedMeta,
+    }
+    if (rebased.markdown === committed.markdown && sameNamedMeta(next, committed)) dirtyNotesRef.current.delete(committed.id)
+    else dirtyNotesRef.current.add(committed.id)
+    writeNamedDoc(next)
+    persistNamedDocument(next)
+    clearSyncConflict(committed.id)
+    return rebased.markdown === committed.markdown ? 'written' as const : 'retry' as const
+  }
+
+  function handleUploadNoteConflict(conflict: SyncConflict) {
+    const local = namedDocsRef.current[conflict.day]
+    const mergeBase = conflict.base ?? conflict.local.syncBase
+    if (local) {
+      const next = { ...local, syncBase: mergeBase }
+      dirtyNotesRef.current.add(conflict.day)
+      writeNamedDoc(next)
+      persistNamedDocument(next)
+    }
+    showSyncConflict({ ...conflict, base: mergeBase })
+  }
+
   useEffect(() => {
     handleRemoteDocumentsRef.current = handleRemoteDocuments
+    handleRemoteNamedDocumentsRef.current = handleRemoteNamedDocuments
     uploadPendingDocumentsRef.current = uploadPendingDocuments
+    uploadPendingNotesRef.current = uploadPendingNamedDocuments
+    toggleNoteCollapsedRef.current = toggleNoteCollapsed
   })
 
   const performBackup = useCallback(async () => {
@@ -987,13 +1555,64 @@ function NotesApp() {
   const searchResults = useMemo(() => {
     if (!query.trim()) return []
     const needle = query.toLocaleLowerCase()
-    return Object.entries(documents).flatMap(([day, markdown]) => parseMarkdown(markdown).lines.flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [{ day, line: index + 1, text: line }] : []))
-  }, [documents, query])
+    const dayResults = Object.entries(documents).flatMap(([day, markdown]) => parseMarkdown(markdown).lines.flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [{ day, line: index + 1, text: line }] : []))
+    const noteResults = sortedNotes.flatMap((note) => parseMarkdown(note.markdown).lines.flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [{ day: note.id, line: index + 1, text: line }] : []))
+    return [...dayResults, ...noteResults]
+  }, [documents, query, sortedNotes])
 
   function updateSource(day: string, markdown: string) {
     documentUpdatedAtRef.current[day] = currentTimestamp()
     dirtyDaysRef.current.add(day)
     setDocumentMarkdown(day, markdown)
+  }
+
+  // Cmd/Ctrl-M move targets: today first, then every named note in lane
+  // order, then the previous 14 days — minus whichever editor the lines are
+  // leaving.
+  const moveTargets = useMemo<MoveLinesTarget[]>(() => {
+    if (!moveRequest) return []
+    const sourceDay = moveRequest.source.kind === 'day' ? moveRequest.source.day : null
+    const targets: MoveLinesTarget[] = []
+    if (sourceDay !== today) targets.push({ id: `day:${today}`, label: 'Today', section: 'Daily notes' })
+    sortedNotes.forEach((note) => {
+      if (moveRequest.source.kind === 'note' && moveRequest.source.id === note.id) return
+      targets.push({ id: `note:${note.id}`, label: note.title || 'Untitled note', section: 'Named notes' })
+    })
+    for (let offset = 1; offset <= 14; offset += 1) {
+      const day = shiftLogicalDay(today, -offset)
+      if (day === sourceDay) continue
+      targets.push({ id: `day:${day}`, label: formatLogicalDay(day, preferences.dateFormat), section: 'Past days' })
+    }
+    return targets
+  }, [moveRequest, preferences.dateFormat, sortedNotes, today])
+
+  function moveLinesTo(targetId: string) {
+    const request = moveRequest
+    setMoveRequest(null)
+    if (!request) return
+    const sourceMarkdown = request.source.kind === 'day'
+      ? documentsRef.current[request.source.day] ?? ''
+      : namedDocsRef.current[request.source.id]?.markdown ?? ''
+    const extracted = extractLinesForMove(sourceMarkdown, request.startLine, request.endLine)
+    if (!extracted) return
+    if (extracted.source !== sourceMarkdown) {
+      request.host.dispatchEvent(new CustomEvent('notes-move-caret-restore', { detail: { line: extracted.startLine } }))
+    }
+    if (request.source.kind === 'day') updateSource(request.source.day, extracted.source)
+    else updateNoteMarkdown(request.source.id, extracted.source)
+    if (!extracted.moved.trim()) return
+    if (targetId.startsWith('day:')) {
+      const day = targetId.slice(4)
+      const existing = (documentsRef.current[day] ?? '').trimEnd()
+      updateSource(day, existing ? `${existing}\n\n${extracted.moved}` : extracted.moved)
+      // Render the target card if that day wasn't already in the stream.
+      setDays((current) => current.includes(day) ? current : [...current, day].sort((left, right) => right.localeCompare(left)))
+      return
+    }
+    const note = namedDocsRef.current[targetId.slice(5)]
+    if (!note) return
+    const existing = note.markdown.trimEnd()
+    updateNoteMarkdown(note.id, existing ? `${existing}\n\n${extracted.moved}` : extracted.moved)
   }
 
   async function generateRecoveryPhrase() {
@@ -1063,11 +1682,20 @@ function NotesApp() {
     if (!firebaseUser || !dataKey || !loaded) return
     setSyncState('working')
     try {
-      await Promise.all(Object.entries(documents).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() })))
+      await Promise.all([
+        ...Object.entries(documents).map(([day, markdown]) => saveDailyDocument({ day, markdown, updatedAt: Date.now() })),
+        ...Object.values(namedDocsRef.current).map((note) => saveNamedDocument(note)),
+      ])
       const localDocuments = await listDailyDocuments()
+      const localNotes = await listNamedDocuments()
       localDocuments.forEach((document) => uploadingDaysRef.current.set(document.day, document.markdown))
-      const result = await syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId })
-        .finally(() => localDocuments.forEach((document) => uploadingDaysRef.current.delete(document.day)))
+      localNotes.forEach((note) => uploadingNotesRef.current.set(note.id, note.markdown))
+      const [result, namedResult] = await Promise.all([
+        syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId })
+          .finally(() => localDocuments.forEach((document) => uploadingDaysRef.current.delete(document.day))),
+        syncNamedDocuments(firebaseUser.uid, localNotes, dataKey, { onWriteId: trackOwnWriteId })
+          .finally(() => localNotes.forEach((note) => uploadingNotesRef.current.delete(note.id))),
+      ])
       dirtyDaysRef.current.clear()
       result.documents.forEach((document) => {
         documentUpdatedAtRef.current[document.day] = document.updatedAt
@@ -1084,13 +1712,26 @@ function NotesApp() {
         dirtyDaysRef.current.add(conflict.day)
         persistLocalDocument(conflict.day, conflict.local.markdown, conflict.local.updatedAt, mergeBase)
       })
+      dirtyNotesRef.current.clear()
+      const localNotesById = new Map(localNotes.map((note) => [note.id, note]))
+      namedResult.documents.forEach((note) => { latestRemoteNotesRef.current[note.id] = note })
+      namedResult.conflicts.forEach((conflict) => {
+        const mergeBase = conflict.base ?? conflict.local.syncBase
+        const local = localNotesById.get(conflict.day)
+        dirtyNotesRef.current.add(conflict.day)
+        if (local) persistNamedDocument({ ...local, syncBase: mergeBase })
+      })
       const nextDocuments = Object.fromEntries(result.documents.map((document) => [document.day, document.markdown]))
       documentsRef.current = nextDocuments
       setDocuments(nextDocuments)
-      setSyncConflicts(result.conflicts)
-      setConflictDrafts(Object.fromEntries(result.conflicts.map((conflict) => [conflict.day, conflict.local.markdown])))
+      const nextNotes = Object.fromEntries(normalizeLanes(namedResult.documents).map((note) => [note.id, note]))
+      namedDocsRef.current = nextNotes
+      setNamedDocs(nextNotes)
+      const conflicts = [...result.conflicts, ...namedResult.conflicts]
+      setSyncConflicts(conflicts)
+      setConflictDrafts(Object.fromEntries(conflicts.map((conflict) => [conflict.day, conflict.local.markdown])))
       setSyncState('ready')
-      setSyncMessage(result.conflicts.length ? `${result.conflicts.length} day${result.conflicts.length === 1 ? '' : 's'} need conflict resolution.` : `Synced ${result.documents.length} day${result.documents.length === 1 ? '' : 's'}.`)
+      setSyncMessage(conflicts.length ? `${conflicts.length} document${conflicts.length === 1 ? '' : 's'} need conflict resolution.` : `Synced ${result.documents.length + namedResult.documents.length} documents.`)
     } catch {
       setSyncState('error')
       setSyncMessage('Sync failed. Check your Firebase setup and recovery phrase.')
@@ -1107,7 +1748,18 @@ function NotesApp() {
       latestRemoteRef.current = {}
       dirtyDaysRef.current.clear()
       ownWriteIdsRef.current.clear()
+      latestRemoteNotesRef.current = {}
+      dirtyNotesRef.current.clear()
       await clearSyncBases()
+      await clearNamedSyncBases()
+      const clearedNotes = Object.fromEntries(Object.values(namedDocsRef.current).map((note) => {
+        const next = { ...note }
+        delete next.syncBase
+        delete next.syncedMeta
+        return [note.id, next]
+      }))
+      namedDocsRef.current = clearedNotes
+      setNamedDocs(clearedNotes)
       setDataKey(undefined)
       setRecoveryPhrase('')
       localStorage.removeItem(recoveryPhraseStorageKey(firebaseUser.uid))
@@ -1123,6 +1775,10 @@ function NotesApp() {
 
   async function resolveConflict(conflict: SyncConflict, choice: 'local' | 'remote' | 'append' | 'merged') {
     if (!firebaseUser || !dataKey) return
+    if (conflict.family === 'named') {
+      await resolveNamedConflict(conflict, choice)
+      return
+    }
     const syncBase = { markdown: conflict.remote.markdown, updatedAt: conflict.remote.updatedAt }
     const markdown = choice === 'local' ? conflict.local.markdown : choice === 'remote' ? conflict.remote.markdown : choice === 'merged' ? conflictDrafts[conflict.day] ?? conflict.local.markdown : `${conflict.remote.markdown}${conflict.remote.markdown.endsWith('\\n') ? '' : '\\n'}${conflict.local.markdown}`
     setSyncState('working')
@@ -1161,6 +1817,53 @@ function NotesApp() {
     }
   }
 
+  // Named-doc conflicts resolve markdown the same way; metadata comes from
+  // the live local record (and the latest remote snapshot for 'remote').
+  async function resolveNamedConflict(conflict: SyncConflict, choice: 'local' | 'remote' | 'append' | 'merged') {
+    if (!firebaseUser || !dataKey) return
+    const local = namedDocsRef.current[conflict.day]
+    if (!local) {
+      clearSyncConflict(conflict.day)
+      return
+    }
+    const remote = latestRemoteNotesRef.current[conflict.day]
+    const syncBase = { markdown: conflict.remote.markdown, updatedAt: conflict.remote.updatedAt }
+    const markdown = choice === 'local' ? conflict.local.markdown : choice === 'remote' ? conflict.remote.markdown : choice === 'merged' ? conflictDrafts[conflict.day] ?? conflict.local.markdown : `${conflict.remote.markdown}${conflict.remote.markdown.endsWith('\n') ? '' : '\n'}${conflict.local.markdown}`
+    setSyncState('working')
+    try {
+      if (choice === 'remote') {
+        const remoteMeta = remote ? namedMeta(remote) : namedMeta(local)
+        const next: NamedDocument = { ...local, ...remoteMeta, markdown: conflict.remote.markdown, updatedAt: conflict.remote.updatedAt, syncBase, syncedMeta: remoteMeta }
+        if (remote) latestRemoteNotesRef.current[conflict.day] = remote
+        dirtyNotesRef.current.delete(conflict.day)
+        writeNamedDoc(next)
+        persistNamedDocument(next)
+      } else {
+        const document = { ...local, markdown, updatedAt: currentTimestamp(), syncBase }
+        uploadingNotesRef.current.set(conflict.day, markdown)
+        const result = await uploadEncryptedNamedDocument(firebaseUser.uid, document, dataKey, { strategy: 'replace', onWriteId: trackOwnWriteId })
+          .finally(() => { uploadingNotesRef.current.delete(conflict.day) })
+        if (result.status === 'conflict') {
+          handleUploadNoteConflict(result.conflict)
+          return
+        }
+        const committed = result.document
+        const committedMeta = namedMeta(committed)
+        const next: NamedDocument = { ...local, ...committedMeta, markdown: committed.markdown, updatedAt: committed.updatedAt, syncBase: committed.syncBase ?? { markdown: committed.markdown, updatedAt: committed.updatedAt }, syncedMeta: committedMeta }
+        latestRemoteNotesRef.current[conflict.day] = committed
+        dirtyNotesRef.current.delete(conflict.day)
+        writeNamedDoc(next)
+        persistNamedDocument(next)
+      }
+      clearSyncConflict(conflict.day)
+      setSyncState('ready')
+      setSyncMessage('Conflict resolved and synced.')
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage(error instanceof Error ? error.message : 'Could not sync the conflict resolution.')
+    }
+  }
+
   function updateShortcut(name: string, value: string) {
     setPreferences((current) => ({ ...current, shortcuts: { ...current.shortcuts, [name]: value } }))
   }
@@ -1179,6 +1882,10 @@ function NotesApp() {
     }))
     documentsRef.current = next
     setDocuments(next)
+    commitNamedDocuments(Object.values(namedDocsRef.current).map((note) => {
+      const renamed = renameTagEverywhere(note.markdown, oldTag, newTag)
+      return renamed === note.markdown ? note : { ...note, markdown: renamed }
+    }))
     setTagToRename('')
     setRenamedTag('')
   }
@@ -1188,8 +1895,9 @@ function NotesApp() {
   }
 
   function exportAllMarkdown() {
-    const content = Object.entries(documents).filter(([, markdown]) => markdown).sort(([left], [right]) => left.localeCompare(right)).map(([day, markdown]) => `# ${formatLogicalDay(day, preferences.dateFormat)}\n\n${markdown}`).join('\n\n---\n\n')
-    downloadMarkdown(content, 'notes.md')
+    const daySections = Object.entries(documents).filter(([, markdown]) => markdown).sort(([left], [right]) => left.localeCompare(right)).map(([day, markdown]) => `# ${formatLogicalDay(day, preferences.dateFormat)}\n\n${markdown}`)
+    const noteSections = sortedNotes.filter((note) => note.markdown || note.title).map((note) => `# ${note.title || 'Untitled note'}\n\n${note.markdown}`)
+    downloadMarkdown([...daySections, ...noteSections].join('\n\n---\n\n'), 'notes.md')
   }
 
   function jumpToToday() {
@@ -1326,23 +2034,49 @@ function NotesApp() {
       {importPreview && <div className="modal-backdrop" role="presentation"><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-heading"><div><span className="eyebrow">Data</span><h2 id="import-title">Review backup import</h2></div><button className="modal-close" type="button" onClick={() => setImportPreview(undefined)}>×</button></div><p className="settings-help">{importPreview.documents.length} Markdown days found; {importPreview.invalid.length} files ignored. Importing can change local notes.</p>{importPreview.documents.filter((document) => document.day in documents).map((document) => <label className="settings-row import-collision" key={document.day}><span className="settings-label">{formatLogicalDay(document.day, preferences.dateFormat)} collision</span><select value={importChoices[document.day] ?? 'local'} onChange={(event) => setImportChoices((current) => ({ ...current, [document.day]: event.target.value as 'local' | 'imported' | 'append' }))}><option value="local">Keep local</option><option value="imported">Keep imported</option><option value="append">Append imported</option></select></label>)}<label className="settings-row"><span className="settings-label">Import mode</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as 'additive' | 'replace')}><option value="additive">Add missing and append collisions</option><option value="replace">Replace all local notes</option></select></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={applyImport}>Import and continue</button><button className="settings-action" type="button" onClick={() => setImportPreview(undefined)}>Cancel</button></div></section></div>}
       {!firebaseConfigured ? <p className="sync-prompt" role="status">{syncPrompt}</p> : !firebaseUser && !preferences.syncPromptDismissed ? <p className="sync-prompt" role="status"><button className="sync-prompt-link" type="button" onClick={() => { void signIn() }}>Sign in with Google</button> to enable encrypted sync.<button className="sync-prompt-close" type="button" aria-label="Dismiss sync prompt" onClick={() => setPreferences((current) => ({ ...current, syncPromptDismissed: true }))}>×</button></p> : syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
 
-      <div className="notes-layout">
-      <section className="day-stream" aria-label="Daily notes">
-        {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
-          const source = documents[documentDay] ?? ''
-          const parsed = parseMarkdown(source)
-          return <article className="day-card" data-day={documentDay} data-weekday={new Date(`${documentDay}T12:00:00`).getDay()} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
-            <div className="editor-card">
-              <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-              <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} />
+      <div className="notes-layout lane-viewport" ref={laneViewportRef} onScroll={handleLaneScroll}>
+      <section className={`lane${activeLane === 0 ? ' lane-active' : ''}`} data-lane={0} aria-label="Daily lane">
+        <section className="day-stream" aria-label="Daily notes">
+          {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
+            const source = documents[documentDay] ?? ''
+            const parsed = parseMarkdown(source)
+            return <article className="day-card" data-day={documentDay} data-weekday={new Date(`${documentDay}T12:00:00`).getDay()} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
+              <div className="editor-card">
+                <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
+                <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} />
 
-              {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
-            </div>
-          </article>
-        })}
-        <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
+                {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
+              </div>
+            </article>
+          })}
+          <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
+        </section>
+      </section>
+      {[...lanes.keys()].sort((a, b) => a - b).map((lane) => {
+        const laneNotes = lanes.get(lane) ?? []
+        return <section className={`lane${activeLane === lane ? ' lane-active' : ''}`} key={lane} data-lane={lane} aria-label={`Notes lane ${lane}`}>
+          <div className="note-stream">
+            {laneNotes.filter((note) => filterTags.length || hideMutedLines ? sourceMatchesFilter(note.markdown, filterTags, hideMutedLines) : true).map((note) => (
+              <NoteCard key={note.id} note={note} laneCount={laneCount} laneSize={laneNotes.length} hideMutedLines={hideMutedLines} tagColors={tagColors} onChange={updateNoteMarkdown} onRename={renameNote} onToggleCollapsed={toggleNoteCollapsed} onMoveNote={moveNote} onReorderPreview={reorderNotePreview} onReorderCommit={commitNoteReorder} onDelete={deleteNote} />
+            ))}
+            <button className="lane-add" type="button" onClick={() => createNote(lane)}>+ New note</button>
+          </div>
+        </section>
+      })}
+      <section className={`lane lane-ghost${activeLane === laneCount + 1 ? ' lane-active' : ''}`} data-lane={laneCount + 1} aria-label="New lane">
+        <div className="note-stream note-stream-ghost">
+          <button className="lane-add" type="button" onClick={() => createNote(laneCount + 1)}>+ New note</button>
+          <p className="lane-ghost-hint">New lane</p>
+        </div>
       </section>
       </div>
+      <nav className="lane-dots" aria-label="Lanes">
+        {Array.from({ length: totalLanes }, (_, index) => (
+          <button key={index} type="button" className={`lane-dot${index === activeLane ? ' lane-dot-active' : ''}`} aria-label={index === 0 ? 'Daily notes' : index === totalLanes - 1 ? 'New lane' : `Notes lane ${index}`} aria-current={index === activeLane ? 'true' : undefined} onClick={() => goToLane(index)}>{index === totalLanes - 1 ? '+' : '•'}</button>
+        ))}
+      </nav>
+
+      {moveRequest && <MoveLinesDialog lineCount={moveRequest.endLine - moveRequest.startLine + 1} targets={moveTargets} onSelect={moveLinesTo} onClose={() => setMoveRequest(null)} />}
 
       {commandPaletteOpen && <div className="modal-backdrop command-palette-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setCommandPaletteOpen(false) }}>
         <section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><input autoFocus value={commandQuery} onChange={(event) => { setCommandQuery(event.target.value); setCommandIndex(0) }} placeholder="Type a command…" onKeyDown={(event) => { if (event.key === 'Escape') setCommandPaletteOpen(false); if (event.key === 'ArrowDown') { event.preventDefault(); setCommandIndex((index) => Math.min(index + 1, commandItems.length - 1)) }; if (event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex((index) => Math.max(index - 1, 0)) }; if (event.key === 'Enter' && commandItems[commandIndex]) executeCommand(commandItems[commandIndex][0]) }} />{commandItems.map(([key, label], index) => <button className={index === commandIndex ? 'command-selected' : ''} type="button" key={key} onClick={() => executeCommand(key)}>{label}</button>)}</section>
@@ -1428,7 +2162,7 @@ function NotesApp() {
         <section className="settings-modal sync-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="sync-conflict-title">
           <div className="modal-heading"><div><span className="eyebrow">Cloud sync</span><h2 id="sync-conflict-title">Choose which notes to keep</h2></div></div>
           <p className="settings-help">These days were edited both locally and on the server. Choose how to combine each one.</p>
-          {syncConflicts.map((conflict) => <div className="sync-conflict" key={conflict.day}><strong>{formatLogicalDay(conflict.day, preferences.dateFormat)}</strong><div className="sync-conflict-preview"><div><span>Changed lines</span><div className="diff-viewer">{diffLines(conflict.local.markdown, conflict.remote.markdown).map((row) => <code className={`diff-row diff-${row.kind}`} key={`${row.kind}-${row.index}`}>{row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '− ' : '  '}{row.text || ' '}</code>)}</div></div></div><label className="merge-editor"><span>Editable merged version</span><textarea value={conflictDrafts[conflict.day] ?? conflict.local.markdown} onChange={(event) => setConflictDrafts((current) => ({ ...current, [conflict.day]: event.target.value }))} /></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'local') }}>Keep local</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'remote') }}>Keep server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'append') }}>Append local to server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'merged') }}>Save merged version</button></div></div>)}
+          {syncConflicts.map((conflict) => <div className="sync-conflict" key={`${conflict.family ?? 'daily'}:${conflict.day}`}><strong>{conflict.family === 'named' ? conflict.title || 'Untitled note' : formatLogicalDay(conflict.day, preferences.dateFormat)}</strong><div className="sync-conflict-preview"><div><span>Changed lines</span><div className="diff-viewer">{diffLines(conflict.local.markdown, conflict.remote.markdown).map((row) => <code className={`diff-row diff-${row.kind}`} key={`${row.kind}-${row.index}`}>{row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '− ' : '  '}{row.text || ' '}</code>)}</div></div></div><label className="merge-editor"><span>Editable merged version</span><textarea value={conflictDrafts[conflict.day] ?? conflict.local.markdown} onChange={(event) => setConflictDrafts((current) => ({ ...current, [conflict.day]: event.target.value }))} /></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'local') }}>Keep local</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'remote') }}>Keep server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'append') }}>Append local to server</button><button className="settings-action" type="button" onClick={() => { void resolveConflict(conflict, 'merged') }}>Save merged version</button></div></div>)}
         </section>
       </div>}
 

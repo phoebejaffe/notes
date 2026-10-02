@@ -1,12 +1,13 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, runTransaction, setDoc, type DocumentData } from 'firebase/firestore'
 import { firestore } from './firebase'
-import { decryptDailyDocument, encryptDailyDocument, type EncryptedDailyDocument } from './encryptedSync'
+import { decryptDailyDocument, decryptNamedDocument, encryptDailyDocument, encryptNamedDocument, type EncryptedDailyDocument, type EncryptedNamedDocument } from './encryptedSync'
 import { createKeyBundle, recoverDataKey, type KeyBundle } from './crypto'
 import { mergeMarkdown } from './markdownMerge'
-import type { DailyDocument } from './storage'
+import type { DailyDocument, DocumentSyncBase, NamedDocument } from './storage'
 
 const keyBundlePath = (uid: string) => doc(firestore!, 'users', uid, 'metadata', 'keyBundle')
 const documentsPath = (uid: string) => collection(firestore!, 'users', uid, 'documents')
+const namedDocumentsPath = (uid: string) => collection(firestore!, 'users', uid, 'namedDocuments')
 
 export async function loadRemoteKeyBundle(uid: string) {
   if (!firestore) return undefined
@@ -22,7 +23,13 @@ export async function createRemoteKeyBundle(uid: string, recoveryPhrase?: string
 }
 
 export interface SyncConflict {
+  // Document key: a `YYYY-MM-DD` day for daily documents, a note id for named
+  // documents (family === 'named'). Named conflicts carry the note title for
+  // display; local/remote are reduced to the shared {day: key, markdown,
+  // updatedAt, syncBase} shape since conflict resolution only merges markdown.
   day: string
+  family?: 'named'
+  title?: string
   local: DailyDocument
   remote: DailyDocument
   base?: DailyDocument['syncBase']
@@ -49,14 +56,22 @@ function conflictResult(day: string, local: DailyDocument, remote: DailyDocument
   return { status: 'conflict', conflict: { day, local, remote, base: local.syncBase } }
 }
 
+// The structural minimum the merge logic needs — DailyDocument and
+// NamedDocument both satisfy it.
+export interface SyncableDocument {
+  markdown: string
+  updatedAt: number
+  syncBase?: DocumentSyncBase
+}
+
 export type DocumentUploadDecision =
   | { action: 'write'; markdown: string }
   | { action: 'adopt' }
   | { action: 'conflict' }
 
 export function resolveDocumentUpload(
-  document: DailyDocument,
-  remote: DailyDocument | undefined,
+  document: SyncableDocument,
+  remote: SyncableDocument | undefined,
   strategy: 'merge' | 'replace' = 'merge',
 ): DocumentUploadDecision {
   if (!remote || remote.markdown === document.markdown) return remote ? { action: 'adopt' } : { action: 'write', markdown: document.markdown }
@@ -158,6 +173,159 @@ export function watchRemoteDocuments(uid: string, key: CryptoKey, onDocuments: (
   }, onError)
 }
 
+// --- Named documents -------------------------------------------------------
+
+export type EncryptedNamedDocumentUploadResult =
+  | { status: 'written'; document: NamedDocument }
+  | { status: 'conflict'; conflict: SyncConflict }
+
+function asEncryptedNamedDocument(value: DocumentData) {
+  return value as EncryptedNamedDocument
+}
+
+function withNamedSyncBase(document: NamedDocument): NamedDocument {
+  const { writeId: _writeId, ...rest } = document
+  return {
+    ...rest,
+    syncBase: { markdown: document.markdown, updatedAt: document.updatedAt },
+    syncedMeta: namedMeta(document),
+  }
+}
+
+function namedMeta(document: NamedDocument) {
+  return { title: document.title, lane: document.lane, order: document.order, collapsed: document.collapsed, deleted: document.deleted }
+}
+
+// Named-note metadata (title/lane/order/collapsed/deleted) resolves
+// last-writer-wins on the record's updatedAt; only markdown goes through the
+// three-way merge.
+function metaFrom(document: NamedDocument, fields: Partial<NamedDocument>): Pick<NamedDocument, 'title' | 'lane' | 'order' | 'collapsed' | 'deleted'> {
+  return {
+    title: fields.title ?? document.title,
+    lane: fields.lane ?? document.lane,
+    order: fields.order ?? document.order,
+    collapsed: fields.collapsed ?? document.collapsed,
+    deleted: fields.deleted,
+  }
+}
+
+function asDailyShape(document: NamedDocument): DailyDocument {
+  return { day: document.id, markdown: document.markdown, updatedAt: document.updatedAt, syncBase: document.syncBase, writeId: document.writeId }
+}
+
+function namedConflict(local: NamedDocument, remote: NamedDocument): SyncConflict {
+  return { day: local.id, family: 'named', title: remote.title || local.title, local: asDailyShape(local), remote: asDailyShape(remote), base: local.syncBase }
+}
+
+function namedConflictResult(local: NamedDocument, remote: NamedDocument): EncryptedNamedDocumentUploadResult {
+  return { status: 'conflict', conflict: namedConflict(local, remote) }
+}
+
+export async function uploadEncryptedNamedDocument(
+  uid: string,
+  document: NamedDocument,
+  key: CryptoKey,
+  options: EncryptedDocumentUploadOptions = {},
+): Promise<EncryptedNamedDocumentUploadResult> {
+  if (!firestore) throw new Error('Firebase is not configured')
+  const documentRef = doc(namedDocumentsPath(uid), document.id)
+  const writeId = crypto.randomUUID()
+  return runTransaction(firestore, async (transaction) => {
+    const snapshot = await transaction.get(documentRef)
+    const remote = snapshot.exists()
+      ? await decryptNamedDocument(asEncryptedNamedDocument(snapshot.data()), key)
+      : undefined
+    const writeDocument = async (markdown: string) => {
+      options.onWriteId?.(writeId)
+      // Metadata is LWW on updatedAt: keep whichever side is newer while the
+      // merged markdown is written.
+      const meta = remote && remote.updatedAt > document.updatedAt ? metaFrom(document, remote) : namedMeta(document)
+      const next: NamedDocument = { ...document, ...meta, markdown, updatedAt: Date.now(), writeId }
+      transaction.set(documentRef, await encryptNamedDocument(next, key, writeId))
+      return { status: 'written' as const, document: withNamedSyncBase(next) }
+    }
+
+    const decision = resolveDocumentUpload(document, remote, options.strategy)
+    // 'adopt' means identical markdown — but named docs also carry metadata
+    // (title/lane/order/collapsed/deleted), so an adopt is only safe when the
+    // meta matches too. Otherwise write the same markdown so the meta's LWW
+    // resolution runs; without this a tombstone or rename would be dropped.
+    const metaMatches = (current: NamedDocument) =>
+      current.title === document.title && current.lane === document.lane && current.order === document.order && current.collapsed === document.collapsed && Boolean(current.deleted) === Boolean(document.deleted)
+    if (decision.action === 'adopt' && metaMatches(remote!)) return { status: 'written', document: withNamedSyncBase(remote!) }
+    if (decision.action === 'conflict') return namedConflictResult(document, remote!)
+    return writeDocument(decision.action === 'adopt' ? document.markdown : decision.markdown)
+  })
+}
+
+export async function syncNamedDocuments(uid: string, localDocuments: NamedDocument[], key: CryptoKey, options: EncryptedDocumentUploadOptions = {}) {
+  if (!firestore) throw new Error('Firebase is not configured')
+  const remote = await getDocs(query(namedDocumentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)))
+  const localById = new Map(localDocuments.map((document) => [document.id, document]))
+  const remoteById = new Map<string, NamedDocument>()
+  const merged = new Map<string, NamedDocument>()
+  const conflicts: SyncConflict[] = []
+  const uploads: { local: NamedDocument; remote?: NamedDocument }[] = []
+
+  const metaSynced = (document: NamedDocument) => {
+    const meta = document.syncedMeta
+    return !!meta && meta.title === document.title && meta.lane === document.lane && meta.order === document.order && meta.collapsed === document.collapsed && meta.deleted === document.deleted
+  }
+
+  for (const snapshot of remote.docs) {
+    const remoteDocument = await decryptNamedDocument(asEncryptedNamedDocument(snapshot.data()), key)
+    remoteById.set(remoteDocument.id, remoteDocument)
+    const localDocument = localById.get(remoteDocument.id)
+    if (!localDocument) {
+      merged.set(remoteDocument.id, withNamedSyncBase(remoteDocument))
+      continue
+    }
+    if (localDocument.markdown === remoteDocument.markdown || localDocument.markdown === localDocument.syncBase?.markdown) {
+      // Content settled; resolve metadata LWW and push if the local side wins.
+      if (metaSynced(localDocument) && localDocument.updatedAt <= remoteDocument.updatedAt) {
+        merged.set(remoteDocument.id, withNamedSyncBase(remoteDocument))
+        continue
+      }
+      const meta = localDocument.updatedAt > remoteDocument.updatedAt ? namedMeta(localDocument) : metaFrom(localDocument, remoteDocument)
+      const resolved: NamedDocument = { ...localDocument, ...meta }
+      if (localDocument.updatedAt > remoteDocument.updatedAt) uploads.push({ local: resolved, remote: remoteDocument })
+      else merged.set(remoteDocument.id, withNamedSyncBase({ ...remoteDocument }))
+      continue
+    }
+    if (!localDocument.syncBase) {
+      conflicts.push(namedConflict(localDocument, remoteDocument))
+      merged.set(localDocument.id, localDocument)
+      continue
+    }
+    uploads.push({ local: localDocument, remote: remoteDocument })
+  }
+
+  for (const document of localDocuments) {
+    if (!remoteById.has(document.id)) uploads.push({ local: document })
+  }
+
+  const uploadResults = await Promise.all(uploads.map(({ local }) => uploadEncryptedNamedDocument(uid, local, key, options)))
+  uploadResults.forEach((result, index) => {
+    const { local, remote: uploadRemote } = uploads[index]
+    if (result.status === 'written') {
+      merged.set(result.document.id, result.document)
+      return
+    }
+    conflicts.push(result.conflict)
+    merged.set(local.id, local)
+    if (uploadRemote) remoteById.set(uploadRemote.id, uploadRemote)
+  })
+
+  return { documents: [...merged.values()], conflicts }
+}
+
+export function watchRemoteNamedDocuments(uid: string, key: CryptoKey, onDocuments: (documents: NamedDocument[]) => void, onError: (error: Error) => void) {
+  if (!firestore) return () => undefined
+  return onSnapshot(query(namedDocumentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)), (snapshot) => {
+    void Promise.all(snapshot.docs.map(async (snapshot) => decryptNamedDocument(asEncryptedNamedDocument(snapshot.data()), key))).then(onDocuments).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
+  }, onError)
+}
+
 export async function recoverRemoteDataKey(uid: string, recoveryPhrase: string) {
   const bundle = await loadRemoteKeyBundle(uid)
   if (!bundle) return undefined
@@ -167,6 +335,7 @@ export async function recoverRemoteDataKey(uid: string, recoveryPhrase: string) 
 export async function deleteRemoteUserData(uid: string) {
   if (!firestore) throw new Error('Firebase is not configured')
   const documents = await getDocs(documentsPath(uid))
-  await Promise.all(documents.docs.map((snapshot) => deleteDoc(snapshot.ref)))
+  const namedDocuments = await getDocs(namedDocumentsPath(uid))
+  await Promise.all([...documents.docs, ...namedDocuments.docs].map((snapshot) => deleteDoc(snapshot.ref)))
   await deleteDoc(keyBundlePath(uid))
 }

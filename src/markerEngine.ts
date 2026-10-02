@@ -481,6 +481,33 @@ export function moveLinesDetailed(source: string, startLine: number, endLine: nu
   return { source: lines.join('\n'), startLine: movedStart, endLine: movedEnd }
 }
 
+// Removes a canonical line range for the cross-editor move (Cmd/Ctrl-M).
+// Selections covering only directive *contents* move raw — the fences stay
+// behind — but a selection covering exactly one fence of a `:::tag` pair
+// expands to the whole block so neither document is left with an unbalanced
+// directive. Returns the remaining source, the moved text, and the final
+// (possibly expanded) range, or null when the range is invalid.
+export function extractLinesForMove(source: string, startLine: number, endLine: number) {
+  const lines = source.split('\n')
+  let start = Math.max(0, Math.min(startLine, lines.length - 1))
+  let end = Math.max(0, Math.min(endLine, lines.length - 1))
+  if (start > end) return null
+  const parsed = parseMarkdown(source)
+  for (let changed = true; changed;) {
+    changed = false
+    for (const range of parsed.ranges) {
+      const openInside = range.startLine >= start && range.startLine <= end
+      const closeInside = range.endLine >= start && range.endLine <= end
+      if (openInside === closeInside) continue
+      start = Math.min(start, range.startLine)
+      end = Math.max(end, range.endLine)
+      changed = true
+    }
+  }
+  const moved = lines.slice(start, end + 1)
+  return { source: [...lines.slice(0, start), ...lines.slice(end + 1)].join('\n'), moved: moved.join('\n'), startLine: start, endLine: end }
+}
+
 export function removeTagAtPosition(source: string, lineIndex: number, tag: string) {
   const parsed = parseMarkdown(source)
   const range = parsed.ranges.filter((item) => item.tag === normalizeTag(tag) && item.startLine < lineIndex && lineIndex < item.endLine).sort((left, right) => right.startLine - left.startLine)[0]

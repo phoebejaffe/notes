@@ -7,8 +7,20 @@ html, body { touch-action: pan-x pan-y; }
 .capture-shell.capture-unfocused { opacity: .9; }
 .capture-shell .editor-card { padding-top: 0; }
 .app-shell { width: min(980px, 100%); height: 100vh; min-height: 0; display: flex; flex-direction: column; margin: 0 auto; padding: 0; background: #fff; overflow: hidden; }
-.notes-layout { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
-.day-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* Lanes: a horizontal snap-scrolling track. Lane 0 is the daily stream;
+   named lanes and a trailing "new lane" placeholder sit beside it. Horizontal
+   pans land here because each lane's stream only scrolls vertically. */
+.notes-layout { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: row; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scroll-padding-left: 0; overscroll-behavior-x: contain; scrollbar-width: none; }
+.notes-layout::-webkit-scrollbar { display: none; }
+/* No scroll-snap-stop: a hard snap-stop also halts programmatic jumps (Ctrl-N,
+   lane dots, shortcuts) at the first intermediate lane. Discrete swipes are
+   enforced by the mac app's wheel stepping instead. */
+.lane { flex: 0 0 100%; min-width: 0; display: flex; flex-direction: column; overflow: hidden; scroll-snap-align: start; }
+/* overscroll is contained on the vertical axis only — a `contain` shorthand
+   would also swallow horizontal deltas and keep them from chaining up to the
+   lane viewport's snap scrolling. */
+.day-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+.note-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
 .topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 1px solid #eeeae5; background: #fff; box-shadow: 0 4px 14px #392c1f10; pointer-events: none; }
 .web-shell .topbar { box-sizing: border-box; min-height: 42px; height: 42px; padding: 4px 12px; }
 .web-shell .search-button { width: 34px; height: 34px; font-size: 24px; }
@@ -50,11 +62,11 @@ button { cursor: pointer; font: inherit; }
 .search-symbol, .search-count { color: #9b9185; font-size: 12px; }
 .sync-prompt { margin: 0 auto 18px; padding: 9px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #756a7d; background: #f8f5fa; font-size: 12px; text-align: center; }
 .sync-prompt-link { padding: 0; border: 0; color: #806790; background: transparent; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
-.day-stream { display: flex; flex-direction: column; gap: 0; box-sizing: border-box; padding-top: 100px; padding-bottom: 76px; zoom: var(--editor-zoom, 1); }
-.app-shell:not(.web-shell) .day-stream { padding-top: 148px; scroll-padding-top: 148px; }
-.web-shell .day-stream { padding-top: 84px; }
-.ios-pwa .day-stream { padding-top: 108px; padding-bottom: 16px; }
-.capture-shell .day-stream { padding-top: 48px; scroll-padding-top: 48px; }
+.day-stream, .note-stream { display: flex; flex-direction: column; gap: 0; box-sizing: border-box; padding-top: 100px; padding-bottom: 76px; zoom: var(--editor-zoom, 1); }
+.app-shell:not(.web-shell) .day-stream, .app-shell:not(.web-shell) .note-stream { padding-top: 148px; scroll-padding-top: 148px; }
+.web-shell .day-stream, .web-shell .note-stream { padding-top: 84px; }
+.ios-pwa .day-stream, .ios-pwa .note-stream { padding-top: 108px; padding-bottom: 16px; }
+.capture-shell .day-stream, .capture-shell .note-stream { padding-top: 48px; scroll-padding-top: 48px; }
 .day-card { scroll-margin-top: 78px; background: var(--day-tint, #fff); }
 .day-card[data-weekday="0"] { --day-tint: #fdf2e9; }
 .day-card[data-weekday="1"] { --day-tint: #eff6ea; }
@@ -198,12 +210,13 @@ button { cursor: pointer; font: inherit; }
 .raw-mode-banner button { padding: 0; border: 0; color: #806790; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
 .app-shell:not(.web-shell) .raw-mode-banner { top: 80px; }
 .capture-shell .raw-mode-banner { top: 0; }
-.raw-mode .day-stream { padding-top: 128px; }
-.raw-mode.web-shell .day-stream { padding-top: 88px; }
-.raw-mode.ios-pwa .day-stream { padding-top: 136px; }
-.raw-mode.capture-shell .day-stream { padding-top: 48px; scroll-padding-top: 48px; }
+.raw-mode .day-stream, .raw-mode .note-stream { padding-top: 128px; }
+.raw-mode.web-shell .day-stream, .raw-mode.web-shell .note-stream { padding-top: 88px; }
+.raw-mode.ios-pwa .day-stream, .raw-mode.ios-pwa .note-stream { padding-top: 136px; }
+.raw-mode.capture-shell .day-stream, .raw-mode.capture-shell .note-stream { padding-top: 48px; scroll-padding-top: 48px; }
 .tag-migration-button { margin: 0 0 6px 6px; padding: 3px 7px; border: 1px solid #d8cbe0; border-radius: 5px; color: #62506f; background: #f8f5fa; font-size: 10px; }
-.notes-mdx-editor .mdxeditor { min-height: 0 !important; height: auto !important; border: 0; border-radius: 0; background: #fff; }
+/* Transparent so the card's --day-tint (or white fallback) shows through. */
+.notes-mdx-editor .mdxeditor { min-height: 0 !important; height: auto !important; border: 0; border-radius: 0; background: transparent; }
 .notes-mdx-editor .mdxeditor-root-contenteditable { min-height: 50px !important; height: auto !important; padding: 4px 6px !important; outline: none !important; box-shadow: none !important; }
 .notes-mdx-editor .mdxeditor:focus-within, .notes-mdx-editor .mdxeditor-root-contenteditable:focus, .notes-mdx-editor .mdxeditor-root-contenteditable:focus-visible, .notes-mdx-editor [contenteditable='true']:focus { outline: none !important; box-shadow: none !important; }
 .notes-mdx-editor .mdxeditor-toolbar { display: flex; flex-wrap: wrap; gap: 4px; border-top: 0; border-right: 0; border-left: 0; background: #fbf8f5; }
@@ -249,8 +262,12 @@ button { cursor: pointer; font: inherit; }
 /* Exactly one bar is visible at a time: the focused editor's, or — when no
    editor has focus — the first card's, rendered disabled. */
 .notes-mdx-editor:focus-within .mdxeditor-toolbar { display: flex; }
-.day-stream:not(:has(.notes-mdx-editor:focus-within)) .mdxeditor-toolbar { pointer-events: none; opacity: .45; }
-.day-stream:not(:has(.notes-mdx-editor:focus-within)) .day-card:first-of-type .mdxeditor-toolbar { display: flex; }
+.day-stream:not(:has(.notes-mdx-editor:focus-within)) .mdxeditor-toolbar, .note-stream:not(:has(.notes-mdx-editor:focus-within)) .mdxeditor-toolbar { pointer-events: none; opacity: .45; }
+.day-stream:not(:has(.notes-mdx-editor:focus-within)) .day-card:first-of-type .mdxeditor-toolbar, .note-stream:not(:has(.notes-mdx-editor:focus-within)) .note-card:first-of-type .mdxeditor-toolbar { display: flex; }
+/* Toolbars are position:fixed and ignore lane clipping — only the active
+   lane's bar may show, and none while the track is mid-swipe. */
+.lane:not(.lane-active) .mdxeditor-toolbar, .lane-viewport.lane-scrolling .mdxeditor-toolbar { display: none !important; }
+.lane:not(.lane-active) .notes-audio-popover { display: none; }
 .notes-mdx-editor .mdxeditor-toolbar > * { flex: 0 0 auto; }
 .notes-mdx-editor .mdxeditor-toolbar > div, .notes-mdx-editor .mdxeditor-toolbar [role='group'] { display: flex; flex: 0 0 auto; flex-direction: row; align-items: center; gap: 2px; }
 .notes-mdx-editor .mdxeditor-toolbar button { display: inline-flex; width: 26px; height: 26px; flex: 0 0 26px; align-items: center; justify-content: center; margin: 0; padding: 3px; border: 1px solid #d8cbe0; border-radius: 5px; color: #62506f; background: #fff; line-height: 1; }
@@ -278,8 +295,8 @@ button { cursor: pointer; font: inherit; }
 .capture-shell:not(.web-shell) .raw-mode-banner { top: 32px; }
 .raw-mode.capture-shell:not(.web-shell) .day-stream { padding-top: 56px; scroll-padding-top: 56px; scroll-padding-bottom: 34px; }
 .theme-dark .notes-mdx-editor .mdxeditor { --basePageBg: #201e21; --baseBase: #2f2c31; --baseBgSubtle: #2f2c31; --baseBg: #383538; --baseBgHover: #48434a; --baseBgActive: #48434a; --baseLine: #4d4649; --baseBorder: #5a5358; --baseBorderHover: #6f666d; --baseText: #d9d1d5; --baseTextContrast: #f5f1ed; --accentText: #e6d7f2; --accentTextContrast: #fff; }
-.theme-dark .notes-mdx-editor, .theme-dark .notes-mdx-editor .mdxeditor { color: #e8e2dc; border-color: #4d4649; background: #201e21; }
-.theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable, .theme-dark .notes-mdx-editor .mdxeditor-contenteditable-wrapper, .theme-dark .notes-mdx-editor [contenteditable='true'] { color: #f5f1ed !important; background: #201e21; caret-color: #f5f1ed; }
+.theme-dark .notes-mdx-editor, .theme-dark .notes-mdx-editor .mdxeditor { color: #e8e2dc; border-color: #4d4649; background: transparent; }
+.theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable, .theme-dark .notes-mdx-editor .mdxeditor-contenteditable-wrapper, .theme-dark .notes-mdx-editor [contenteditable='true'] { color: #f5f1ed !important; background: transparent; caret-color: #f5f1ed; }
 .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable h1, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable h2, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable h3, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable h4, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable h5, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable h6, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable p, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable li, .theme-dark .notes-mdx-editor .mdxeditor-root-contenteditable blockquote { color: inherit; }
 .theme-dark .notes-mdx-editor [data-notes-tag-chip]::before, .theme-dark .notes-tag-directive::before { color: #e8e2dc; border-color: color-mix(in srgb, var(--notes-tag-color, #8975aa) 35%, #2f2c31); background: color-mix(in srgb, var(--notes-tag-color, #8975aa) 15%, #2f2c31); }
 .theme-dark .notes-mdx-editor .mdxeditor-toolbar { border-color: #5a5358; background: #383538; box-shadow: 0 8px 24px #00000040; }
@@ -325,6 +342,8 @@ button { cursor: pointer; font: inherit; }
 .command-palette input { margin-bottom: 6px; padding: 10px; border: 1px solid #d9d4cb; border-radius: 6px; font: inherit; }
 .command-palette button { padding: 10px; border: 0; border-radius: 6px; color: #504941; background: transparent; text-align: left; }
 .command-palette button:hover { background: #f1ede8; }
+.move-lines-section { padding: 8px 10px 2px; color: #9b9185; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.move-lines-empty { padding: 10px; color: #817970; font-size: 12px; }
 .future-day-panel { position: fixed; z-index: 15; top: 62px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 10px; transform: translateX(-50%); border: 1px solid #d9d4cb; border-radius: 8px; background: #fffdf9; box-shadow: 0 12px 30px #392c1f22; font-size: 12px; }
 .future-day-panel button, .future-notice button { padding: 5px 8px; border: 0; border-radius: 5px; color: #fff; background: #806790; font-size: 11px; }
 .future-notice { position: fixed; z-index: 18; right: 16px; bottom: 68px; display: flex; align-items: center; gap: 8px; max-width: min(440px, calc(100% - 32px)); padding: 10px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #62506f; background: #f8f5fa; box-shadow: 0 8px 24px #392c1f18; font-size: 12px; }
@@ -345,6 +364,42 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .command-palette input { color: #e8e2dc; background: #332f33; border-color: #4d4649; }
 .theme-dark .command-palette button { color: #e8e2dc; }
 .theme-dark .command-palette button:hover { background: #383338; }
+.theme-dark .move-lines-section, .theme-dark .move-lines-empty { color: #b8aeb0; }
 .theme-dark .future-notice { color: #e8e2dc; background: #332f3b; border-color: #4d4659; }
 .theme-dark .settings-status { border-color: #403b3f; }
 @media (max-width: 700px) { .mobile-browser.app-shell { padding-bottom: 0; } .mobile-browser .future-day-panel { top: 104px; max-width: calc(100% - 24px); } .mobile-browser .future-notice { right: 12px; bottom: 12px; } }
+
+/* Named-note lanes */
+.note-card { scroll-margin-top: 78px; }
+.app-shell:not(.web-shell) .note-card { scroll-margin-top: 116px; }
+.note-card-dragging { opacity: .55; }
+.note-heading { display: flex; align-items: center; gap: 4px; margin: 8px 0 6px; }
+.note-drag { flex: 0 0 auto; padding: 2px 4px; border: 0; color: #b3aa9f; background: transparent; font-size: 13px; line-height: 1; cursor: grab; touch-action: none; }
+.note-drag:active { cursor: grabbing; }
+.note-title { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; color: #817970; background: transparent; font: 500 15px/1.1 Georgia, serif; letter-spacing: .01em; text-align: left; overflow: hidden; }
+.note-title em { font-style: normal; opacity: .6; }
+.note-chevron { flex: 0 0 auto; width: 12px; color: #b3aa9f; font-size: 9px; }
+.note-title-input { flex: 1 1 auto; min-width: 0; padding: 2px 6px; border: 1px solid #d9d4cb; border-radius: 5px; color: #504941; background: #fff; font: 500 15px/1.3 Georgia, serif; }
+.note-menu-wrap { position: relative; flex: 0 0 auto; }
+.note-menu { top: 32px; right: 0; left: auto; }
+.note-delete-confirm { color: #a14c38 !important; font-weight: 700; }
+.lane-add { margin: 14px 0; padding: 10px; width: 100%; border: 1px dashed #d9d4cb; border-radius: 8px; color: #817970; background: transparent; font-size: 12px; }
+.lane-add:hover { border-color: #b8ad9f; background: #faf8f5; }
+.note-stream-ghost { align-items: center; }
+.note-stream-ghost .lane-add { width: auto; padding: 10px 22px; }
+.lane-ghost-hint { margin: 0; color: #b3aa9f; font-size: 11px; }
+.lane-dots { position: fixed; z-index: 13; bottom: 8px; left: 50%; display: flex; gap: 2px; padding: 3px 6px; transform: translateX(-50%); border-radius: 999px; background: #fffdf9cc; }
+.capture-shell:not(.web-shell) .lane-dots { bottom: 40px; }
+.lane-dot { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; color: #b3aa9f; background: transparent; font-size: 15px; line-height: 1; }
+.lane-dot:hover { background: #f1ede8; }
+.lane-dot-active { color: #806790; font-weight: 700; }
+.theme-dark .note-title { color: #b8aeb0; }
+.theme-dark .note-drag, .theme-dark .note-chevron { color: #6f666d; }
+.theme-dark .note-title-input { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
+.theme-dark .lane-add { border-color: #4d4649; color: #b8aeb0; }
+.theme-dark .lane-add:hover { border-color: #6f666d; background: #2a272b; }
+.theme-dark .lane-ghost-hint { color: #6f666d; }
+.theme-dark .lane-dots { background: #2a272bcc; }
+.theme-dark .lane-dot { color: #6f666d; }
+.theme-dark .lane-dot:hover { background: #383338; }
+.theme-dark .lane-dot-active { color: #a98fc4; }

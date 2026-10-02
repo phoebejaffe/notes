@@ -131,6 +131,20 @@ test('meta-enter checks a task and turns plain lines into tasks', async ({ page 
   await expectSource(page, /- \[ \] suffix omega/u)
 })
 
+test('meta-enter turns a bullet list item into a task and keeps its children', async ({ page }) => {
+  await page.goto('/prototype?scenario=list-movement')
+  const root = editorFor(page)
+
+  await setCaretAtText(root, 'second item', 2)
+  await page.keyboard.press('Meta+Enter')
+  await expectSource(page, /- first item\n\n[*-] \[ \] second item\n  - second child one\n  - second child two\n\n- third item/u)
+  await waitForCaretRestore(page)
+
+  await setCaretAtText(root, 'second item', 2)
+  await page.keyboard.press('Meta+Enter')
+  await expectSource(page, /[*-] \[x\] second item/u)
+})
+
 test('meta-shift-enter removes the checkbox and leaves a plain list item', async ({ page }) => {
   await page.goto('/prototype?scenario=checklist')
   const root = editorFor(page)

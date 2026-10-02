@@ -149,8 +149,8 @@ function caretAtEditorEdge(host: HTMLElement, direction: 'up' | 'down'): boolean
 }
 
 function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down', landing: 'edge' | 'start' = 'edge') {
-  const card = host.closest<HTMLElement>('.day-card')
-  const cards = [...(card?.parentElement?.querySelectorAll<HTMLElement>('.day-card') ?? [])]
+  const card = host.closest<HTMLElement>('.day-card, .note-card')
+  const cards = [...(card?.parentElement?.querySelectorAll<HTMLElement>('.day-card, .note-card') ?? [])]
   const index = card ? cards.indexOf(card) : -1
   const targetEditor = (direction === 'up' ? cards[index - 1] : cards[index + 1])?.querySelector<HTMLElement>('.notes-mdx-editor')
   // Carry the caret's x across so the destination can land on the same
@@ -167,6 +167,37 @@ function focusAdjacentEditor(host: HTMLElement, direction: 'up' | 'down', landin
   targetEditor?.dispatchEvent(new CustomEvent('notes-focus-edge', { detail, bubbles: false }))
 }
 
+// Moves a bullet/number list item into its own single-item check list. Lexical
+// clears `checked` on items whose parent list isn't 'check', so turning a plain
+// list item into a task means splitting it out — converting the whole list
+// would checkbox every sibling. An item's nested list lives in a dedicated
+// sibling ListItemNode directly after it (first child is a ListNode) — it
+// belongs to the item, so it moves into the check list too.
+function moveItemToOwnCheckList(item: ListItemNode) {
+  const list = item.getParent()
+  if (!$isListNode(list) || list.getListType() === 'check') return
+  const checkList = $createListNode('check')
+  list.insertAfter(checkList)
+  const nested: ListItemNode[] = []
+  let next = item.getNextSibling()
+  while ($isListItemNode(next) && $isListNode(next.getFirstChild())) {
+    nested.push(next)
+    next = next.getNextSibling()
+  }
+  if (next) {
+    const rest = $createListNode(list.getListType() as 'bullet' | 'number')
+    checkList.insertAfter(rest)
+    if (list.getListType() === 'number') rest.setStart(item.getValue() + 1)
+    while (next) {
+      const sibling = next
+      next = next.getNextSibling()
+      rest.append(sibling)
+    }
+  }
+  checkList.append(item, ...nested)
+  if (list.getChildrenSize() === 0) list.remove()
+}
+
 export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {} }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const lexicalEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
@@ -178,6 +209,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const tagColorsRef = useRef(tagColors)
   const userInteractedRef = useRef(false)
   const lastRangeRef = useRef<SelectionLineRange | null>(null)
+  const pendingMoveCaretLineRef = useRef<number | null>(null)
   const boundaryParagraphRef = useRef<{ key: string; armed: boolean } | null>(null)
   const commitRef = useRef<((markdown: string, restore?: Restore) => void) | null>(null)
   // Lexical's history can't see source-space commits (e.g. muting strips `%%`
@@ -281,6 +313,8 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   useEffect(() => {
     if (valueRef.current === value) return
     const host = hostRef.current
+    const moveCaretLine = pendingMoveCaretLineRef.current
+    pendingMoveCaretLineRef.current = null
     // External update (sync/merge): capture the caret's canonical line in the
     // outgoing source so the re-import doesn't yank it mid-typing.
     const range = host && contentEditable(host)?.contains(window.getSelection()?.anchorNode ?? null)
@@ -290,6 +324,15 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     editorRef.current?.setMarkdown(markdownForEditor(value).markdown)
     lastOpRef.current = 'external'
     refreshDecorationsRef.current()
+    if (moveCaretLine !== null && host) {
+      const map = buildDocumentMap(value)
+      reapplyUntilSettled(() => {
+        const editable = contentEditable(host)
+        editable?.focus({ preventScroll: true })
+        return placeCaretAtCanonicalLine(host, map, moveCaretLine, 0)
+      })
+      return
+    }
     if (range && host) {
       const map = buildDocumentMap(value)
       reapplyUntilSettled(() => placeCaretAtCanonicalLine(host, map, range.startLine, range.caretOffset))
@@ -459,7 +502,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         const anchorLexical = anchorNode ? $getNearestNodeFromDOMNode(anchorNode) : null
         const item = anchorLexical ? $getNearestNodeOfType(anchorLexical, ListItemNode) : null
         if (item) {
+          // Read `checked` before the move: once the item sits in a check list
+          // getChecked() returns a boolean even when it was never a task, which
+          // would flip a fresh bullet straight to checked.
           const checked = item.getChecked()
+          moveItemToOwnCheckList(item)
           item.setChecked(checked === undefined ? false : !checked)
         } else if (domSelection?.anchorNode && domSelection.focusNode) {
           // The Lexical selection can lag the DOM selection after a commit —
@@ -500,37 +547,10 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         const node = $getNearestNodeFromDOMNode(anchor)
         const item = node ? $getNearestNodeOfType(node, ListItemNode) : null
         if (!item || !$isTextNode(node) || item.getFirstChild() !== node) return
-        const list = item.getParent()
-        if (!$isListNode(list)) return
+        if (!$isListNode(item.getParent())) return
         node.spliceText(0, match[0].length, '')
-        if (list.getListType() === 'check') {
-          item.setChecked(match[1].toLowerCase() === 'x')
-        } else {
-          const checkList = $createListNode('check')
-          list.insertAfter(checkList)
-          // An item's nested list lives in a dedicated sibling ListItemNode
-          // directly after it (first child is a ListNode) — it belongs to the
-          // item, so move it into the check list too rather than the rest.
-          const nested: ListItemNode[] = []
-          let next = item.getNextSibling()
-          while ($isListItemNode(next) && $isListNode(next.getFirstChild())) {
-            nested.push(next)
-            next = next.getNextSibling()
-          }
-          if (next) {
-            const rest = $createListNode(list.getListType() as 'bullet' | 'number')
-            checkList.insertAfter(rest)
-            if (list.getListType() === 'number') rest.setStart(item.getValue() + 1)
-            while (next) {
-              const sibling = next
-              next = next.getNextSibling()
-              rest.append(sibling)
-            }
-          }
-          checkList.append(item, ...nested)
-          item.setChecked(match[1].toLowerCase() === 'x')
-          if (list.getChildrenSize() === 0) list.remove()
-        }
+        moveItemToOwnCheckList(item)
+        item.setChecked(match[1].toLowerCase() === 'x')
         item.selectStart()
         converted = true
       })
@@ -624,6 +644,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       window.requestAnimationFrame(() => ensureCaretVisible({ preferTop: true }))
     }
 
+    const handleMoveCaretRestore = (event: Event) => {
+      const line = (event as CustomEvent<{ line?: number }>).detail?.line
+      if (typeof line === 'number' && Number.isInteger(line) && line >= 0) pendingMoveCaretLineRef.current = line
+    }
+
     const runCommand = (event: KeyboardEvent): boolean => {
       const mod = event.metaKey || event.ctrlKey
 
@@ -672,6 +697,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       }
 
       if (!mod) return false
+
+      // Cmd/Ctrl-M asks the app to move the selected canonical lines into a
+      // different editor. The host bubbles the request up; whichever surface
+      // owns the document collection resolves the source card and moves them.
+      if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === 'm') {
+        const map = buildDocumentMap(valueRef.current)
+        const range = selectionLineRange(host, map) ?? lastRangeRef.current
+        if (!range) return false
+        host.dispatchEvent(new CustomEvent('notes-move-lines', { detail: { startLine: range.startLine, endLine: range.endLine }, bubbles: true }))
+        return true
+      }
 
       if (!event.shiftKey && event.key === '/') return muteSelection()
 
@@ -740,6 +776,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('notes-line-gesture', handleLineGesture)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
     host.addEventListener('notes-restore-caret', handleRestoreCaret)
+    host.addEventListener('notes-move-caret-restore', handleMoveCaretRestore)
     document.addEventListener('selectionchange', updateSelection)
     return () => {
       host.removeEventListener('keydown', handler, true)
@@ -748,6 +785,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('notes-line-gesture', handleLineGesture)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
       host.removeEventListener('notes-restore-caret', handleRestoreCaret)
+      host.removeEventListener('notes-move-caret-restore', handleMoveCaretRestore)
       document.removeEventListener('selectionchange', updateSelection)
       cancelAnimationFrame(visibilityRafRef.current)
     }

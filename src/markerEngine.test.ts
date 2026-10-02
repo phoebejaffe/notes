@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagDirectiveToRange, checklistToPlainText, indentLines, lineRangeForSelection, markdownMarkState, moveLines, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
+import { addTagDirectiveToRange, checklistToPlainText, extractLinesForMove, indentLines, lineRangeForSelection, markdownMarkState, moveLines, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses nested tag directives including emoji names', () => {
@@ -310,5 +310,53 @@ describe('marker engine', () => {
     const source = ':::tag{name="therapy"}\none\n:::\n:::tag{name="therapy notes"}\ntwo\n:::'
     expect(renameTagEverywhere(source, 'therapy', 'wellness')).toBe(':::tag{name="wellness"}\none\n:::\n:::tag{name="therapy notes"}\ntwo\n:::')
     expect(renameTagEverywhere(source, 'therapy notes', 'journal')).toBe(':::tag{name="therapy"}\none\n:::\n:::tag{name="journal"}\ntwo\n:::')
+  })
+
+  it('extracts a plain line range for a cross-editor move', () => {
+    const source = 'one\n\ntwo\nthree\n\nfour'
+    const extracted = extractLinesForMove(source, 2, 3)
+    expect(extracted?.moved).toBe('two\nthree')
+    expect(extracted?.source).toBe('one\n\n\nfour')
+  })
+
+  it('extracts the whole document when every line is selected', () => {
+    const extracted = extractLinesForMove('one\ntwo', 0, 1)
+    expect(extracted?.source).toBe('')
+    expect(extracted?.moved).toBe('one\ntwo')
+  })
+
+  it('extracts directive contents raw, leaving the fences behind', () => {
+    const source = ':::tag{name="t"}\na\nb\n:::'
+    const extracted = extractLinesForMove(source, 1, 2)
+    expect(extracted?.moved).toBe('a\nb')
+    expect(extracted?.source).toBe(':::tag{name="t"}\n:::')
+  })
+
+  it('expands a partial-fence selection to the whole tag block', () => {
+    const source = 'before\n\n:::tag{name="t"}\ninside\n:::'
+    // Covers the opener but not the closer: the whole directive goes.
+    const fromOpen = extractLinesForMove(source, 0, 2)
+    expect(fromOpen?.moved).toBe('before\n\n:::tag{name="t"}\ninside\n:::')
+    expect(fromOpen?.source).toBe('')
+    // Covers the closer but not the opener.
+    const fromClose = extractLinesForMove(source, 3, 4)
+    expect(fromClose?.moved).toBe(':::tag{name="t"}\ninside\n:::')
+    expect(fromClose?.source).toBe('before\n')
+  })
+
+  it('expands a selection that crosses one fence into the whole directive', () => {
+    const source = ':::tag{name="t"}\ninside\n:::\nafter'
+    const extracted = extractLinesForMove(source, 1, 3)
+    expect(extracted?.moved).toBe(':::tag{name="t"}\ninside\n:::\nafter')
+    expect(extracted?.source).toBe('')
+  })
+
+  it('moves a fully-selected tag block with nested fences intact', () => {
+    const source = 'intro\n::::tag{name="outer"}\no\n:::tag{name="inner"}\ni\n:::\n::::\noutro'
+    const extracted = extractLinesForMove(source, 1, 6)
+    expect(extracted?.moved).toBe('::::tag{name="outer"}\no\n:::tag{name="inner"}\ni\n:::\n::::')
+    expect(extracted?.source).toBe('intro\noutro')
+    expect(parseMarkdown(extracted!.moved).diagnostics).toEqual([])
+    expect(parseMarkdown(extracted!.source).diagnostics).toEqual([])
   })
 })

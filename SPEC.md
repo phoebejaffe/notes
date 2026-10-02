@@ -25,6 +25,20 @@ Each note is a `DailyDocument` with:
 
 Documents are stored locally in IndexedDB database `notes-local`, object store `daily-documents`, keyed by `day`. Changes are debounced before being saved. Empty documents are not included in exported all-notes output or generated backups, although empty day cards can be displayed according to preferences.
 
+### Named documents and lanes
+
+Named notes are `NamedDocument` records in the `named-documents` object store (IndexedDB schema version 2), keyed by a generated `id`, with:
+
+- `title`: an optional display name.
+- `markdown`: the editable Markdown source.
+- `lane`: a 1-based lane index (lane 0 is the daily stream and is never stored).
+- `order`: a contiguous zero-based index within the lane, renormalized on every structural change.
+- `collapsed`: whether the note body is hidden.
+- `deleted`: a tombstone flag retained for cloud sync.
+- `updatedAt`, `syncBase`, and `writeId`: the same synchronization fields used by daily documents.
+
+Lanes are implicit in the data — there is no lane table. `laneCount` is the maximum stored `lane`; emptied lanes are reindexed away after a move or delete, so lane numbers stay contiguous. A trailing ghost lane is rendered after the last real lane so the first named note can always be created.
+
 Preferences and lightweight UI state are stored in `localStorage`, including editor preferences, onboarding state, recovery phrases associated with a signed-in user, future-day state, recent tags, tag colors, and the last backup signature.
 
 ### Logical days
@@ -33,7 +47,15 @@ The current day is calculated using a configurable rollover hour, from midnight 
 
 ## 4. Main notes experience
 
-- The main view is a scrollable daily stream.
+### Lanes
+
+- The workspace is a horizontal lane viewport (`.lane-viewport` → `.lane-track` → `.lane` sections) using native scrolling with `scroll-snap-type: x mandatory`. Lane 0 is the daily stream and is always leftmost; lanes 1+ hold named notes; a trailing ghost lane shows only a note-add affordance.
+- Navigation: Cmd-Option-Shift-Left/Right (configurable `lanePrevious`/`laneNext` shortcuts), touch swipes and trackpad horizontal pans via native scroll snapping — in the mac app a window-level wheel handler instead steps exactly one lane per gesture so swipes work even while the window is unfocused — and clickable lane dots beneath the viewport. Cmd-Option-Shift-Up (`todayTop`) returns to the daily lane from anywhere and lands the caret at the top of today's editor. Switching lanes animates via native smooth scrolling; plain arrow keys never shift lanes.
+- Lanes render identically in the macOS capture window; the capture layout is scoped to the daily lane's `.day-stream` styling.
+
+### Daily lane
+
+- The daily stream is a scrollable vertical stream.
 - Today is always available. All existing saved days are loaded into the stream, and empty days may be shown when `showEmptyDays` is enabled.
 - When the logical day changes at the configured rollover hour, the new day is added automatically without requiring an application restart.
 - A future date can be selected explicitly. Opening a future day creates a local empty day and records it for future-day behavior.
@@ -42,13 +64,23 @@ The current day is calculated using a configurable rollover hour, from midnight 
 - The current day can be exported independently. All non-empty notes can be exported as one Markdown file with date headings and separators. The menu can enable a persistent raw-text mode that replaces each rich editor with its exact Markdown source; a fixed banner provides the way to turn raw mode off.
 - A sample-note reset command exists for the current day and is intended as a development/demo affordance, not as a general data-management workflow.
 
+### Named lanes
+
+- Each named lane contains a vertical stack of `NoteCard`s, each a titled Markdown editor using the same editor component as day cards.
+- Every lane (and the ghost lane) has a "+ New note" button that creates an untitled note in that lane.
+- Notes collapse/expand by clicking the title or pressing Cmd+\ (configurable `noteCollapse` shortcut, only when the caret is inside that note's editor).
+- A ⋯ menu on each note offers: Rename (inline editable title), Move up/down (vertical reorder within the lane), Move left/right and Move to new lane (lane reassignment; emptied lanes collapse and the viewport follows the note), and Delete (with confirm).
+- A drag handle on each note supports pointer-based vertical reordering within a lane and across lanes.
+- Cross-editor ArrowUp/ArrowDown navigation and the formatting toolbar work identically on note cards; arrow navigation is scoped to siblings within a lane.
+- Named notes participate in search, tag filtering, and the known-tags manager (entries are labeled by note title); deleting a note removes its tag associations.
+
 ## 5. Markdown editor
 
 > **Editor rebuild in progress (branch `editor-v3`).** The bespoke editor layer was removed and is being rebuilt test-first against the e2e suite in `e2e/`. The descriptions below reflect the current stripped state; strikethrough, custom shortcuts, and raw text mode are pending rebuild. Refer to `main` for the previous implementation.
 
 The editor is based on MDXEditor and currently supports headings, lists (including `- [ ]` checklists with click-to-toggle checkboxes), quotes, links, tables, thematic breaks, and Markdown input shortcuts — including typing `- [ ] `/`- [x] ` at a block start or `[ ] ` at the start of an existing list item, which converts that item into a task (the item is split into its own check list, since Lexical clears `checked` on non-check lists; Markdown requires adjacent unordered lists to use different bullets, so a task sandwiched between `-` lists exports with a `*` bullet). A formatting bar renders MDXEditor's bold/italic/underline and list toggles, a mute button, a mobile-only gesture button (visible only on coarse-pointer devices — a tap does nothing; dragging up/down moves the selected lines like Option-Arrow, and dragging right/left indents and outdents list items in source space, repeating once per drag stride), a tag input with recent-tag suggestions, and active-tag chips with remove buttons; the rendered selection stays highlighted while the tag input is focused. The bar is sticky at the top of each editor and shown only while that editor has focus (it stays visible in the capture shell), follows the active light/dark theme, remains at the window scale when editor zoom is enabled, and is fixed just below the top bar. A single bar is always rendered: the focused editor's bar is enabled; when no editor has focus the first card's bar shows disabled, and in the macOS capture window the bar is fixed at the bottom as a compact dark-grey strip that stays enabled across transient focus changes. Pinch zoom is disabled app-wide (viewport `user-scalable=no`, `touch-action: pan-x pan-y`, and iOS `gesture*` event blocking); the editor Zoom preference remains available on non-mobile devices.
 
-Editor commands run in Markdown space: the DOM selection is mapped to canonical source lines through mdast source positions (`src/editor/sourceMapping.ts`), the operation mutates the source (via `markerEngine`), the result is re-imported, and the caret/selection is restored at the corresponding lines. Currently wired: Option/Alt+ArrowUp/Down moves the selected source lines — a moved line that is not part of a list jumps past a whole contiguous list as one block; a line adjacent to a `:::tag` block from outside *enters* the tag, landing as its own blank-separated block just inside the delimiter, and from there keeps moving through the tag's contents; a line moved across its tag boundary from inside escapes the tag, landing as its own blank-separated block; a selection that straddles exactly one `:::tag` fence instead moves the *fence* — moving toward the tag's interior extends it to enclose the selection, moving away shrinks it to exclude the selection — Cmd+Enter toggles a checklist item or converts a block to a task, Cmd+Shift+Enter drops a checkbox marker, Cmd+Shift+C turns a task/bullet into plain text, Cmd+/ (or Ctrl+/) toggles `%%` on the selected lines, and the tag input wraps the selected source lines in `:::tag{name="…"}` (a selection overlapping an existing tag tags each contiguous region separately — nested inside the existing tag, sibling outside — since tags nest but never overlap, like HTML). Plain ArrowUp at the editor's visual top edge or ArrowDown at its bottom edge moves the caret into the adjacent day's editor, landing on the first/last rendered line at roughly the same horizontal position (the caret's x coordinate is carried across and hit-tested on the destination row, clamping to the line's edges — a shorter target line lands at its end); when the caret is on the first line inside a leading tag, ArrowUp first inserts an ordinary empty paragraph above the tag so text can be typed before it, and the paragraph is cleaned up when navigation continues past it. Cmd-Option-ArrowUp/Down jumps straight to the adjacent day's editor from anywhere, landing at the start of its first line, and Cmd-ArrowUp/Down moves the caret to the top or bottom of the current editor. Cmd-Shift+Arrow selection extension is never intercepted, and neither are other modified arrows. The caret is kept inside the visible band — the viewport minus the fixed top bar and formatting toolbar — on every selection change: if a caret move leaves it behind the chrome, the scroll container centers it (`src/editor/caretVisibility.ts`). When the macOS capture window gains focus, an existing editor caret is scrolled into view instantly — preferring the stream top when the caret is already in the first screenful. Hiding the window can drop the DOM selection, so each editor remembers its caret's canonical line and the app restores it in the same editor on refocus; when no caret exists (or ever did), today's editor is focused at the start of its text.
+Editor commands run in Markdown space: the DOM selection is mapped to canonical source lines through mdast source positions (`src/editor/sourceMapping.ts`), the operation mutates the source (via `markerEngine`), the result is re-imported, and the caret/selection is restored at the corresponding lines. Currently wired: Option/Alt+ArrowUp/Down moves the selected source lines — a moved line that is not part of a list jumps past a whole contiguous list as one block; a line adjacent to a `:::tag` block from outside *enters* the tag, landing as its own blank-separated block just inside the delimiter, and from there keeps moving through the tag's contents; a line moved across its tag boundary from inside escapes the tag, landing as its own blank-separated block; a selection that straddles exactly one `:::tag` fence instead moves the *fence* — moving toward the tag's interior extends it to enclose the selection, moving away shrinks it to exclude the selection — Cmd+Enter toggles a checklist item or converts a block to a task (a plain list item is split into its own check list, like the typed `[ ] ` conversion, keeping any nested children with it), Cmd+Shift+Enter drops a checkbox marker, Cmd+Shift+C turns a task/bullet into plain text, Cmd+/ (or Ctrl+/) toggles `%%` on the selected lines, and the tag input wraps the selected source lines in `:::tag{name="…"}` (a selection overlapping an existing tag tags each contiguous region separately — nested inside the existing tag, sibling outside — since tags nest but never overlap, like HTML). Cmd-M or Ctrl-M opens a target-picker dialog that moves the selected source lines to a different editor: Today is listed first, then every named note in lane order, then the previous 14 days — the originating editor is excluded. After a move, the source editor regains focus with the caret at the start of the line that follows the moved range. A selection covering only the interior of a `:::tag` block moves raw and leaves its fences behind; a selection covering exactly one fence of a pair expands to the whole block so neither document is left with an unbalanced directive (`extractLinesForMove` in `markerEngine`). Moved lines are appended to the target document, blank-line separated, and target days missing from the stream are rendered in place. Plain ArrowUp at the editor's visual top edge or ArrowDown at its bottom edge moves the caret into the adjacent day's editor, landing on the first/last rendered line at roughly the same horizontal position (the caret's x coordinate is carried across and hit-tested on the destination row, clamping to the line's edges — a shorter target line lands at its end); when the caret is on the first line inside a leading tag, ArrowUp first inserts an ordinary empty paragraph above the tag so text can be typed before it, and the paragraph is cleaned up when navigation continues past it. Cmd-Option-ArrowUp/Down jumps straight to the adjacent day's editor from anywhere, landing at the start of its first line, and Cmd-ArrowUp/Down moves the caret to the top or bottom of the current editor. Cmd-Shift+Arrow selection extension is never intercepted, and neither are other modified arrows. The caret is kept inside the visible band — the viewport minus the fixed top bar and formatting toolbar — on every selection change: if a caret move leaves it behind the chrome, the scroll container centers it (`src/editor/caretVisibility.ts`). When the macOS capture window gains focus, an existing editor caret is scrolled into view instantly — preferring the stream top when the caret is already in the first screenful. Hiding the window can drop the DOM selection, so each editor remembers its caret's canonical line and the app restores it in the same editor on refocus; when no caret exists (or ever did), today's editor is focused at the start of its text.
 
 Markdown source is the canonical persisted format. Before rendering, `markdownForEditor` inserts a blank line between a list item and a directly following non-list line (otherwise the next line would merge into the item as a lazy continuation); `restoreMarkdownSpacing` strips those injected blanks on export. `:::tag{…}` container directives import as `TagBlockNode` — a plain Lexical `ElementNode` (`src/editor/TagBlockNode.ts`) rendered as a `.notes-tag-directive` div whose children are ordinary blocks in the same editable (no nested editor, so caret behavior stays consistent). A priority import visitor in `tagBlockPlugin` claims `tag` directives; other container directives (`:::muted`, `:::custom-block`) still use the generic nested-editor descriptor. Tag chips and the colored left border are pure CSS on `.notes-tag-directive`; JS only sets `--notes-tag-color` per tag. Lines containing a linked `__` (ring-transcription recordings) get a `≈` gutter marker centered on the editor's left border, rendered as an overlay outside the contenteditable so Lexical never reconciles it; markers hide on muted lines when muted content is hidden (including soft-break lines that ghost rather than collapse). Clicking a `__` link opens an inline recording-player popover (`src/editor/AudioPlayerPopover.tsx`) with play/pause, seek, and elapsed/total time — recordings share a small cache of `HTMLAudioElement`s (`src/editor/recordingAudio.ts`) warmed on hover so playback starts instantly; other links open externally (via the Tauri shell plugin in the mac app, `window.open` in the browser). Custom import/export visitors preserve per-item checkbox state so a plain bullet inside a task list stays plain. Unordered lists export with `-` bullets. The marker engine (`src/markerEngine.ts`) parses `%%` muted lines and `:::tag` directives for app-level features — the filter panel, tag manager, and per-day diagnostics all remain functional.
 
@@ -95,7 +127,7 @@ The main menu and quick-entry menu expose search, command palette, future-note c
 
 The command palette supports keyboard navigation and commands for jumping to today, opening future days, searching, settings, syncing, backing up, importing, and exporting all notes.
 
-Configurable shortcuts include search, settings, zoom in/out, jump to today, export today, strikethrough, task-to-plain-text (default Mod-Shift-C, removes the checkbox and list marker leaving plain text), hide muted lines, shortcut help, and previous/next day. Shortcut conflicts are reported in Settings. Built-in editor shortcuts include Mod-B, Mod-I, Mod-U, Mod-T (focus tag input), Mod-Enter (check/uncheck the current task, or turn the current line into a task), Mod-Shift-Enter (remove the checkbox, leaving a plain list item), Option-ArrowUp/Option-ArrowDown (move selected lines), Mod-Option-ArrowUp/Mod-Option-ArrowDown (move the caret to the top of the editor above or below), Mod-ArrowUp/Mod-ArrowDown (caret to the top or bottom of the current editor), and Backspace.
+Configurable shortcuts include search, settings, zoom in/out, jump to today, export today, strikethrough, task-to-plain-text (default Mod-Shift-C, removes the checkbox and list marker leaving plain text), hide muted lines, shortcut help, and previous/next day. Shortcut conflicts are reported in Settings. Built-in editor shortcuts include Mod-B, Mod-I, Mod-U, Mod-T (focus tag input), Mod-Enter (check/uncheck the current task, or turn the current line into a task), Mod-Shift-Enter (remove the checkbox, leaving a plain list item), Option-ArrowUp/Option-ArrowDown (move selected lines), Mod-M/Ctrl-M (move the selected lines to another editor via a target picker), Mod-Option-ArrowUp/Mod-Option-ArrowDown (move the caret to the top of the editor above or below), Mod-ArrowUp/Mod-ArrowDown (caret to the top or bottom of the current editor), and Backspace.
 
 ## 9. Preferences
 
@@ -123,7 +155,7 @@ At least one of the macOS menu-bar or dock entry points must remain enabled.
 ### Export
 
 - Export today writes the current day’s Markdown as `YYYY-MM-DD.md`.
-- Export all writes a combined `notes.md` containing non-empty days ordered by date, with formatted date headings and horizontal separators.
+- Export all writes a combined `notes.md` containing non-empty days ordered by date plus all named notes, using formatted date headings for days and `# <title>` (or `Untitled note`) headings for named notes, with horizontal separators.
 - Export is available in browser and Tauri contexts through a browser download-style flow.
 
 ### Automatic backups
@@ -146,7 +178,7 @@ The sync flow is:
 2. A new account receives a randomly generated 12-word recovery phrase, or an existing account accepts its original phrase.
 3. The phrase is normalized locally and used with PBKDF2-SHA-256 (600,000 iterations) to derive an AES-GCM-256 wrapping key.
 4. A randomly generated AES-GCM-256 data key is wrapped by that key and stored as a remote key bundle.
-5. Daily Markdown and timestamps are encrypted in the browser before upload, with document-specific associated data.
+5. Daily and named Markdown plus timestamps are encrypted in the browser before upload, with document-specific associated data.
 6. Firestore stores only the encrypted document envelope and metadata needed for synchronization.
 
 The intended Firestore namespace is:
@@ -154,6 +186,7 @@ The intended Firestore namespace is:
 ```text
 users/{uid}/metadata/keyBundle
 users/{uid}/documents/{day}
+users/{uid}/namedDocuments/{noteId}
 ```
 
 Only the authenticated user’s namespace should be accessible under the Firestore rules. The recovery phrase is never sent to Firebase. Losing it prevents unlocking existing encrypted cloud data; Google sign-in cannot reset it.
@@ -161,15 +194,18 @@ Only the authenticated user’s namespace should be accessible under the Firesto
 Sync supports:
 
 - Manual sync.
-- Debounced transactional upload of changed daily documents after encryption is unlocked.
-- Realtime remote document watching.
+- Debounced transactional upload of changed daily and named documents after encryption is unlocked.
+- Realtime remote document watching for both families.
 - Local-only sync-base tracking and line-based three-way reconciliation for concurrent local/remote Markdown changes.
-- Conflict detection when both sides changed the same Markdown region differently or no usable sync base exists.
+- Conflict detection when both sides changed the same Markdown region differently or no usable sync base exists. Named-document conflicts are labeled by note title and resolve identically to daily conflicts.
 - Conflict resolution by keeping local, keeping server, appending local to server, or editing/saving a merged Markdown version.
+- Named-note tombstones: deleting a named note uploads a `{ deleted: true }` payload so remote deletion propagates; `syncNamedDocuments` and `downloadAllRemoteDocuments` purge remote tombstones and clear local sync bases once acknowledged.
 - Sign-out, which clears the active in-memory key and recovery phrase from the UI but keeps local notes.
-- Permanent cloud-data deletion, which deletes cloud notes and the remote encryption key while keeping local notes.
+- Permanent cloud-data deletion, which deletes cloud notes and named documents and the remote encryption key while keeping local notes.
 
-The remote document payload remains `{ markdown, updatedAt }`. Each local IndexedDB record may additionally retain a `syncBase` Markdown snapshot used only as the three-way merge ancestor; that base is never included in the encrypted remote payload. External writers such as the Pebble receiver can update the same encrypted daily documents, so uploads must read the latest remote document transactionally and must not overwrite unseen remote changes. A realtime snapshot matching an in-flight upload is treated as the app's own write echo and adopted as the new merge base rather than merged, so rapid consecutive edits cannot conflict with themselves.
+Named-document payloads are `{ title, markdown, lane, order, collapsed, updatedAt }` (or `{ deleted, updatedAt }` for tombstones), encrypted with associated data `notes:named-document:${id}`. Markdown content merges three-way through the same machinery as daily documents; metadata (title/lane/order/collapsed) follows last-write-wins on `updatedAt` within the merge transaction.
+
+The remote document payload for daily notes remains `{ markdown, updatedAt }`. Each local IndexedDB record may additionally retain a `syncBase` Markdown snapshot used only as the three-way merge ancestor; that base is never included in the encrypted remote payload. External writers such as the Pebble receiver can update the same encrypted daily documents, so uploads must read the latest remote document transactionally and must not overwrite unseen remote changes. A realtime snapshot matching an in-flight upload is treated as the app's own write echo and adopted as the new merge base rather than merged, so rapid consecutive edits cannot conflict with themselves.
 
 If Firebase variables are absent, the application must continue operating locally. Offline editing is supported; concurrent offline edits made on another device may produce a reviewable conflict rather than silent data loss.
 
@@ -216,9 +252,10 @@ Tests currently cover backup behavior, encrypted sync behavior, editor Markdown 
 
 - Cloud sync requires Firebase configuration, Google authentication, and the original recovery phrase.
 - The sync query is currently bounded to the newest 1,000 remote documents.
-- Concurrent Markdown changes use line-based three-way merging; ambiguous same-region edits still require day-level conflict resolution.
+- Concurrent Markdown changes use line-based three-way merging; ambiguous same-region edits still require document-level conflict resolution.
+- Named-note metadata (title, lane, order, collapsed) resolves last-write-wins by `updatedAt` — only Markdown content is three-way merged.
 - Tag colors and recent-tag ordering are local UI metadata and are not synchronized as part of encrypted documents.
-- Automatic backups are only exposed in the mac app; the dormant browser path would depend on File System Access API support.
+- Automatic backups are only exposed in the mac app; the dormant browser path would depend on File System Access API support. Backups cover daily documents only; named notes are not yet included.
 - Native launch-at-login, opacity, menu-bar, and dock behaviors are platform-specific.
 - The README is a user-facing summary and setup guide; this spec remains the more detailed product reference.
 
@@ -235,8 +272,10 @@ This section is intentionally maintained as a living backlog. It should be updat
 
 ### Product and data workflow
 
-- Improve search result navigation and make search semantics explicit for Markdown, tags, muted content, and date ranges.
+- Improve search result navigation and make search semantics explicit for Markdown, tags, muted content, and date ranges — including how named-note results are labeled and navigated to (currently lane-jump only, no scroll-to-match).
 - Add broader date navigation/history controls for large note collections.
+- Include named notes in automatic backups (currently day-only) and in import workflows.
+- Add lane-level management (lane titles, reordering lanes, deleting a lane wholesale).
 - Consider CRDT or operation-based syncing for richer real-time collaboration, and improve deleted/empty-document conflict handling.
 - Revisit the 1,000-document sync limit and define pagination/retention behavior for long-lived accounts.
 - Add robust validation and recovery flows for malformed imports, interrupted backups, and corrupted local storage.

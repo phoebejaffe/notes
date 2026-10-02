@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MdxNotesEditor } from '../editor/MdxNotesEditor'
+import { MoveLinesDialog } from '../editor/MoveLinesDialog'
+import { extractLinesForMove } from '../markerEngine'
 import './markdownPrototype.css'
 
 const SAMPLE_MARKDOWN = `# Markdown editor prototype
@@ -329,6 +331,37 @@ function MultiEditorPrototype() {
     day2: [day2, setDay2],
     day3: [day3, setDay3],
   }
+  const [moveRequest, setMoveRequest] = useState<{ day: string; startLine: number; endLine: number; host: HTMLElement } | null>(null)
+
+  // Same `notes-move-lines` contract as the app, so the cross-editor move can
+  // be exercised end-to-end against this page.
+  useEffect(() => {
+    function handleMoveLinesRequest(event: Event) {
+      const detail = (event as CustomEvent<{ startLine?: number; endLine?: number }>).detail
+      const host = event.target instanceof HTMLElement ? event.target : null
+      const card = host?.closest<HTMLElement>('.day-card')
+      const day = card?.dataset.day
+      if (!host || !day || detail?.startLine === undefined || detail?.endLine === undefined) return
+      setMoveRequest({ day, startLine: detail.startLine, endLine: detail.endLine, host })
+    }
+    window.addEventListener('notes-move-lines', handleMoveLinesRequest)
+    return () => window.removeEventListener('notes-move-lines', handleMoveLinesRequest)
+  }, [])
+
+  function moveLinesTo(targetDay: string) {
+    const request = moveRequest
+    setMoveRequest(null)
+    if (!request || !(request.day in docs) || !(targetDay in docs)) return
+    const extracted = extractLinesForMove(docs[request.day][0], request.startLine, request.endLine)
+    if (!extracted) return
+    if (extracted.source !== docs[request.day][0]) {
+      request.host.dispatchEvent(new CustomEvent('notes-move-caret-restore', { detail: { line: extracted.startLine } }))
+    }
+    docs[request.day][1](extracted.source)
+    const existing = docs[targetDay][0].trimEnd()
+    docs[targetDay][1](existing ? `${existing}\n\n${extracted.moved}` : extracted.moved)
+  }
+
   return <section className="day-stream" aria-label="Multi-editor prototype">
     {Object.entries(docs).map(([day, [source, setSource]], index) => (
       <article className="day-card" data-day={day} data-weekday={index % 7} key={day}>
@@ -338,6 +371,11 @@ function MultiEditorPrototype() {
         </div>
       </article>
     ))}
+    {moveRequest && <MoveLinesDialog
+      lineCount={moveRequest.endLine - moveRequest.startLine + 1}
+      targets={Object.keys(docs).filter((day) => day !== moveRequest.day).map((day) => ({ id: day, label: day }))}
+      onSelect={moveLinesTo}
+      onClose={() => setMoveRequest(null)} />}
   </section>
 }
 
