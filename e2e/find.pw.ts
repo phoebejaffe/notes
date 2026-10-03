@@ -73,6 +73,30 @@ test('highlights matches, shows the position, and steps with Mod-G', async ({ pa
   await expect(page.locator('.search-count')).toHaveText('2 of 2')
 })
 
+test('requires two characters and clears stale highlights when the query narrows', async ({ page }) => {
+  await seedApp(page, { days: { [todayKey()]: 'alpha eta\n\nepsilon\n\nemerald target\n\nlast em' } })
+  await page.keyboard.press('Meta+f')
+  const input = searchInput(page)
+  await input.pressSequentially('e')
+  // A single character is not a search yet — no count, no highlights.
+  await expect(page.locator('.search-count')).toHaveCount(0)
+  await expect.poll(() => findHighlights(page)).toEqual([])
+  await expect.poll(() => findHighlights(page, 'notes-find-match-current')).toEqual([])
+
+  await input.pressSequentially('m')
+  await expect(page.locator('.search-count')).toHaveText('1 of 2')
+  // Only "em" ranges may remain — the earlier "e" ranges must be gone from
+  // both registries, not just visually.
+  await expect.poll(() => findHighlights(page)).toEqual(['em'])
+  await expect.poll(() => findHighlights(page, 'notes-find-match-current')).toEqual(['em'])
+
+  // Deleting back to one character deactivates find again.
+  await input.press('Backspace')
+  await expect(page.locator('.search-count')).toHaveCount(0)
+  await expect.poll(() => findHighlights(page)).toEqual([])
+  await expect.poll(() => findHighlights(page, 'notes-find-match-current')).toEqual([])
+})
+
 test('the search input keeps focus while navigating matches', async ({ page }) => {
   await seedApp(page, { days: { [todayKey()]: 'one needle\n\ntwo needle\n\nthree needle' } })
   await page.keyboard.press('Meta+f')

@@ -66,21 +66,27 @@ export function collectFindMatches(query: string, viewport: HTMLElement, collaps
   return matches
 }
 
+// Two persistent Highlight objects, mutated rather than replaced: swapping the
+// registered object via HighlightRegistry.set() can leave the previous
+// highlight painted (stale matches linger after the query changes) in engines
+// that don't invalidate on replace, while add/clear always fires invalidation.
+const baseFindHighlight = typeof Highlight === 'undefined' ? null : new Highlight()
+const currentFindHighlight = typeof Highlight === 'undefined' ? null : new Highlight()
+
 export function applyFindHighlights(matches: FindMatch[], currentIndex: number) {
-  if (typeof CSS === 'undefined' || !CSS.highlights) return
-  const ranges: Range[] = []
-  let current: Range | undefined
+  if (typeof CSS === 'undefined' || !CSS.highlights || !baseFindHighlight || !currentFindHighlight) return
+  baseFindHighlight.clear()
+  currentFindHighlight.clear()
   matches.forEach((match, index) => {
     if (!match.range) return
-    if (index === currentIndex) current = match.range
-    else ranges.push(match.range)
+    ;(index === currentIndex ? currentFindHighlight : baseFindHighlight).add(match.range)
   })
-  CSS.highlights.set('notes-find-match', new Highlight(...ranges))
-  CSS.highlights.set('notes-find-match-current', new Highlight(...(current ? [current] : [])))
+  CSS.highlights.set('notes-find-match', baseFindHighlight)
+  CSS.highlights.set('notes-find-match-current', currentFindHighlight)
 }
 
 export function clearFindHighlights() {
-  if (typeof CSS === 'undefined' || !CSS.highlights) return
-  CSS.highlights.delete('notes-find-match')
-  CSS.highlights.delete('notes-find-match-current')
+  if (typeof CSS === 'undefined' || !CSS.highlights || !baseFindHighlight || !currentFindHighlight) return
+  baseFindHighlight.clear()
+  currentFindHighlight.clear()
 }

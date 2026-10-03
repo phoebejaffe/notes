@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BoldItalicUnderlineToggles, ListsToggle } from '@mdxeditor/editor'
 import { formatUrl } from '@lexical/link'
 import { useEditorActions } from './editorActions'
@@ -118,25 +119,30 @@ function LinkIcon() {
 }
 
 // Link button + popover: applies a URL to the preserved editor selection, or
-// edits/removes the link under the caret. The popover is position:fixed — the
-// toolbar's overflow-x: auto would clip an absolutely-positioned one.
+// edits/removes the link under the caret. The popover portals to the editor
+// host — inside the toolbar it would be clipped by overflow-x and trapped in
+// the bar's stacking context below the lane UI, while the host keeps
+// :focus-within (and theme inheritance) for the input.
 function LinkControl() {
   const actions = useEditorActions()
   const wrapRef = useRef<HTMLSpanElement>(null)
   const preservedRangeRef = useRef<Range | null>(null)
   const [open, setOpen] = useState(false)
   const [url, setUrl] = useState('')
+  const [popoverHost, setPopoverHost] = useState<HTMLElement | null>(null)
   const [anchor, setAnchor] = useState<{ left: number; top?: number; bottom?: number } | null>(null)
 
   function openPopover() {
     preservedRangeRef.current = editorSelectionRange()
     setUrl(actions?.activeLink ?? '')
-    const rect = wrapRef.current?.getBoundingClientRect()
+    const wrap = wrapRef.current
+    const rect = wrap?.getBoundingClientRect()
     if (rect) {
       const style = window.innerHeight - rect.bottom >= 60
         ? { left: rect.left, top: rect.bottom + 6 }
         : { left: rect.left, bottom: window.innerHeight - rect.top + 6 }
       setAnchor(style)
+      setPopoverHost(wrap?.closest<HTMLElement>('.notes-mdx-editor') ?? document.body)
     }
     setOpen(true)
   }
@@ -169,7 +175,7 @@ function LinkControl() {
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => (open ? close() : openPopover())}
     ><LinkIcon /></button>
-    {open && <span className="notes-editor-link-popover" style={anchor ?? undefined}>
+    {open && popoverHost && createPortal(<span className="notes-editor-link-popover" style={anchor ?? undefined}>
       <input
         value={url}
         onChange={(event) => setUrl(event.target.value)}
@@ -185,7 +191,7 @@ function LinkControl() {
       />
       <button className="notes-editor-toolbar-button" type="button" disabled={!url.trim()} onMouseDown={(event) => event.preventDefault()} onClick={save}>Save</button>
       <button className="notes-editor-toolbar-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={remove}>Remove</button>
-    </span>}
+    </span>, popoverHost)}
   </span>
 }
 

@@ -77,6 +77,12 @@ button { cursor: pointer; font: inherit; }
 .web-shell .day-stream, .web-shell .note-stream { padding-top: 84px; }
 .ios-pwa .day-stream, .ios-pwa .note-stream { padding-top: 108px; padding-bottom: 16px; }
 .capture-shell .day-stream, .capture-shell .note-stream { padding-top: 48px; scroll-padding-top: 48px; }
+/* Day tints bleed to the capture window's side edges: the lane track punches
+   out past the shell's 16px padding (stream children are clipped at the
+   stream's padding box, so the card itself can't reach the edge), and the
+   card/stream re-inset their content to keep the text column unchanged. */
+.capture-shell .notes-layout { margin-inline: -16px; }
+.capture-shell .day-card, .capture-shell .note-stream { padding-inline: 16px; }
 .day-card { scroll-margin-top: 78px; background: var(--day-tint, #fff); }
 .day-card[data-weekday="0"] { --day-tint: #fdf2e9; }
 .day-card[data-weekday="1"] { --day-tint: #eff6ea; }
@@ -245,12 +251,12 @@ button { cursor: pointer; font: inherit; }
 .notes-editor-link-control { display: inline-flex; align-items: center; }
 .notes-editor-link-popover { position: fixed; z-index: 30; display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #d8cbe0; border-radius: 6px; background: #fff; box-shadow: 0 8px 20px #392c1f20; }
 .notes-editor-link-popover input { width: 200px; padding: 5px 6px; border: 1px solid #d8cbe0; border-radius: 5px; color: #50455a; background: #fff; font-size: 11px; }
-.notes-mdx-editor .mdxeditor-toolbar .notes-editor-link-popover button { width: auto; flex: 0 0 auto; padding: 4px 8px; }
+.notes-editor-link-popover button { width: auto; flex: 0 0 auto; padding: 4px 8px; }
 ::highlight(notes-preserved-selection) { background-color: #8975aa66; }
-::highlight(notes-find-match) { background-color: #e8b23e4d; }
-::highlight(notes-find-match-current) { background-color: #e8b23e99; }
-.theme-dark ::highlight(notes-find-match) { background-color: #c9962e59; }
-.theme-dark ::highlight(notes-find-match-current) { background-color: #d9a53ab3; }
+::highlight(notes-find-match) { background-color: #ea7f2e4d; }
+::highlight(notes-find-match-current) { background-color: #ea7f2e99; }
+.theme-dark ::highlight(notes-find-match) { background-color: #cf7a2e59; }
+.theme-dark ::highlight(notes-find-match-current) { background-color: #e08f3ab3; }
 .notes-mdx-editor [data-prototype-tag] { padding: 1px 5px; border-bottom: 2px solid #8975aa; color: #6d587e; background: #f4f1f8; }
 .notes-mdx-editor [data-prototype-callout] { margin: 14px 0; padding: 12px 14px; border-left: 4px solid #c88968; border-radius: 5px; color: #704936; background: #fbf2ee; }
 .notes-tag-directive { position: relative; margin: 0; padding: 24px 0 0; border-left: 3px solid transparent; }
@@ -275,7 +281,6 @@ button { cursor: pointer; font: inherit; }
 .notes-mdx-editor ul[data-notes-tag-chip], .notes-mdx-editor ol[data-notes-tag-chip] { position: relative; padding-top: 24px; }
 .notes-mdx-editor ul[data-notes-tag-chip]::before, .notes-mdx-editor ol[data-notes-tag-chip]::before { position: absolute; top: 0; left: 0; margin: 0; }
 .notes-muted-prefix { display: none; }
-.notes-audio-marker { position: absolute; z-index: 3; top: 0; left: -0.5px; transform: translate(-50%, -50%); color: #a08c96; font-size: 12px; line-height: 1; pointer-events: none; }
 .notes-mdx-editor .mdxeditor-toolbar { position: fixed; z-index: 12; top: 80px; right: 0; left: 0; display: none; flex-wrap: nowrap; gap: 2px; align-items: center; box-sizing: border-box; width: auto; height: 36px; min-height: 36px; margin: 0; overflow-x: auto; padding: 5px 8px; border: 1px solid #d1c4d8; border-radius: 0; background: #fff; box-shadow: 0 8px 24px #392c1f20; white-space: nowrap; zoom: calc(1 / var(--editor-zoom, 1)); }
 /* Exactly one bar is visible at a time: the focused editor's, or — when no
    editor has focus — the first card's, rendered disabled. */
@@ -285,7 +290,7 @@ button { cursor: pointer; font: inherit; }
 /* Toolbars are position:fixed and ignore lane clipping — only the active
    lane's bar may show, and none while the track is mid-swipe. */
 .lane:not(.lane-active) .mdxeditor-toolbar, .lane-viewport.lane-scrolling .mdxeditor-toolbar { display: none !important; }
-.lane:not(.lane-active) .notes-audio-popover { display: none; }
+.lane:not(.lane-active) .notes-audio-popover, .lane:not(.lane-active) .notes-editor-link-popover { display: none; }
 .notes-mdx-editor .mdxeditor-toolbar > * { flex: 0 0 auto; }
 .notes-mdx-editor .mdxeditor-toolbar > div, .notes-mdx-editor .mdxeditor-toolbar [role='group'] { display: flex; flex: 0 0 auto; flex-direction: row; align-items: center; gap: 2px; }
 .notes-mdx-editor .mdxeditor-toolbar button { display: inline-flex; width: 26px; height: 26px; flex: 0 0 26px; align-items: center; justify-content: center; margin: 0; padding: 3px; border: 1px solid #d8cbe0; border-radius: 5px; color: #62506f; background: #fff; line-height: 1; }

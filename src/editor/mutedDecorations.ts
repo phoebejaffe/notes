@@ -51,13 +51,6 @@ export function clearMutedDecorations(host: HTMLElement) {
   if (hosts.delete(host)) applyHighlights()
 }
 
-// Whether a node sits on a muted line that is currently hidden — covers the
-// soft-break case where the line ghosts (transparent) instead of collapsing.
-export function inHiddenMutedRange(host: HTMLElement, node: Node) {
-  const entry = hosts.get(host)
-  return !!entry?.hidden && entry.ranges.some((range) => range.intersectsNode(node))
-}
-
 // Whether a canonical line sits inside a block that collapses when muted
 // lines are hidden — every non-empty line of the block is muted.
 function lineInCollapsibleBlock(map: DocumentMap, lines: string[], canonicalLine: number) {
