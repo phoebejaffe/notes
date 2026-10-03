@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fabianlars/tauri-plugin-oauth": "^2.1.0",
+    "@lexical/link": "^0.48.0",
     "@lexical/list": "0.48.0",
     "@lexical/utils": "0.48.0",
     "@mdxeditor/editor": "^4.2.4",

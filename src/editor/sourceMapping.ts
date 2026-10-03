@@ -230,6 +230,10 @@ export interface SelectionLineRange {
   endLine: number
   collapsed: boolean
   caretOffset: number
+  anchorLine: number
+  focusLine: number
+  anchorOffset: number
+  focusOffset: number
 }
 
 // Maps the current DOM selection to canonical source line indices.
@@ -239,10 +243,12 @@ export function selectionLineRange(host: HTMLElement, map: DocumentMap): Selecti
   const anchorLine = canonicalLineAtPoint(host, map, selection.anchorNode, selection.anchorOffset)
   const focusLine = canonicalLineAtPoint(host, map, selection.focusNode, selection.focusOffset)
   if (anchorLine === null || focusLine === null) return null
+  const anchorOffset = renderedOffsetAtPoint(host, selection.anchorNode, selection.anchorOffset)
+  const focusOffset = renderedOffsetAtPoint(host, selection.focusNode, selection.focusOffset)
   if (selection.isCollapsed) {
-    return { startLine: anchorLine, endLine: focusLine, collapsed: true, caretOffset: renderedOffsetAtPoint(host, selection.anchorNode, selection.anchorOffset) }
+    return { startLine: anchorLine, endLine: focusLine, collapsed: true, caretOffset: anchorOffset, anchorLine, focusLine, anchorOffset, focusOffset }
   }
-  return { startLine: Math.min(anchorLine, focusLine), endLine: Math.max(anchorLine, focusLine), collapsed: false, caretOffset: 0 }
+  return { startLine: Math.min(anchorLine, focusLine), endLine: Math.max(anchorLine, focusLine), collapsed: false, caretOffset: 0, anchorLine, focusLine, anchorOffset, focusOffset }
 }
 
 // --- Restoring the DOM selection after a commit ---
@@ -374,6 +380,15 @@ export function placeCaretAtCanonicalLine(host: HTMLElement, map: DocumentMap, c
   const selection = window.getSelection()
   selection?.setBaseAndExtent(point.node, point.offset, point.node, point.offset)
   return point.node
+}
+
+export function restoreCanonicalSelection(host: HTMLElement, map: DocumentMap, saved: SelectionLineRange): Node | null {
+  if (saved.collapsed) return placeCaretAtCanonicalLine(host, map, saved.anchorLine, saved.anchorOffset)
+  const anchor = domPointForEditorLine(host, map, editorLineForCanonical(map, saved.anchorLine), saved.anchorOffset)
+  const focus = domPointForEditorLine(host, map, editorLineForCanonical(map, saved.focusLine), saved.focusOffset)
+  if (!anchor || !focus) return null
+  window.getSelection()?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
+  return anchor.node
 }
 
 export function selectCanonicalLines(host: HTMLElement, map: DocumentMap, startLine: number, endLine: number): Node | null {

@@ -1,5 +1,7 @@
-import { expect, test } from '@playwright/test'
-import { editorFor, expectSource, selectRenderedText, selectionSnapshot, setCaretAtText } from './support/editor'
+import { expect, test, type Page } from '@playwright/test'
+import { editorFor, expectSource, selectRenderedText, selectionSnapshot, setCaretAtText, sourceFor } from './support/editor'
+
+const sourceText = async (page: Page) => (await sourceFor(page).textContent()) ?? ''
 
 test('bold and italic shortcuts preserve the selected text', async ({ page }) => {
   await page.goto('/prototype?scenario=formatting')
@@ -69,6 +71,54 @@ test('the capture shell keeps the formatting toolbar visible without DOM focus',
   await expect.poll(async () => page.evaluate(() => document.activeElement === document.body)).toBe(true)
 
   await expect(page.locator('.mdxeditor-toolbar')).toBeVisible()
+})
+
+test.describe('the link toolbar control', () => {
+  test('applies a URL to the selected text', async ({ page }) => {
+    await page.goto('/prototype?scenario=plain-text')
+    const root = editorFor(page)
+
+    await selectRenderedText(root, 'alpha target middle')
+    await page.getByRole('button', { name: 'Edit link' }).click()
+    const input = page.getByLabel('Link URL')
+    await expect(input).toBeVisible()
+    await input.fill('example.com/docs')
+    await page.getByRole('button', { name: 'Save' }).click()
+
+    // formatUrl adds the missing scheme before the link is stored.
+    await expectSource(page, /\[alpha target middle\]\(https:\/\/example\.com\/docs\)/u)
+    const anchor = root.locator('a', { hasText: 'alpha target middle' })
+    await expect(anchor).toHaveAttribute('href', 'https://example.com/docs')
+  })
+
+  test('prefills the link under the caret and removes it', async ({ page }) => {
+    await page.goto('/prototype?scenario=formatting')
+    const root = editorFor(page)
+
+    await selectRenderedText(root, 'link text')
+    await page.getByRole('button', { name: 'Edit link' }).click()
+    const input = page.getByLabel('Link URL')
+    await expect(input).toHaveValue('https://example.com')
+    await page.getByRole('button', { name: 'Remove' }).click()
+
+    await expect.poll(async () => sourceText(page)).toMatch(/^link text with trailing text$/mu)
+    const source = await sourceText(page)
+    expect(source).not.toContain('https://example.com')
+    await expect(root.locator('a', { hasText: 'link text' })).toHaveCount(0)
+  })
+
+  test('edits the URL of the link under the caret', async ({ page }) => {
+    await page.goto('/prototype?scenario=formatting')
+    const root = editorFor(page)
+
+    await selectRenderedText(root, 'link text')
+    await page.getByRole('button', { name: 'Edit link' }).click()
+    const input = page.getByLabel('Link URL')
+    await input.fill('https://new.example.org')
+    await page.getByRole('button', { name: 'Save' }).click()
+
+    await expectSource(page, /\[link text\]\(https:\/\/new\.example\.org\)/u)
+  })
 })
 
 test('typing after a collapsed formatted caret stays in the active block', async ({ page }) => {

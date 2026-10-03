@@ -134,6 +134,19 @@ export async function selectRenderedRange(root: Locator, startText: string, endT
   }, { start: startText, end: endText })
 }
 
+// The app's paste listener lives on the editor host; Lexical's own listener
+// lives on the inner [contenteditable] child of .mdxeditor-root-contenteditable.
+export async function pastePlainText(root: Locator, text: string) {
+  await root.evaluate((element, value) => {
+    const target = element.querySelector('[contenteditable="true"]') ?? element
+    const data = new DataTransfer()
+    data.setData('text/plain', value)
+    const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
+    if (!event.clipboardData) Object.defineProperty(event, 'clipboardData', { value: data })
+    target.dispatchEvent(event)
+  }, text)
+}
+
 export async function selectionSnapshot(page: Page) {
   return page.evaluate(() => {
     const selection = window.getSelection()

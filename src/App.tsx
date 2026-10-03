@@ -6,7 +6,9 @@ import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { MdxNotesEditor } from './editor/MdxNotesEditor'
 import { MoveLinesDialog, type MoveLinesTarget } from './editor/MoveLinesDialog'
 import { ensureCaretVisible } from './editor/caretVisibility'
+import type { SelectionLineRange } from './editor/sourceMapping'
 import { extractLinesForMove, parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
+import { applyFindHighlights, clearFindHighlights, collectFindMatches, type FindMatch } from './editor/findMatches'
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { clearNamedSyncBases, clearSyncBases, deleteNamedDocument, listDailyDocuments, listNamedDocuments, replaceDailyDocuments, saveDailyDocument, saveNamedDocument, type DailyDocument, type DocumentSyncBase, type NamedDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
@@ -71,6 +73,8 @@ const BUILTIN_SHORTCUTS = [
   ['Mod-Alt-ArrowDown', 'Jump to editor below'],
   ['Mod-ArrowUp', 'Caret to editor top'],
   ['Mod-ArrowDown', 'Caret to editor bottom'],
+  ['Mod-g', 'Next find match'],
+  ['Mod-Shift-g', 'Previous find match'],
   ['Ctrl-1–9', 'Jump to lane 1–9'],
   ['Backspace', 'Delete one character'],
 ] as const
@@ -219,6 +223,9 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
 }
 
+type LaneEditorLocator = { kind: 'day' | 'note'; id: string }
+type LaneSelectionMemory = { editor: LaneEditorLocator; selection: SelectionLineRange }
+
 function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const parts = shortcut.toLowerCase().split('-')
   let key = parts.pop() ?? ''
@@ -276,6 +283,13 @@ function NotesApp() {
   const [hideMutedLines, setHideMutedLines] = useState(false)
   const [tagColors, setTagColors] = useState<Record<string, string>>(loadTagColors)
   const [query, setQuery] = useState('')
+  const [findIndex, setFindIndexState] = useState(-1)
+  const [findMatchCount, setFindMatchCount] = useState(0)
+  const findMatchesRef = useRef<FindMatch[]>([])
+  const findIndexRef = useRef(-1)
+  const pendingFindExpandRef = useRef<string | null>(null)
+  const findActiveRef = useRef(false)
+  const prevFindQueryRef = useRef('')
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [backupState, setBackupState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [lastBackupAt, setLastBackupAt] = useState<number>()
@@ -312,6 +326,7 @@ function NotesApp() {
   const uploadPendingNotesRef = useRef<() => Promise<void>>(async () => undefined)
   const toggleNoteCollapsedRef = useRef<(id: string) => void>(() => undefined)
   const [activeLane, setActiveLane] = useState(0)
+  const laneSelectionMemoryRef = useRef(new Map<number, LaneSelectionMemory>())
   const laneViewportRef = useRef<HTMLDivElement>(null)
   const laneScrollIdleRef = useRef(0)
   const laneSwipeAccumRef = useRef(0)
@@ -383,6 +398,22 @@ function NotesApp() {
     }
     window.addEventListener('notes-move-lines', handleMoveLinesRequest)
     return () => window.removeEventListener('notes-move-lines', handleMoveLinesRequest)
+  }, [])
+
+  useEffect(() => {
+    function rememberLaneSelection(event: Event) {
+      const host = event.target instanceof HTMLElement ? event.target : null
+      const selection = (event as CustomEvent<SelectionLineRange>).detail
+      const lane = host?.closest<HTMLElement>('.lane')
+      const laneIndex = Number(lane?.dataset.lane)
+      const day = host?.closest<HTMLElement>('.day-card')?.dataset.day
+      const noteId = host?.closest<HTMLElement>('.note-card')?.dataset.noteId
+      const editor = day ? { kind: 'day' as const, id: day } : noteId ? { kind: 'note' as const, id: noteId } : null
+      if (!host || !selection || !Number.isInteger(laneIndex) || !editor) return
+      laneSelectionMemoryRef.current.set(laneIndex, { editor, selection })
+    }
+    window.addEventListener('notes-editor-selection', rememberLaneSelection)
+    return () => window.removeEventListener('notes-editor-selection', rememberLaneSelection)
   }, [])
 
   useEffect(() => {
@@ -493,6 +524,45 @@ function NotesApp() {
   }, [sortedNotes])
   const totalLanes = laneCount + 2
 
+  // Find mode is active once a query exists — the panel alone doesn't change
+  // the document view. Muted lines stay revealed while finding so matches
+  // inside them are reachable.
+  const findActive = searchOpen && query.trim().length > 0
+  const effectiveHideMuted = hideMutedLines && !findActive
+  const collapsedFindNoteIds = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase()
+    if (!searchOpen || !needle) return new Set<string>()
+    return new Set(sortedNotes.filter((note) => note.collapsed && note.markdown.toLocaleLowerCase().includes(needle)).map((note) => note.id))
+  }, [query, searchOpen, sortedNotes])
+
+  useEffect(() => {
+    findActiveRef.current = findActive
+  }, [findActive])
+
+  const restoreLaneSelection = useCallback((index: number) => {
+    // While finding, lane switches must not steal focus from the search input
+    // or overwrite the current-match position.
+    if (findActiveRef.current) return
+    const lane = laneViewportRef.current?.querySelector<HTMLElement>(`.lane[data-lane="${index}"]`)
+    const editors = [...lane?.querySelectorAll<HTMLElement>('.notes-mdx-editor') ?? []]
+    if (!editors.length) return
+    // Browser auto-scroll can bring a lane into view to activate one of its controls.
+    const activeElement = document.activeElement
+    if (activeElement instanceof HTMLElement && lane?.contains(activeElement) && !activeElement.closest('.mdxeditor-root-contenteditable') && activeElement.matches('button,input,textarea,select')) return
+    const memory = laneSelectionMemoryRef.current.get(index)
+    const rememberedEditor = memory && editors.find((host) => {
+      const day = host.closest<HTMLElement>('.day-card')?.dataset.day
+      const noteId = host.closest<HTMLElement>('.note-card')?.dataset.noteId
+      return memory.editor.kind === 'day' ? day === memory.editor.id : noteId === memory.editor.id
+    })
+    const target = rememberedEditor ?? editors[0]
+    if (rememberedEditor && memory) {
+      target.dispatchEvent(new CustomEvent('notes-restore-selection', { detail: memory.selection, bubbles: false }))
+    } else {
+      target.dispatchEvent(new CustomEvent('notes-focus-edge', { detail: { edge: 'start' }, bubbles: false }))
+    }
+  }, [])
+
   const goToLane = useCallback((index: number) => {
     const viewport = laneViewportRef.current
     if (!viewport) return
@@ -500,6 +570,7 @@ function NotesApp() {
     const target = clamped * viewport.clientWidth
     if (Math.abs(viewport.scrollLeft - target) < 2) {
       setActiveLane(clamped)
+      restoreLaneSelection(clamped)
       return
     }
     // `mandatory` snap halts a smooth scroll at the first boundary it crosses,
@@ -511,7 +582,7 @@ function NotesApp() {
       viewport.classList.remove('lane-scrolling')
       viewport.style.scrollSnapType = ''
     }, 160)
-  }, [totalLanes])
+  }, [restoreLaneSelection, totalLanes])
 
   function handleLaneScroll() {
     const viewport = laneViewportRef.current
@@ -519,13 +590,15 @@ function NotesApp() {
     // Hide fixed toolbars while the track is moving so a focused editor's bar
     // on a departing lane can't linger over the incoming lane.
     viewport.classList.add('lane-scrolling')
+    const width = viewport.clientWidth || 1
+    const laneIndex = Math.max(0, Math.min(totalLanes - 1, Math.round(viewport.scrollLeft / width)))
     window.clearTimeout(laneScrollIdleRef.current)
     laneScrollIdleRef.current = window.setTimeout(() => {
       viewport.classList.remove('lane-scrolling')
       viewport.style.scrollSnapType = ''
+      restoreLaneSelection(laneIndex)
     }, 160)
-    const width = viewport.clientWidth || 1
-    setActiveLane(Math.max(0, Math.min(totalLanes - 1, Math.round(viewport.scrollLeft / width))))
+    setActiveLane(laneIndex)
   }
 
   // Keep the track aligned to the active lane across resizes/zoom changes.
@@ -547,6 +620,125 @@ function NotesApp() {
     observer.observe(viewport)
     return () => observer.disconnect()
   }, [activeLane])
+
+  const setFindIndex = useCallback((index: number) => {
+    findIndexRef.current = index
+    setFindIndexState(index)
+  }, [])
+
+  // Centers the match in its stream's viewport. Cross-lane targets ride the
+  // lane track's smooth scroll first — scrollIntoView is deferred until the
+  // track settles so its horizontal side-effect can't fight the animation.
+  const scrollFindMatchIntoView = useCallback((match: FindMatch) => {
+    const start = match.range?.startContainer ?? null
+    const element = match.range
+      ? (start instanceof Element ? start : start?.parentElement)
+      : match.card
+    if (!element) return
+    const viewport = laneViewportRef.current
+    const lane = Number(element.closest<HTMLElement>('.lane')?.dataset.lane ?? 0)
+    const target = lane * (viewport?.clientWidth ?? 0)
+    const reveal = () => element.scrollIntoView({ block: 'center', inline: 'nearest' })
+    if (!viewport || Math.abs(viewport.scrollLeft - target) < 2) {
+      reveal()
+      return
+    }
+    goToLane(lane)
+    const deadline = performance.now() + 1200
+    const poll = () => {
+      if (Math.abs(viewport.scrollLeft - target) < 2) {
+        reveal()
+        return
+      }
+      if (performance.now() < deadline) requestAnimationFrame(poll)
+    }
+    requestAnimationFrame(poll)
+  }, [goToLane])
+
+  const goToFindMatch = useCallback((index: number) => {
+    const matches = findMatchesRef.current
+    const match = matches[index]
+    if (!match) return
+    // A placeholder for a collapsed note: expand it, then the recompute below
+    // resolves the pending note into its first rendered match.
+    if (match.kind === 'collapsed-note' && match.noteId) {
+      pendingFindExpandRef.current = match.noteId
+      toggleNoteCollapsedRef.current(match.noteId)
+      return
+    }
+    setFindIndex(index)
+    applyFindHighlights(matches, index)
+    scrollFindMatchIntoView(match)
+  }, [scrollFindMatchIntoView, setFindIndex])
+
+  const advanceFind = useCallback((direction: 1 | -1) => {
+    const count = findMatchesRef.current.length
+    if (!count) return
+    const current = findIndexRef.current
+    goToFindMatch(current < 0 ? (direction > 0 ? 0 : count - 1) : (current + direction + count) % count)
+  }, [goToFindMatch])
+
+  // Recompute matches whenever the query or rendered documents change, and
+  // re-run across frames so nested directive editors mounted after the pass
+  // still contribute ranges.
+  useEffect(() => {
+    if (!findActive) {
+      findMatchesRef.current = []
+      pendingFindExpandRef.current = null
+      findIndexRef.current = -1
+      clearFindHighlights()
+      queueMicrotask(() => {
+        setFindIndexState(-1)
+        setFindMatchCount(0)
+      })
+      return
+    }
+    let cancelled = false
+    const recompute = (isLast: boolean) => {
+      if (cancelled) return
+      const viewport = laneViewportRef.current
+      if (!viewport) return
+      const matches = collectFindMatches(query, viewport, collapsedFindNoteIds)
+      findMatchesRef.current = matches
+      setFindMatchCount(matches.length)
+      const pending = pendingFindExpandRef.current
+      if (pending) {
+        const idx = matches.findIndex((match) => match.kind === 'range' && match.card.dataset.noteId === pending)
+        if (idx >= 0) {
+          pendingFindExpandRef.current = null
+          goToFindMatch(idx)
+          return
+        }
+        if (isLast) pendingFindExpandRef.current = null
+      }
+      const index = findIndexRef.current >= 0
+        ? Math.min(findIndexRef.current, matches.length - 1)
+        : (matches.length ? 0 : -1)
+      const fresh = findIndexRef.current < 0 && index >= 0
+      setFindIndex(index)
+      applyFindHighlights(matches, index)
+      // A fresh activation (find opened, or a query went from no matches to
+      // some) jumps to the first match like incremental browser find.
+      if (fresh && matches.length) scrollFindMatchIntoView(matches[index])
+    }
+    recompute(false)
+    const frame = requestAnimationFrame(() => {
+      recompute(false)
+      requestAnimationFrame(() => recompute(true))
+    })
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(frame)
+    }
+  }, [findActive, query, documents, namedDocs, days, filterTags, collapsedFindNoteIds, goToFindMatch, scrollFindMatchIntoView, setFindIndex])
+
+  // Typing a new query restarts at the first match — incremental find.
+  useEffect(() => {
+    if (prevFindQueryRef.current === query) return
+    prevFindQueryRef.current = query
+    if (!findActive || !findMatchesRef.current.length) return
+    goToFindMatch(0)
+  }, [findActive, query, goToFindMatch])
 
   // mac app: a horizontal trackpad swipe should step one lane even while the
   // window is unfocused — macOS scroll-through still delivers wheel events to
@@ -660,21 +852,21 @@ function NotesApp() {
     const stream = sentinel?.closest<HTMLElement>('.day-stream')
     if (!sentinel || !stream) return
     const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && !filterTags.length && !hideMutedLines) appendOlderDay()
+      if (entries[0].isIntersecting && !filterTags.length && !effectiveHideMuted) appendOlderDay()
     }, { root: stream, rootMargin: '0px 0px 800px 0px' })
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [appendOlderDay, filterTags.length, hideMutedLines, loaded])
+  }, [appendOlderDay, filterTags.length, effectiveHideMuted, loaded])
 
   useEffect(() => {
-    if (!loaded || filterTags.length || hideMutedLines) return
+    if (!loaded || filterTags.length || effectiveHideMuted) return
     const sentinel = streamEndRef.current
     const stream = sentinel?.closest<HTMLElement>('.day-stream')
     if (!sentinel || !stream) return
     const distanceFromTop = sentinel.getBoundingClientRect().top - stream.getBoundingClientRect().top
     if (distanceFromTop > stream.clientHeight + 800) return
     appendOlderDay()
-  }, [appendOlderDay, days.length, filterTags.length, hideMutedLines, loaded])
+  }, [appendOlderDay, days.length, filterTags.length, effectiveHideMuted, loaded])
 
   useEffect(() => {
     function handleInterfaceShortcuts(event: KeyboardEvent) {
@@ -727,6 +919,13 @@ function NotesApp() {
         if (range && typeof Highlight !== 'undefined') {
           CSS.highlights.set('notes-preserved-selection', new Highlight(range))
         }
+        return
+      }
+      // Mod-G / Mod-Shift-G = next/previous find match — global while find is
+      // active so it works both inside the search input and editors.
+      if (findActiveRef.current && (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'g') {
+        event.preventDefault()
+        advanceFind(event.shiftKey ? -1 : 1)
         return
       }
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
@@ -806,7 +1005,7 @@ function NotesApp() {
     }
     window.addEventListener('keydown', handleInterfaceShortcuts, true)
     return () => window.removeEventListener('keydown', handleInterfaceShortcuts, true)
-  }, [activeLane, documents, goToLane, preferences.shortcuts, today])
+  }, [activeLane, advanceFind, documents, goToLane, preferences.shortcuts, today])
 
   useEffect(() => {
     function closeTransientPanels(event: KeyboardEvent) {
@@ -1552,14 +1751,6 @@ function NotesApp() {
     }
   }
 
-  const searchResults = useMemo(() => {
-    if (!query.trim()) return []
-    const needle = query.toLocaleLowerCase()
-    const dayResults = Object.entries(documents).flatMap(([day, markdown]) => parseMarkdown(markdown).lines.flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [{ day, line: index + 1, text: line }] : []))
-    const noteResults = sortedNotes.flatMap((note) => parseMarkdown(note.markdown).lines.flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [{ day: note.id, line: index + 1, text: line }] : []))
-    return [...dayResults, ...noteResults]
-  }, [documents, query, sortedNotes])
-
   function updateSource(day: string, markdown: string) {
     documentUpdatedAtRef.current[day] = currentTimestamp()
     dirtyDaysRef.current.add(day)
@@ -2028,7 +2219,7 @@ function NotesApp() {
         </nav>}
         {filterOpen && <div className="filter-panel capture-filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
       </div>}
-      {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{query && <span className="search-count">{searchResults.length} matches</span>}</section>}
+      {searchOpen && <section className="search-panel"><span className="search-symbol">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes" aria-label="Search your notes" onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); advanceFind(event.shiftKey ? -1 : 1) } }} />{query && <span className="search-count">{findMatchCount ? `${Math.max(1, findIndex + 1)} of ${findMatchCount}` : 'No matches'}</span>}{query.trim() ? <><button className="find-nav" type="button" aria-label="Previous match" onClick={() => advanceFind(-1)}>‹</button><button className="find-nav" type="button" aria-label="Next match" onClick={() => advanceFind(1)}>›</button></> : null}</section>}
       {futureDateInput && <section className="future-day-panel" role="dialog" aria-label="Open a future day"><label>Future day <input type="date" value={futureDateInput} onChange={(event) => setFutureDateInput(event.target.value)} /></label><button type="button" onClick={() => { openFutureDay(futureDateInput); setFutureDateInput('') }}>Open</button><button type="button" onClick={() => setFutureDateInput('')}>Cancel</button></section>}
       {futureNotice && futureNoticeDay && <div className="future-notice" role="status">{futureNotice}<button type="button" onClick={() => setFutureNotice(undefined)}>Dismiss</button><button type="button" onClick={() => { localStorage.removeItem(`notes-future-notice:${futureNoticeDay}`); localStorage.setItem(`notes-future-notice:${futureNoticeDay}:snooze`, String(Date.now() + 24 * 60 * 60 * 1000)); setFutureNotice(undefined) }}>Snooze 1 day</button></div>}
       {importPreview && <div className="modal-backdrop" role="presentation"><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-heading"><div><span className="eyebrow">Data</span><h2 id="import-title">Review backup import</h2></div><button className="modal-close" type="button" onClick={() => setImportPreview(undefined)}>×</button></div><p className="settings-help">{importPreview.documents.length} Markdown days found; {importPreview.invalid.length} files ignored. Importing can change local notes.</p>{importPreview.documents.filter((document) => document.day in documents).map((document) => <label className="settings-row import-collision" key={document.day}><span className="settings-label">{formatLogicalDay(document.day, preferences.dateFormat)} collision</span><select value={importChoices[document.day] ?? 'local'} onChange={(event) => setImportChoices((current) => ({ ...current, [document.day]: event.target.value as 'local' | 'imported' | 'append' }))}><option value="local">Keep local</option><option value="imported">Keep imported</option><option value="append">Append imported</option></select></label>)}<label className="settings-row"><span className="settings-label">Import mode</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as 'additive' | 'replace')}><option value="additive">Add missing and append collisions</option><option value="replace">Replace all local notes</option></select></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={applyImport}>Import and continue</button><button className="settings-action" type="button" onClick={() => setImportPreview(undefined)}>Cancel</button></div></section></div>}
@@ -2037,13 +2228,13 @@ function NotesApp() {
       <div className="notes-layout lane-viewport" ref={laneViewportRef} onScroll={handleLaneScroll}>
       <section className={`lane${activeLane === 0 ? ' lane-active' : ''}`} data-lane={0} aria-label="Daily lane">
         <section className="day-stream" aria-label="Daily notes">
-          {days.filter((documentDay) => (filterTags.length || hideMutedLines ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, hideMutedLines) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
+          {days.filter((documentDay) => (filterTags.length || effectiveHideMuted ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, effectiveHideMuted) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
             const source = documents[documentDay] ?? ''
             const parsed = parseMarkdown(source)
             return <article className="day-card" data-day={documentDay} data-weekday={new Date(`${documentDay}T12:00:00`).getDay()} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
               <div className="editor-card">
                 <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-                <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={hideMutedLines} tagColors={tagColors} />
+                <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={effectiveHideMuted} tagColors={tagColors} />
 
                 {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
               </div>
@@ -2056,8 +2247,8 @@ function NotesApp() {
         const laneNotes = lanes.get(lane) ?? []
         return <section className={`lane${activeLane === lane ? ' lane-active' : ''}`} key={lane} data-lane={lane} aria-label={`Notes lane ${lane}`}>
           <div className="note-stream">
-            {laneNotes.filter((note) => filterTags.length || hideMutedLines ? sourceMatchesFilter(note.markdown, filterTags, hideMutedLines) : true).map((note) => (
-              <NoteCard key={note.id} note={note} laneCount={laneCount} laneSize={laneNotes.length} hideMutedLines={hideMutedLines} tagColors={tagColors} onChange={updateNoteMarkdown} onRename={renameNote} onToggleCollapsed={toggleNoteCollapsed} onMoveNote={moveNote} onReorderPreview={reorderNotePreview} onReorderCommit={commitNoteReorder} onDelete={deleteNote} />
+            {laneNotes.filter((note) => filterTags.length || effectiveHideMuted ? sourceMatchesFilter(note.markdown, filterTags, effectiveHideMuted) : true).map((note) => (
+              <NoteCard key={note.id} note={note} laneCount={laneCount} laneSize={laneNotes.length} hideMutedLines={effectiveHideMuted} tagColors={tagColors} onChange={updateNoteMarkdown} onRename={renameNote} onToggleCollapsed={toggleNoteCollapsed} onMoveNote={moveNote} onReorderPreview={reorderNotePreview} onReorderCommit={commitNoteReorder} onDelete={deleteNote} />
             ))}
             <button className="lane-add" type="button" onClick={() => createNote(lane)}>+ New note</button>
           </div>

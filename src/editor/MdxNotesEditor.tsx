@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
-import { $createParagraphNode, $createRangeSelection, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $isTextNode, $setSelection, type LexicalEditor } from 'lexical'
+import { $createParagraphNode, $createRangeSelection, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $isTextNode, $setSelection, stopLexicalPropagation, type LexicalEditor } from 'lexical'
 import { $getNearestNodeOfType } from '@lexical/utils'
+import { TOGGLE_LINK_COMMAND } from '@lexical/link'
 import { $createListNode, $isListItemNode, $isListNode, INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
-import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
+import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, restoreCanonicalSelection, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
 import { clearMutedDecorations, inHiddenMutedRange, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
 import { ensureCaretVisible } from './caretVisibility'
 import { addTagDirectiveToRange, checklistToPlainText, indentLines, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
@@ -102,6 +103,34 @@ function refreshAudioMarkers(host: HTMLElement) {
   })
 }
 
+// A pasted bare http(s) URL — the explicit scheme requirement keeps ordinary
+// words from triggering the selection-to-link conversion on paste.
+function pastedLinkUrl(text: string) {
+  const trimmed = text.trim()
+  return /^https?:\/\/\S+$/iu.test(trimmed) ? trimmed : null
+}
+
+function lexicalPointFor(node: Node, offset: number): [string, number, 'text' | 'element'] | null {
+  const lexicalNode = $getNearestNodeFromDOMNode(node)
+  if (!lexicalNode) return null
+  return [lexicalNode.getKey(), offset, node.nodeType === Node.TEXT_NODE ? 'text' : 'element']
+}
+
+// The Lexical selection can lag the DOM selection after a commit — rebuild it
+// from DOM points before running node commands like TOGGLE_LINK_COMMAND.
+function selectDomPoints(editor: LexicalEditor, anchorNode: Node, anchorOffset: number, focusNode: Node, focusOffset: number) {
+  editor.update(() => {
+    const anchor = lexicalPointFor(anchorNode, anchorOffset)
+    const focus = lexicalPointFor(focusNode, focusOffset)
+    if (anchor && focus) {
+      const selection = $createRangeSelection()
+      selection.anchor.set(...anchor)
+      selection.focus.set(...focus)
+      $setSelection(selection)
+    }
+  })
+}
+
 // Rendered text leaves of the editor in document order, skipping empty text
 // and nodes with no layout (e.g. hidden muted blocks).
 function renderedTextLeaves(container: HTMLElement): Node[] {
@@ -117,23 +146,51 @@ function renderedTextLeaves(container: HTMLElement): Node[] {
   return leaves
 }
 
+// The first rendered line box in the editable. A leading empty block or hard
+// break renders a line with no text — its <br> is the leaf — so a text-only
+// search misses it and ArrowUp into that line gets swallowed.
+function firstRenderedLineRect(container: HTMLElement): DOMRect | undefined {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const element = node instanceof Element ? node : node.parentElement
+    if (element?.closest('[data-lexical-cursor]')) continue
+    if (node.nodeName !== 'BR' && (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim())) continue
+    const range = document.createRange()
+    if (node.nodeType === Node.TEXT_NODE) range.selectNodeContents(node)
+    else range.selectNode(node)
+    const rect = range.getClientRects()[0]
+    if (rect) return rect
+  }
+  return undefined
+}
+
 // The caret is at the editor's visual top/bottom edge when its rect sits on
-// the same rendered line as the first/last text line in the whole editor —
-// including lines inside nested directive editors.
+// the same rendered line as the first/last rendered line in the whole editor —
+// including lines inside nested directive editors. The top edge counts empty
+// lines (a leading <p><br></p> has a line box but no text); the bottom edge
+// stays text-only so all-empty trailing blocks — like the <p> Lexical appends
+// after a trailing tag — still count as the edge.
 function caretAtEditorEdge(host: HTMLElement, direction: 'up' | 'down'): boolean {
   const selection = window.getSelection()
   if (!selection?.isCollapsed || !selection.anchorNode || !selection.rangeCount) return false
   const outer = contentEditable(host)
   if (!outer?.contains(selection.anchorNode)) return false
-  const leaves = renderedTextLeaves(outer)
-  const leaf = direction === 'up' ? leaves[0] : leaves[leaves.length - 1]
+  let edgeRect: DOMRect | undefined
+  if (direction === 'up') {
+    edgeRect = firstRenderedLineRect(outer)
+  } else {
+    const leaves = renderedTextLeaves(outer)
+    const leaf = leaves[leaves.length - 1]
+    if (leaf) {
+      const range = document.createRange()
+      range.selectNodeContents(leaf)
+      const rects = range.getClientRects()
+      edgeRect = rects[rects.length - 1]
+    }
+  }
   // No rendered text (empty editor or every line muted-and-hidden): the caret
   // counts as sitting at both edges, so either arrow crosses out.
-  if (!leaf) return true
-  const range = document.createRange()
-  range.selectNodeContents(leaf)
-  const rects = range.getClientRects()
-  const edgeRect = direction === 'up' ? rects[0] : rects[rects.length - 1]
+  if (!edgeRect) return true
   // A collapsed caret in an empty block (<p><br></p>) reports a zero rect —
   // fall back to the anchor element's box so edge detection still works there.
   let caretRect = selection.getRangeAt(0).getBoundingClientRect()
@@ -220,6 +277,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const lastOpRef = useRef<'commit' | 'lexical' | 'external'>('lexical')
   const visibilityRafRef = useRef(0)
   const [activeTags, setActiveTags] = useState<string[]>([])
+  const [activeLink, setActiveLink] = useState<string | null>(null)
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
   const [audioPopover, setAudioPopover] = useState<{ url: string; rect: DOMRect } | null>(null)
 
@@ -339,6 +397,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
   }, [value])
 
+  // Whichever of this host's editors owns both DOM points — the outer editor,
+  // or a nested directive editor when the caret is inside one.
+  const editorContaining = useCallback((first: Node | null, second: Node | null) =>
+    [activeEditorRef.current, lexicalEditorRef.current].find((candidate) => {
+      const root = candidate?.getRootElement()
+      return !!root && root.contains(first) && root.contains(second)
+    }) ?? null, [activeEditorRef, lexicalEditorRef])
+
   // Editor commands run on keydown capture so Lexical never sees them. Line
   // edits are applied to the canonical Markdown and re-imported; the caret or
   // selection is then restored by mapping canonical lines back through mdast
@@ -415,12 +481,29 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         }
       }
       if (!content || !anchor || !content.contains(anchor)) return
+      // The href of the first link the selection touches — covers selections
+      // anchored on a boundary outside the link and ranges spanning one.
+      let linkHref: string | null = null
+      const selection = window.getSelection()
+      if (selection?.rangeCount) {
+        const domRange = selection.getRangeAt(0)
+        for (const link of content.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+          if (domRange.intersectsNode(link)) {
+            linkHref = link.getAttribute('href')
+            break
+          }
+        }
+      }
+      setActiveLink((current) => (current === linkHref ? current : linkHref))
       const map = buildDocumentMap(valueRef.current)
       const range = selectionLineRange(host, map)
       // Keep the last *mappable* range — an anchor inside the editor can still
       // map to null (e.g. directive chrome), and the tag input relies on this
       // snapshot after focus leaves the editable.
-      if (range) lastRangeRef.current = range
+      if (range) {
+        lastRangeRef.current = range
+        host.dispatchEvent(new CustomEvent('notes-editor-selection', { detail: range, bubbles: true }))
+      }
       const tags = range
         ? [...new Set(parseMarkdown(valueRef.current).ranges
             .filter((tagRange) => tagRange.startLine <= range.endLine && tagRange.endLine >= range.startLine)
@@ -484,12 +567,6 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const direction = ((event as CustomEvent).detail as { direction?: string } | undefined)?.direction
       if (direction === 'up' || direction === 'down') moveSelectedLines(direction)
       else if (direction === 'indent' || direction === 'outdent') indentSelection(direction)
-    }
-
-    const lexicalPointFor = (node: Node, offset: number): [string, number, 'text' | 'element'] | null => {
-      const lexicalNode = $getNearestNodeFromDOMNode(node)
-      if (!lexicalNode) return null
-      return [lexicalNode.getKey(), offset, node.nodeType === Node.TEXT_NODE ? 'text' : 'element']
     }
 
     const toggleChecklistItem = () => {
@@ -628,11 +705,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       const content = contentEditable(host)
       const range = lastRangeRef.current
       const map = buildDocumentMap(valueRef.current)
-      const placed = range
-        ? range.collapsed
-          ? placeCaretAtCanonicalLine(host, map, range.startLine, range.caretOffset)
-          : selectCanonicalLines(host, map, range.startLine, range.endLine)
-        : null
+      const placed = range ? restoreCanonicalSelection(host, map, range) : null
       if (!placed) {
         focusEdge('start')
         return
@@ -642,6 +715,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       editable?.focus()
       // Deferred a frame so WKWebView finishes any focus-driven scroll first.
       window.requestAnimationFrame(() => ensureCaretVisible({ preferTop: true }))
+    }
+
+    const handleRestoreSelection = (event: Event) => {
+      const saved = (event as CustomEvent<SelectionLineRange>).detail
+      if (!saved) return
+      userInteractedRef.current = true
+      const map = buildDocumentMap(valueRef.current)
+      reapplyUntilSettled(() => {
+        contentEditable(host)?.focus({ preventScroll: true })
+        return restoreCanonicalSelection(host, map, saved)
+      })
     }
 
     const handleMoveCaretRestore = (event: Event) => {
@@ -764,10 +848,31 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     // own import pipeline instead of inserting it as literal text. Rich HTML
     // paste stays with Lexical.
     const handlePaste = (event: ClipboardEvent) => {
-      if (event.clipboardData?.getData('text/html')) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select')) return
       const text = event.clipboardData?.getData('text/plain')
+      const domSelection = window.getSelection()
+      // A bare URL pasted over a non-collapsed selection wraps the selected
+      // text in a link rather than replacing it.
+      const url = text ? pastedLinkUrl(text) : null
+      if (url && domSelection && !domSelection.isCollapsed) {
+        const editor = editorContaining(domSelection.anchorNode, domSelection.focusNode)
+        if (editor) {
+          event.preventDefault()
+          // Handled in Lexical space — mark the event so Lexical's own paste
+          // listener doesn't also insert the raw URL text.
+          stopLexicalPropagation(event)
+          selectDomPoints(editor, domSelection.anchorNode!, domSelection.anchorOffset, domSelection.focusNode!, domSelection.focusOffset)
+          editor.dispatchCommand(TOGGLE_LINK_COMMAND, url)
+          return
+        }
+      }
+      if (event.clipboardData?.getData('text/html')) return
       if (!text) return
       event.preventDefault()
+      // Same interception as above — without it Lexical's rich-text paste
+      // inserts the raw text a second time alongside the markdown import.
+      stopLexicalPropagation(event)
       editorRef.current?.insertMarkdown(text)
     }
     host.addEventListener('keydown', handler, true)
@@ -776,6 +881,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('notes-line-gesture', handleLineGesture)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
     host.addEventListener('notes-restore-caret', handleRestoreCaret)
+    host.addEventListener('notes-restore-selection', handleRestoreSelection)
     host.addEventListener('notes-move-caret-restore', handleMoveCaretRestore)
     document.addEventListener('selectionchange', updateSelection)
     return () => {
@@ -785,11 +891,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('notes-line-gesture', handleLineGesture)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
       host.removeEventListener('notes-restore-caret', handleRestoreCaret)
+      host.removeEventListener('notes-restore-selection', handleRestoreSelection)
       host.removeEventListener('notes-move-caret-restore', handleMoveCaretRestore)
       document.removeEventListener('selectionchange', updateSelection)
       cancelAnimationFrame(visibilityRafRef.current)
     }
-  }, [lexicalEditorRef, activeEditorRef])
+  }, [lexicalEditorRef, activeEditorRef, editorContaining])
 
   function openExternalLink(href: string) {
     if ('__TAURI_INTERNALS__' in window) {
@@ -816,6 +923,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
   const actions = useMemo<EditorActions>(() => ({
     activeTags,
+    activeLink,
     recentTags,
     addTag: (tagValue) => {
       const host = hostRef.current
@@ -842,7 +950,17 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (result.error) return
       commitRef.current?.(result.source, { type: 'caret', line: Math.max(0, range.startLine - 1), offset: range.caretOffset })
     },
-  }), [activeTags, recentTags])
+    applyLink: (url, range) => {
+      const live = window.getSelection()
+      const domRange = range ?? (live?.rangeCount ? live.getRangeAt(0) : null)
+      const editor = domRange && editorContaining(domRange.startContainer, domRange.endContainer)
+      if (!domRange || !editor) return
+      userInteractedRef.current = true
+      selectDomPoints(editor, domRange.startContainer, domRange.startOffset, domRange.endContainer, domRange.endOffset)
+      editor.dispatchCommand(TOGGLE_LINK_COMMAND, url)
+      editor.getRootElement()?.focus({ preventScroll: true })
+    },
+  }), [activeTags, activeLink, recentTags, editorContaining])
 
   return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor}>
     <EditorActionsProvider value={actions}>

@@ -1,6 +1,28 @@
 import { useRef, useState } from 'react'
 import { BoldItalicUnderlineToggles, ListsToggle } from '@mdxeditor/editor'
+import { formatUrl } from '@lexical/link'
 import { useEditorActions } from './editorActions'
+
+// The DOM selection inside an editor's contenteditable, cloned for later use —
+// focusing a toolbar input moves the live selection out of the editor.
+function editorSelectionRange() {
+  const selection = window.getSelection()
+  const anchor = selection?.anchorNode
+  const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
+  return selection && selection.rangeCount > 0 && anchorElement?.closest('.mdxeditor-root-contenteditable')
+    ? selection.getRangeAt(0).cloneRange()
+    : null
+}
+
+function showPreservedSelection(range: Range | null) {
+  if (range && typeof Highlight !== 'undefined') {
+    CSS.highlights.set('notes-preserved-selection', new Highlight(range))
+  }
+}
+
+function clearPreservedSelection() {
+  CSS.highlights?.delete('notes-preserved-selection')
+}
 
 function MuteIcon() {
   return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M22 10.5V12C22 16.714 22 19.071 20.536 20.536C19.071 22 16.714 22 12 22C7.286 22 4.929 22 3.464 20.536C2 19.071 2 4.929 3.464 3.464C4.929 3.464 7.286 2 12 2H13.5" /><path d="M22 2L17 7M17 2L22 7" /></svg>
@@ -68,23 +90,9 @@ function AddTagControl() {
 
   function captureEditorSelection() {
     const selection = window.getSelection()
-    const anchor = selection?.anchorNode
-    const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
-    preservedRangeRef.current = selection && selection.rangeCount > 0 && !selection.isCollapsed && anchorElement?.closest('.mdxeditor-root-contenteditable')
-      ? selection.getRangeAt(0).cloneRange()
+    preservedRangeRef.current = selection && selection.rangeCount > 0 && !selection.isCollapsed
+      ? editorSelectionRange()
       : null
-  }
-
-  function showPreservedSelection() {
-    const range = preservedRangeRef.current
-    preservedRangeRef.current = null
-    if (range && typeof Highlight !== 'undefined') {
-      CSS.highlights.set('notes-preserved-selection', new Highlight(range))
-    }
-  }
-
-  function clearPreservedSelection() {
-    CSS.highlights?.delete('notes-preserved-selection')
   }
 
   function submit(value = tag) {
@@ -98,10 +106,86 @@ function AddTagControl() {
   const recentTags = actions?.recentTags ?? []
   return <span className="notes-editor-tag-control">
     <span className="notes-editor-tag-input-wrap">
-      <input value={tag} onChange={(event) => { setTag(event.target.value); setOpen(true) }} onMouseDown={captureEditorSelection} onFocus={() => { setOpen(true); showPreservedSelection() }} onBlur={() => { window.setTimeout(() => setOpen(false), 120); clearPreservedSelection() }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submit() } }} aria-label="Tag name" placeholder="Add tag" />
+      <input value={tag} onChange={(event) => { setTag(event.target.value); setOpen(true) }} onMouseDown={captureEditorSelection} onFocus={() => { setOpen(true); showPreservedSelection(preservedRangeRef.current) }} onBlur={() => { window.setTimeout(() => setOpen(false), 120); clearPreservedSelection() }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submit() } }} aria-label="Tag name" placeholder="Add tag" />
       {open && recentTags.length > 0 && <span className="notes-editor-tag-suggestions" role="listbox">{recentTags.filter((recent) => !tag || recent.toLocaleLowerCase().includes(tag.toLocaleLowerCase())).map((recent) => <button type="button" key={recent} onMouseDown={(event) => event.preventDefault()} onClick={() => submit(recent)}>{recent}</button>)}</span>}
     </span>
     <button className="notes-editor-toolbar-button" type="button" onClick={() => submit()}>+ Tag</button>
+  </span>
+}
+
+function LinkIcon() {
+  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
+}
+
+// Link button + popover: applies a URL to the preserved editor selection, or
+// edits/removes the link under the caret. The popover is position:fixed — the
+// toolbar's overflow-x: auto would clip an absolutely-positioned one.
+function LinkControl() {
+  const actions = useEditorActions()
+  const wrapRef = useRef<HTMLSpanElement>(null)
+  const preservedRangeRef = useRef<Range | null>(null)
+  const [open, setOpen] = useState(false)
+  const [url, setUrl] = useState('')
+  const [anchor, setAnchor] = useState<{ left: number; top?: number; bottom?: number } | null>(null)
+
+  function openPopover() {
+    preservedRangeRef.current = editorSelectionRange()
+    setUrl(actions?.activeLink ?? '')
+    const rect = wrapRef.current?.getBoundingClientRect()
+    if (rect) {
+      const style = window.innerHeight - rect.bottom >= 60
+        ? { left: rect.left, top: rect.bottom + 6 }
+        : { left: rect.left, bottom: window.innerHeight - rect.top + 6 }
+      setAnchor(style)
+    }
+    setOpen(true)
+  }
+
+  function close() {
+    setOpen(false)
+    clearPreservedSelection()
+  }
+
+  function save() {
+    const normalized = url.trim()
+    if (!normalized) return
+    actions?.applyLink(formatUrl(normalized), preservedRangeRef.current)
+    close()
+  }
+
+  function remove() {
+    actions?.applyLink(null, preservedRangeRef.current)
+    close()
+  }
+
+  return <span className="notes-editor-link-control" ref={wrapRef}>
+    <button
+      className="notes-editor-toolbar-button"
+      type="button"
+      aria-label="Edit link"
+      aria-expanded={open}
+      title="Add or edit link"
+      data-state={actions?.activeLink ? 'on' : undefined}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => (open ? close() : openPopover())}
+    ><LinkIcon /></button>
+    {open && <span className="notes-editor-link-popover" style={anchor ?? undefined}>
+      <input
+        value={url}
+        onChange={(event) => setUrl(event.target.value)}
+        onFocus={() => showPreservedSelection(preservedRangeRef.current)}
+        onBlur={() => window.setTimeout(close, 120)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') { event.preventDefault(); save() }
+          else if (event.key === 'Escape') { event.preventDefault(); close() }
+        }}
+        aria-label="Link URL"
+        placeholder="https://example.com"
+        autoFocus
+      />
+      <button className="notes-editor-toolbar-button" type="button" disabled={!url.trim()} onMouseDown={(event) => event.preventDefault()} onClick={save}>Save</button>
+      <button className="notes-editor-toolbar-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={remove}>Remove</button>
+    </span>}
   </span>
 }
 
@@ -111,6 +195,7 @@ export function MdxEditorToolbar() {
   return <>
     <BoldItalicUnderlineToggles />
     <ListsToggle options={['bullet', 'number', 'check']} />
+    <LinkControl />
     <button className="notes-editor-toolbar-button notes-editor-mute-button" type="button" aria-label="Mute selected lines" title="Mute selected lines" onClick={(event) => event.currentTarget.dispatchEvent(new CustomEvent('notes-mute-toggle', { bubbles: true }))}><MuteIcon /></button>
     <GestureMoveButton />
     {activeTags.length > 0 && <span className="notes-editor-active-tags" aria-label="Active tags">{activeTags.map((tag) => <span className="notes-editor-active-tag" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => actions?.removeTag(tag)}>×</button></span>)}</span>}

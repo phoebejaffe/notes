@@ -16,11 +16,16 @@ html, body { touch-action: pan-x pan-y; }
    lane dots, shortcuts) at the first intermediate lane. Discrete swipes are
    enforced by the mac app's wheel stepping instead. */
 .lane { flex: 0 0 100%; min-width: 0; display: flex; flex-direction: column; overflow: hidden; scroll-snap-align: start; }
-/* overscroll is contained on the vertical axis only — a `contain` shorthand
+/* Streams scroll vertically only. overflow-x must be `hidden`, not the
+   `overflow-y: auto` fallback (`visible` computes to `auto`): any content a
+   few px wider than the stream would make it horizontally scrollable, and a
+   horizontal pan/flick would latch onto the stream instead of chaining to the
+   lane viewport — breaking lane swipes and letting content drift sideways.
+   overscroll is contained on the vertical axis only — a `contain` shorthand
    would also swallow horizontal deltas and keep them from chaining up to the
    lane viewport's snap scrolling. */
-.day-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
-.note-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+.day-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; }
+.note-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; }
 .topbar { position: fixed; z-index: 10; top: 0; left: 50%; display: flex; align-items: center; justify-content: space-between; width: min(980px, 100%); min-height: 38px; padding: 16px; transform: translateX(-50%); border-bottom: 1px solid #eeeae5; background: #fff; box-shadow: 0 4px 14px #392c1f10; pointer-events: none; }
 .web-shell .topbar { box-sizing: border-box; min-height: 42px; height: 42px; padding: 4px 12px; }
 .web-shell .search-button { width: 34px; height: 34px; font-size: 24px; }
@@ -60,6 +65,11 @@ button { cursor: pointer; font: inherit; }
 .search-panel { position: fixed; z-index: 9; top: 70px; left: 50%; display: flex; align-items: center; gap: 8px; width: min(948px, calc(100% - 32px)); margin: 0; padding: 9px 12px; transform: translateX(-50%); border: 1px solid #d9d4cb; border-radius: 9px; background: #fffdf9; box-shadow: 0 8px 20px #392c1f18; }
 .search-panel input { flex: 1; border: 0; outline: 0; color: #403a42; background: transparent; font-size: 13px; }
 .search-symbol, .search-count { color: #9b9185; font-size: 12px; }
+.search-count { white-space: nowrap; }
+.find-nav { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; color: #625b54; background: transparent; font-size: 16px; line-height: 1; }
+.find-nav:hover { background: #f8f6fa; }
+.theme-dark .find-nav { color: #e8e2dc; }
+.theme-dark .find-nav:hover { background: #141215; }
 .sync-prompt { margin: 0 auto 18px; padding: 9px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #756a7d; background: #f8f5fa; font-size: 12px; text-align: center; }
 .sync-prompt-link { padding: 0; border: 0; color: #806790; background: transparent; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .day-stream, .note-stream { display: flex; flex-direction: column; gap: 0; box-sizing: border-box; padding-top: 100px; padding-bottom: 76px; zoom: var(--editor-zoom, 1); }
@@ -232,7 +242,15 @@ button { cursor: pointer; font: inherit; }
 .notes-editor-tag-suggestions button:hover { background: #f4eff7 !important; }
 .notes-editor-tag-control input { width: 92px; padding: 5px 6px; border: 1px solid #d8cbe0; border-radius: 5px; color: #50455a; background: #fff; font-size: 11px; }
 .notes-editor-tag-control .notes-editor-toolbar-button { width: auto; flex-basis: auto; padding-inline: 6px; }
+.notes-editor-link-control { display: inline-flex; align-items: center; }
+.notes-editor-link-popover { position: fixed; z-index: 30; display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #d8cbe0; border-radius: 6px; background: #fff; box-shadow: 0 8px 20px #392c1f20; }
+.notes-editor-link-popover input { width: 200px; padding: 5px 6px; border: 1px solid #d8cbe0; border-radius: 5px; color: #50455a; background: #fff; font-size: 11px; }
+.notes-mdx-editor .mdxeditor-toolbar .notes-editor-link-popover button { width: auto; flex: 0 0 auto; padding: 4px 8px; }
 ::highlight(notes-preserved-selection) { background-color: #8975aa66; }
+::highlight(notes-find-match) { background-color: #e8b23e4d; }
+::highlight(notes-find-match-current) { background-color: #e8b23e99; }
+.theme-dark ::highlight(notes-find-match) { background-color: #c9962e59; }
+.theme-dark ::highlight(notes-find-match-current) { background-color: #d9a53ab3; }
 .notes-mdx-editor [data-prototype-tag] { padding: 1px 5px; border-bottom: 2px solid #8975aa; color: #6d587e; background: #f4f1f8; }
 .notes-mdx-editor [data-prototype-callout] { margin: 14px 0; padding: 12px 14px; border-left: 4px solid #c88968; border-radius: 5px; color: #704936; background: #fbf2ee; }
 .notes-tag-directive { position: relative; margin: 0; padding: 24px 0 0; border-left: 3px solid transparent; }
@@ -311,6 +329,8 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .notes-editor-tag-suggestions { border-color: #4d4649; background: #2a272b; }
 .theme-dark .notes-editor-tag-suggestions button { color: #e8e2dc; }
 .theme-dark .notes-editor-tag-suggestions button:hover { background: #383338 !important; }
+.theme-dark .notes-editor-link-popover { border-color: #4d4649; background: #2a272b; }
+.theme-dark .notes-editor-link-popover input { border-color: #4d4649; color: #e8e2dc; background: #332f33; }
 .notes-audio-popover { position: fixed; z-index: 30; display: flex; box-sizing: border-box; width: 240px; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #d8cbe0; border-radius: 8px; background: #fff; box-shadow: 0 10px 28px #392c1f26; }
 .notes-audio-play { display: inline-flex; width: 28px; height: 28px; flex: 0 0 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; color: #fff; background: #806790; }
 .notes-audio-play:hover { background: #6d587e; }

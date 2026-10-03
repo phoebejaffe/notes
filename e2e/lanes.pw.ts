@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { selectRenderedText, selectionSnapshot, setCaretAtText } from './support/editor'
 
 async function seedApp(page: Page, notes: { id: string; title: string; markdown: string; lane: number; order: number; collapsed?: boolean }[] = []) {
   await page.addInitScript(() => {
@@ -52,6 +53,54 @@ test('navigates lanes with the keyboard shortcut', async ({ page }) => {
   await expect.poll(() => lane(page, 1).getAttribute('class')).toContain('lane-active')
 })
 
+test('restores each lane selection to its last-interacted editor', async ({ page }) => {
+  await seedApp(page, [
+    { id: 'lane-one-first', title: 'First', markdown: 'first editor text', lane: 1, order: 0 },
+    { id: 'lane-one-last', title: 'Last', markdown: 'last editor selection target', lane: 1, order: 1 },
+    { id: 'lane-two-only', title: 'Other', markdown: 'other lane caret position', lane: 2, order: 0 },
+  ])
+  const todayEditor = page.locator('.day-card .mdxeditor-root-contenteditable').first()
+  await todayEditor.click()
+  await page.keyboard.press('Meta+Alt+Shift+ArrowRight')
+
+  await expect.poll(() => page.evaluate(() => {
+    const anchor = window.getSelection()?.anchorNode
+    const element = anchor instanceof Element ? anchor : anchor?.parentElement
+    return element?.closest<HTMLElement>('.note-card')?.dataset.noteId ?? null
+  })).toBe('lane-one-first')
+  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBe(0)
+
+  const lastEditor = lane(page, 1).locator('.note-card[data-note-id="lane-one-last"] .mdxeditor-root-contenteditable')
+  await setCaretAtText(lastEditor, 'last editor selection target', 0)
+  await selectRenderedText(lastEditor, 'editor selection')
+  await expect.poll(async () => (await selectionSnapshot(page)).text).toBe('editor selection')
+  await page.keyboard.press('Meta+Alt+Shift+ArrowRight')
+
+  await expect.poll(() => page.evaluate(() => {
+    const anchor = window.getSelection()?.anchorNode
+    const element = anchor instanceof Element ? anchor : anchor?.parentElement
+    return element?.closest<HTMLElement>('.note-card')?.dataset.noteId ?? null
+  })).toBe('lane-two-only')
+  const otherEditor = lane(page, 2).locator('.note-card .mdxeditor-root-contenteditable')
+  await setCaretAtText(otherEditor, 'other lane caret position', 6)
+
+  await page.keyboard.press('Meta+Alt+Shift+ArrowLeft')
+  await expect.poll(async () => (await selectionSnapshot(page)).text).toBe('editor selection')
+  await expect.poll(() => page.evaluate(() => {
+    const anchor = window.getSelection()?.anchorNode
+    const element = anchor instanceof Element ? anchor : anchor?.parentElement
+    return element?.closest<HTMLElement>('.note-card')?.dataset.noteId ?? null
+  })).toBe('lane-one-last')
+
+  await page.keyboard.press('Meta+Alt+Shift+ArrowRight')
+  await expect.poll(() => page.evaluate(() => {
+    const anchor = window.getSelection()?.anchorNode
+    const element = anchor instanceof Element ? anchor : anchor?.parentElement
+    return element?.closest<HTMLElement>('.note-card')?.dataset.noteId ?? null
+  })).toBe('lane-two-only')
+  await expect.poll(async () => (await selectionSnapshot(page)).anchorOffset).toBe(6)
+})
+
 test('plain arrow keys never shift lanes', async ({ page }) => {
   await seedApp(page, [{ id: 'n1', title: 'Ideas', markdown: 'x', lane: 1, order: 0 }])
   await expect(page.locator('.lane')).toHaveCount(3)
@@ -68,6 +117,41 @@ test('plain arrow keys never shift lanes', async ({ page }) => {
   // And the designated shortcut still works.
   await page.keyboard.press('Meta+Alt+Shift+ArrowRight')
   await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('1')
+})
+
+test('a horizontal touch swipe changes lanes on mobile', async ({ browser }) => {
+  const context = await browser.newContext({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 },
+  })
+  const page = await context.newPage()
+  try {
+    await seedApp(page, [{ id: 'n1', title: 'Ideas', markdown: 'x', lane: 1, order: 0 }])
+    await expect(page.locator('.lane')).toHaveCount(3)
+    const client = await page.context().newCDPSession(page)
+    // synthesizeScrollGesture drives Chromium's real scroll pipeline (scroll
+    // latching + chaining + snap) — the same path a finger flick takes. A
+    // horizontal gesture over the stream must chain to the lane viewport, not
+    // be latched by the stream itself.
+    await client.send('Input.synthesizeScrollGesture', {
+      x: 200, y: 400, xDistance: -300, yDistance: 0, speed: 1500, gestureSourceType: 'touch',
+    })
+    await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('1')
+    await expect(page.locator('.lane').nth(1).locator('.note-title')).toContainText('Ideas')
+    await client.send('Input.synthesizeScrollGesture', {
+      x: 200, y: 400, xDistance: 300, yDistance: 0, speed: 1500, gestureSourceType: 'touch',
+    })
+    await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('0')
+    // A vertical gesture stays in-lane (stream scrolls, not the lane track).
+    await client.send('Input.synthesizeScrollGesture', {
+      x: 200, y: 400, xDistance: 0, yDistance: -300, speed: 1500, gestureSourceType: 'touch',
+    })
+    await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('0')
+    await expect.poll(() => page.locator('.notes-layout').evaluate((el) => el.scrollLeft)).toBe(0)
+  } finally {
+    await context.close()
+  }
 })
 
 test('Cmd-Opt-Shift-Up returns to lane 0 with the caret at the top of today', async ({ page }) => {

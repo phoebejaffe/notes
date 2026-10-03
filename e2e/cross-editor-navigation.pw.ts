@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { selectionSnapshot, setCaretAtText } from './support/editor'
+import { editorFor, selectionSnapshot, setCaretAtText } from './support/editor'
 
 test('plain ArrowDown crosses from the last line to the next editor', async ({ page }) => {
   await page.goto('/prototype?multi')
@@ -64,6 +64,40 @@ test('ArrowUp from the start of the second line lands on the first line, not the
   await page.keyboard.type('!')
   await expect(day3).toContainText('!Plain day with only untagged content.')
   await expect(day2).not.toContainText('!')
+})
+
+test('plain ArrowUp from the second line enters a leading empty line', async ({ page }) => {
+  await page.goto('/prototype?scenario=plain-text')
+  const root = editorFor(page)
+
+  // Split "prefix alpha" at its start: the document gains an empty first line
+  // and the caret lands on the text line below it. The Shift press absorbs the
+  // swallowed first keypress after a programmatic DOM selection.
+  await setCaretAtText(root, 'prefix alpha', 0)
+  await page.keyboard.press('Shift')
+  await page.keyboard.press('Enter')
+  const caretInFirstBlock = () =>
+    page.evaluate(() => {
+      const editable = document.querySelector('[contenteditable="true"]')
+      const anchor = window.getSelection()?.anchorNode
+      const block = (anchor instanceof Element ? anchor : anchor?.parentElement)?.closest('p')
+      return !!editable && !!block && editable.firstElementChild === block
+    })
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const editable = document.querySelector('[contenteditable="true"]')
+      const first = editable?.firstElementChild
+      const anchor = window.getSelection()?.anchorNode
+      const block = (anchor instanceof Element ? anchor : anchor?.parentElement)?.closest('p')
+      return !!first && first.tagName === 'P' && !first.textContent && !!block && block !== first
+    }),
+  ).toBe(true)
+
+  // Up moves the caret into the empty first line rather than sticking.
+  await page.keyboard.press('ArrowUp')
+  await expect.poll(caretInFirstBlock).toBe(true)
+  await page.keyboard.type('!')
+  await expect(root.locator('p').first()).toHaveText('!')
 })
 
 test('arrows cross into and out of an empty editor', async ({ page }) => {

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import {
   editorFor,
   expectSource,
+  pastePlainText,
   selectRenderedRange,
   selectRenderedText,
   selectionSnapshot,
@@ -174,6 +175,60 @@ test('pasting multi-line markdown round-trips into canonical source', async ({ p
   expect(source).toContain('bold target')
   expect(source).toContain('suffix omega')
   await expect(root.locator('li', { hasText: 'pasted item' })).toHaveCount(1)
+})
+
+test.describe('pasting over a selection', () => {
+  test('a pasted URL wraps the selected text in a markdown link', async ({ page }) => {
+    await page.goto('/prototype?scenario=plain-text')
+    const root = editorFor(page)
+
+    await selectRenderedText(root, 'alpha target middle')
+    await pastePlainText(root, 'https://example.com/page')
+
+    await expect.poll(async () => sourceText(page)).toContain('[alpha target middle](https://example.com/page)')
+    const anchor = root.locator('a', { hasText: 'alpha target middle' })
+    await expect(anchor).toHaveAttribute('href', 'https://example.com/page')
+    // The URL is not inserted as raw text alongside the link.
+    const source = await sourceText(page)
+    expect(source.match(/https:\/\/example\.com\/page/gu)).toHaveLength(1)
+    expect(source).toContain('prefix alpha')
+    expect(source).toContain('suffix omega')
+  })
+
+  test('a pasted URL with surrounding whitespace still links the selection', async ({ page }) => {
+    await page.goto('/prototype?scenario=plain-text')
+    const root = editorFor(page)
+
+    await selectRenderedText(root, 'alpha target middle')
+    await pastePlainText(root, '  https://example.com/  ')
+
+    await expect.poll(async () => sourceText(page)).toContain('[alpha target middle](https://example.com/)')
+  })
+
+  test('non-URL text pasted over a selection replaces it without linking', async ({ page }) => {
+    await page.goto('/prototype?scenario=plain-text')
+    const root = editorFor(page)
+
+    await selectRenderedText(root, 'alpha target middle')
+    await pastePlainText(root, 'replacement words')
+
+    await expect.poll(async () => sourceText(page)).toContain('replacement words')
+    const source = await sourceText(page)
+    expect(source).not.toContain('alpha target middle')
+    expect(source).not.toContain('](')
+  })
+
+  test('a URL pasted at a collapsed caret inserts as text, not a link', async ({ page }) => {
+    await page.goto('/prototype?scenario=plain-text')
+    const root = editorFor(page)
+
+    await setCaretAtText(root, 'alpha target middle', 'alpha target middle'.length)
+    await pastePlainText(root, 'https://example.com/')
+
+    await expect.poll(async () => sourceText(page)).toContain('https://example.com/')
+    const source = await sourceText(page)
+    expect(source).not.toContain('[alpha target middle](')
+  })
 })
 
 test.describe('undo restores the source after source-space operations', () => {
