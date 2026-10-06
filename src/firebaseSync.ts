@@ -1,6 +1,6 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, runTransaction, setDoc, type DocumentData } from 'firebase/firestore'
 import { firestore } from './firebase'
-import { decryptDailyDocument, decryptNamedDocument, encryptDailyDocument, encryptNamedDocument, type EncryptedDailyDocument, type EncryptedNamedDocument } from './encryptedSync'
+import { decryptDailyDocument, decryptNamedDocument, encryptDailyDocument, type EncryptedDailyDocument, type EncryptedNamedDocument } from './encryptedSync'
 import { createKeyBundle, recoverDataKey, type EncryptedEnvelope, type KeyBundle } from './crypto'
 import { mergeMarkdown } from './markdownMerge'
 import type { DailyDocument, DocumentSyncBase, NamedDocument } from './storage'
@@ -118,8 +118,10 @@ export async function uploadEncryptedDocument(
   const writeId = crypto.randomUUID()
   return runTransaction(firestore, async (transaction) => {
     const snapshot = await transaction.get(documentRef)
+    // An undecryptable remote record is treated as absent — the local write
+    // then self-heals a poisoned document instead of failing forever.
     const remote = snapshot.exists()
-      ? await decryptDailyDocument(asEncryptedDocument(snapshot.data()), key)
+      ? await decryptDailyDocument(asEncryptedDocument(snapshot.data()), key).catch(() => undefined)
       : undefined
     const writeDocument = async (markdown: string) => {
       options.onWriteId?.(writeId)
@@ -149,7 +151,8 @@ export async function syncDocuments(uid: string, localDocuments: DailyDocument[]
   const uploads: { local: DailyDocument; remote?: DailyDocument }[] = []
 
   for (const snapshot of remote.docs) {
-    const remoteDocument = await decryptDailyDocument(asEncryptedDocument(snapshot.data()), key)
+    const remoteDocument = await decryptDailyDocument(asEncryptedDocument(snapshot.data()), key).catch(() => undefined)
+    if (!remoteDocument) continue
     remoteByDay.set(remoteDocument.day, remoteDocument)
     const localDocument = localByDay.get(remoteDocument.day)
     if (!localDocument || localDocument.markdown === remoteDocument.markdown || localDocument.markdown === localDocument.syncBase?.markdown) {
@@ -185,7 +188,9 @@ export async function syncDocuments(uid: string, localDocuments: DailyDocument[]
 
 // Every snapshot re-delivers the whole collection, so memoize decryption on
 // the envelope: identical {iv, ciphertext} provably decrypts to the same
-// document, and most docs are unchanged between snapshots.
+// document, and most docs are unchanged between snapshots. A document that
+// fails to decrypt resolves to undefined — one bad record must not sink the
+// whole collection.
 function makeDecryptCache<Encrypted extends { payload: EncryptedEnvelope }, Decrypted>(
   decrypt: (document: Encrypted, key: CryptoKey) => Promise<Decrypted>,
   key: CryptoKey,
@@ -193,12 +198,16 @@ function makeDecryptCache<Encrypted extends { payload: EncryptedEnvelope }, Decr
   const cache = new Map<string, { iv: string; ciphertext: string; document: Decrypted }>()
   return async (documents: { id: string; value: Encrypted }[]) => {
     const decrypted = await Promise.all(documents.map(async ({ id, value }) => {
-      const { iv, ciphertext } = value.payload
-      const cached = cache.get(id)
-      if (cached && cached.iv === iv && cached.ciphertext === ciphertext) return cached.document
-      const document = await decrypt(value, key)
-      cache.set(id, { iv, ciphertext, document })
-      return document
+      try {
+        const { iv, ciphertext } = value.payload
+        const cached = cache.get(id)
+        if (cached && cached.iv === iv && cached.ciphertext === ciphertext) return cached.document
+        const document = await decrypt(value, key)
+        cache.set(id, { iv, ciphertext, document })
+        return document
+      } catch {
+        return undefined
+      }
     }))
     const seen = new Set(documents.map((document) => document.id))
     for (const id of [...cache.keys()]) if (!seen.has(id)) cache.delete(id)
@@ -210,18 +219,60 @@ export function watchRemoteDocuments(uid: string, key: CryptoKey, onDocuments: (
   if (!firestore) return () => undefined
   const decryptSnapshot = makeDecryptCache(decryptDailyDocument, key)
   return onSnapshot(query(documentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)), (snapshot) => {
-    void decryptSnapshot(snapshot.docs.map((snapshot) => ({ id: snapshot.id, value: asEncryptedDocument(snapshot.data()) }))).then(onDocuments).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
+    void decryptSnapshot(snapshot.docs.map((snapshot) => ({ id: snapshot.id, value: asEncryptedDocument(snapshot.data()) }))).then((documents) => onDocuments(documents.filter((document): document is DailyDocument => Boolean(document)))).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
   }, onError)
 }
 
 // --- Named documents -------------------------------------------------------
 
-export type EncryptedNamedDocumentUploadResult =
+export type NamedDocumentUploadResult =
   | { status: 'written'; document: NamedDocument }
   | { status: 'conflict'; conflict: SyncConflict }
 
 function asEncryptedNamedDocument(value: DocumentData) {
   return value as EncryptedNamedDocument
+}
+
+// Named documents are stored as plaintext records (version 2): sync does not
+// require the encryption key, and one malformed or undecryptable document can
+// no longer poison the whole collection. Legacy version-1 encrypted envelopes
+// (with a `payload` field) are still decrypted when a key is available.
+export async function decodeRemoteNamedDocument(id: string, value: DocumentData, key?: CryptoKey): Promise<NamedDocument | undefined> {
+  try {
+    if (value?.payload) {
+      if (!key) return undefined
+      return await decryptNamedDocument(asEncryptedNamedDocument(value), key)
+    }
+    if (typeof value?.markdown !== 'string' || typeof value?.updatedAt !== 'number') return undefined
+    return {
+      id,
+      title: typeof value.title === 'string' ? value.title : '',
+      markdown: value.markdown,
+      lane: typeof value.lane === 'number' ? value.lane : 1,
+      order: typeof value.order === 'number' ? value.order : 0,
+      collapsed: value.collapsed === true,
+      deleted: value.deleted === true ? true : undefined,
+      updatedAt: value.updatedAt,
+      writeId: typeof value.writeId === 'string' ? value.writeId : undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function namedDocumentRecord(document: NamedDocument) {
+  return {
+    version: 2 as const,
+    id: document.id,
+    title: document.title,
+    markdown: document.markdown,
+    lane: document.lane,
+    order: document.order,
+    collapsed: document.collapsed,
+    ...(document.deleted ? { deleted: true } : {}),
+    updatedAt: document.updatedAt,
+    ...(document.writeId ? { writeId: document.writeId } : {}),
+  }
 }
 
 function withNamedSyncBase(document: NamedDocument): NamedDocument {
@@ -258,23 +309,25 @@ function namedConflict(local: NamedDocument, remote: NamedDocument): SyncConflic
   return { day: local.id, family: 'named', title: remote.title || local.title, local: asDailyShape(local), remote: asDailyShape(remote), base: local.syncBase }
 }
 
-function namedConflictResult(local: NamedDocument, remote: NamedDocument): EncryptedNamedDocumentUploadResult {
+function namedConflictResult(local: NamedDocument, remote: NamedDocument): NamedDocumentUploadResult {
   return { status: 'conflict', conflict: namedConflict(local, remote) }
 }
 
-export async function uploadEncryptedNamedDocument(
+export async function uploadNamedDocument(
   uid: string,
   document: NamedDocument,
-  key: CryptoKey,
+  key?: CryptoKey,
   options: EncryptedDocumentUploadOptions = {},
-): Promise<EncryptedNamedDocumentUploadResult> {
+): Promise<NamedDocumentUploadResult> {
   if (!firestore) throw new Error('Firebase is not configured')
   const documentRef = doc(namedDocumentsPath(uid), document.id)
   const writeId = crypto.randomUUID()
   return runTransaction(firestore, async (transaction) => {
     const snapshot = await transaction.get(documentRef)
+    // An undecodable remote record is treated as absent — overwriting it with
+    // the local plaintext record self-heals a poisoned document.
     const remote = snapshot.exists()
-      ? await decryptNamedDocument(asEncryptedNamedDocument(snapshot.data()), key)
+      ? await decodeRemoteNamedDocument(documentRef.id, snapshot.data(), key)
       : undefined
     const writeDocument = async (markdown: string) => {
       options.onWriteId?.(writeId)
@@ -282,7 +335,7 @@ export async function uploadEncryptedNamedDocument(
       // merged markdown is written.
       const meta = remote && remote.updatedAt > document.updatedAt ? metaFrom(document, remote) : namedMeta(document)
       const next: NamedDocument = { ...document, ...meta, markdown, updatedAt: Date.now(), writeId }
-      transaction.set(documentRef, await encryptNamedDocument(next, key, writeId))
+      transaction.set(documentRef, namedDocumentRecord(next))
       return { status: 'written' as const, document: withNamedSyncBase(next) }
     }
 
@@ -299,7 +352,7 @@ export async function uploadEncryptedNamedDocument(
   })
 }
 
-export async function syncNamedDocuments(uid: string, localDocuments: NamedDocument[], key: CryptoKey, options: EncryptedDocumentUploadOptions = {}) {
+export async function syncNamedDocuments(uid: string, localDocuments: NamedDocument[], key?: CryptoKey, options: EncryptedDocumentUploadOptions = {}) {
   if (!firestore) throw new Error('Firebase is not configured')
   const remote = await getDocs(query(namedDocumentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)))
   const localById = new Map(localDocuments.map((document) => [document.id, document]))
@@ -314,7 +367,8 @@ export async function syncNamedDocuments(uid: string, localDocuments: NamedDocum
   }
 
   for (const snapshot of remote.docs) {
-    const remoteDocument = await decryptNamedDocument(asEncryptedNamedDocument(snapshot.data()), key)
+    const remoteDocument = await decodeRemoteNamedDocument(snapshot.id, snapshot.data(), key)
+    if (!remoteDocument) continue
     remoteById.set(remoteDocument.id, remoteDocument)
     const localDocument = localById.get(remoteDocument.id)
     if (!localDocument) {
@@ -345,7 +399,7 @@ export async function syncNamedDocuments(uid: string, localDocuments: NamedDocum
     if (!remoteById.has(document.id)) uploads.push({ local: document })
   }
 
-  const uploadResults = await Promise.all(uploads.map(({ local }) => uploadEncryptedNamedDocument(uid, local, key, options)))
+  const uploadResults = await Promise.all(uploads.map(({ local }) => uploadNamedDocument(uid, local, key, options)))
   uploadResults.forEach((result, index) => {
     const { local, remote: uploadRemote } = uploads[index]
     if (result.status === 'written') {
@@ -360,11 +414,10 @@ export async function syncNamedDocuments(uid: string, localDocuments: NamedDocum
   return { documents: [...merged.values()], conflicts }
 }
 
-export function watchRemoteNamedDocuments(uid: string, key: CryptoKey, onDocuments: (documents: NamedDocument[]) => void, onError: (error: Error) => void) {
+export function watchRemoteNamedDocuments(uid: string, key: CryptoKey | undefined, onDocuments: (documents: NamedDocument[]) => void, onError: (error: Error) => void) {
   if (!firestore) return () => undefined
-  const decryptSnapshot = makeDecryptCache(decryptNamedDocument, key)
   return onSnapshot(query(namedDocumentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)), (snapshot) => {
-    void decryptSnapshot(snapshot.docs.map((snapshot) => ({ id: snapshot.id, value: asEncryptedNamedDocument(snapshot.data()) }))).then(onDocuments).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
+    void Promise.all(snapshot.docs.map((snapshot) => decodeRemoteNamedDocument(snapshot.id, snapshot.data(), key))).then((documents) => onDocuments(documents.filter((document): document is NamedDocument => Boolean(document)))).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
   }, onError)
 }
 

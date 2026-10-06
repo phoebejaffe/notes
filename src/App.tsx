@@ -17,7 +17,7 @@ import { NAMED_DOCS_CHANNEL } from './todoNotes'
 import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
 import { diffLines } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
-import { createRemoteKeyBundle, deleteRemoteUserData, isStaleRemoteDocument, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, syncNamedDocuments, uploadEncryptedDocument, uploadEncryptedNamedDocument, watchRemoteDocuments, watchRemoteNamedDocuments, type SyncConflict } from './firebaseSync'
+import { createRemoteKeyBundle, deleteRemoteUserData, isStaleRemoteDocument, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, syncNamedDocuments, uploadEncryptedDocument, uploadNamedDocument, watchRemoteDocuments, watchRemoteNamedDocuments, type SyncConflict } from './firebaseSync'
 import { NoteCard, type NoteMoveTarget } from './NoteCard'
 import { mergeMarkdown } from './markdownMerge'
 import { disablePush, enablePush, pushStatus, type PushStatus } from './pushNotifications'
@@ -1177,21 +1177,27 @@ function NotesApp() {
 
   useEffect(() => {
     if (!loaded || !firebaseUser || !dataKey) return
-    const unwatchDays = watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteDocumentsRef.current(remoteDocuments), (error) => {
+    return watchRemoteDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteDocumentsRef.current(remoteDocuments), (error) => {
       setSyncState('error')
       setSyncMessage(error.message || 'Realtime sync failed.')
     })
-    const unwatchNotes = watchRemoteNamedDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteNamedDocumentsRef.current(remoteDocuments), (error) => {
+  }, [dataKey, firebaseUser, loaded])
+
+  // Named documents sync as plaintext records — they only need auth, not the
+  // encryption key. (The key is still passed so legacy encrypted records
+  // decode when possible.)
+  useEffect(() => {
+    if (!loaded || !firebaseUser) return
+    return watchRemoteNamedDocuments(firebaseUser.uid, dataKey, (remoteDocuments) => handleRemoteNamedDocumentsRef.current(remoteDocuments), (error) => {
       setSyncState('error')
       setSyncMessage(error.message || 'Realtime sync failed.')
     })
-    return () => { unwatchDays(); unwatchNotes() }
   }, [dataKey, firebaseUser, loaded])
 
   useEffect(() => {
-    if (!loaded || !firebaseUser || !dataKey || !isOnline) return
+    if (!loaded || !firebaseUser || !isOnline) return
     const timer = window.setTimeout(() => {
-      void uploadPendingDocumentsRef.current()
+      if (dataKey) void uploadPendingDocumentsRef.current()
       void uploadPendingNotesRef.current()
     }, 600)
     return () => window.clearTimeout(timer)
@@ -1663,7 +1669,7 @@ function NotesApp() {
   }
 
   async function uploadPendingNamedDocuments() {
-    if (!firebaseUser || !dataKey || !isOnline) return
+    if (!firebaseUser || !isOnline) return
     const ids = [...dirtyNotesRef.current].filter((id) => !uploadingNotesRef.current.has(id) && namedDocsRef.current[id])
     if (!ids.length) return
     const outcomes = await Promise.all(ids.map((id) => uploadPendingNote(id)))
@@ -1683,13 +1689,13 @@ function NotesApp() {
   }
 
   async function uploadPendingNote(id: string): Promise<'written' | 'conflict' | 'failed' | 'retry'> {
-    if (!firebaseUser || !dataKey) return 'failed'
+    if (!firebaseUser) return 'failed'
     const local = namedDocsRef.current[id]
     if (!local) return 'written'
     const submitted = { ...local }
     uploadingNotesRef.current.set(id, submitted.markdown)
     try {
-      const result = await uploadEncryptedNamedDocument(firebaseUser.uid, submitted, dataKey, { onWriteId: trackOwnWriteId })
+      const result = await uploadNamedDocument(firebaseUser.uid, submitted, dataKey, { onWriteId: trackOwnWriteId })
       if (result.status === 'conflict') {
         handleUploadNoteConflict(result.conflict)
         return 'conflict'
@@ -1938,7 +1944,7 @@ function NotesApp() {
   }
 
   async function syncNow() {
-    if (!firebaseUser || !dataKey || !loaded) return
+    if (!firebaseUser || !loaded) return
     setSyncState('working')
     try {
       await Promise.all([
@@ -1949,28 +1955,32 @@ function NotesApp() {
       const localNotes = await listNamedDocuments()
       localDocuments.forEach((document) => uploadingDaysRef.current.set(document.day, document.markdown))
       localNotes.forEach((note) => uploadingNotesRef.current.set(note.id, note.markdown))
+      // Named documents are plaintext and need only auth; daily documents
+      // stay encrypted and still require the unlocked key.
       const [result, namedResult] = await Promise.all([
-        syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId })
+        (dataKey ? syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId }) : Promise.resolve({ documents: [] as DailyDocument[], conflicts: [] as SyncConflict[] }))
           .finally(() => localDocuments.forEach((document) => uploadingDaysRef.current.delete(document.day))),
         syncNamedDocuments(firebaseUser.uid, localNotes, dataKey, { onWriteId: trackOwnWriteId })
           .finally(() => localNotes.forEach((note) => uploadingNotesRef.current.delete(note.id))),
       ])
-      dirtyDaysRef.current.clear()
-      result.documents.forEach((document) => {
-        documentUpdatedAtRef.current[document.day] = document.updatedAt
-        if (document.syncBase) {
-          syncBasesRef.current[document.day] = document.syncBase
-          latestRemoteRef.current[document.day] = document
-        }
-      })
-      result.conflicts.forEach((conflict) => {
-        const mergeBase = conflict.base ?? conflict.local.syncBase
-        latestRemoteRef.current[conflict.day] = conflict.remote
-        if (mergeBase) syncBasesRef.current[conflict.day] = mergeBase
-        else delete syncBasesRef.current[conflict.day]
-        dirtyDaysRef.current.add(conflict.day)
-        persistLocalDocument(conflict.day, conflict.local.markdown, conflict.local.updatedAt, mergeBase)
-      })
+      if (dataKey) {
+        dirtyDaysRef.current.clear()
+        result.documents.forEach((document) => {
+          documentUpdatedAtRef.current[document.day] = document.updatedAt
+          if (document.syncBase) {
+            syncBasesRef.current[document.day] = document.syncBase
+            latestRemoteRef.current[document.day] = document
+          }
+        })
+        result.conflicts.forEach((conflict) => {
+          const mergeBase = conflict.base ?? conflict.local.syncBase
+          latestRemoteRef.current[conflict.day] = conflict.remote
+          if (mergeBase) syncBasesRef.current[conflict.day] = mergeBase
+          else delete syncBasesRef.current[conflict.day]
+          dirtyDaysRef.current.add(conflict.day)
+          persistLocalDocument(conflict.day, conflict.local.markdown, conflict.local.updatedAt, mergeBase)
+        })
+      }
       dirtyNotesRef.current.clear()
       const localNotesById = new Map(localNotes.map((note) => [note.id, note]))
       namedResult.documents.forEach((note) => { latestRemoteNotesRef.current[note.id] = note })
@@ -1980,9 +1990,11 @@ function NotesApp() {
         dirtyNotesRef.current.add(conflict.day)
         if (local) persistNamedDocument({ ...local, syncBase: mergeBase })
       })
-      const nextDocuments = Object.fromEntries(result.documents.map((document) => [document.day, document.markdown]))
-      documentsRef.current = nextDocuments
-      setDocuments(nextDocuments)
+      if (dataKey) {
+        const nextDocuments = Object.fromEntries(result.documents.map((document) => [document.day, document.markdown]))
+        documentsRef.current = nextDocuments
+        setDocuments(nextDocuments)
+      }
       const nextNotes = Object.fromEntries(normalizeLanes(namedResult.documents).map((note) => [note.id, note]))
       namedDocsRef.current = nextNotes
       Object.keys(nextNotes).forEach((id) => pendingNoteWritesRef.current.add(id))
@@ -2081,7 +2093,7 @@ function NotesApp() {
   // Named-doc conflicts resolve markdown the same way; metadata comes from
   // the live local record (and the latest remote snapshot for 'remote').
   async function resolveNamedConflict(conflict: SyncConflict, choice: 'local' | 'remote' | 'append' | 'merged') {
-    if (!firebaseUser || !dataKey) return
+    if (!firebaseUser) return
     const local = namedDocsRef.current[conflict.day]
     if (!local) {
       clearSyncConflict(conflict.day)
@@ -2102,7 +2114,7 @@ function NotesApp() {
       } else {
         const document = { ...local, markdown, updatedAt: currentTimestamp(), syncBase }
         uploadingNotesRef.current.set(conflict.day, markdown)
-        const result = await uploadEncryptedNamedDocument(firebaseUser.uid, document, dataKey, { strategy: 'replace', onWriteId: trackOwnWriteId })
+        const result = await uploadNamedDocument(firebaseUser.uid, document, dataKey, { strategy: 'replace', onWriteId: trackOwnWriteId })
           .finally(() => { uploadingNotesRef.current.delete(conflict.day) })
         if (result.status === 'conflict') {
           handleUploadNoteConflict(result.conflict)
@@ -2236,7 +2248,7 @@ function NotesApp() {
   const syncPrompt = !firebaseConfigured
     ? 'Cloud sync is not enabled. Configure Firebase to sign in and sync your notes.'
     : firebaseUser && !dataKey && syncState !== 'working'
-      ? 'You are signed in, but encrypted sync is not enabled on this device. Open Settings to unlock it.'
+      ? 'You are signed in, but encrypted sync is not enabled on this device. Named notes still sync; unlock Settings to sync daily notes.'
       : ''
 
   if (!loaded || authLoading) return <main className="loading-screen">{!loaded ? 'Opening your notes…' : 'Checking your sign-in…'}</main>
@@ -2381,7 +2393,7 @@ function NotesApp() {
               <p className="settings-help">Signed in as {firebaseUser.email || firebaseUser.displayName || 'Google user'}.</p>
               {!dataKey && <><div className="settings-row"><span className="settings-label">Recovery phrase <button className="settings-link" type="button" onClick={() => { void generateRecoveryPhrase() }}>Generate random phrase</button></span><input value={recoveryPhrase} onChange={(event) => setRecoveryPhrase(event.target.value)} placeholder="12 words" autoComplete="off" /></div><button className="settings-action" type="button" onClick={() => { void prepareSync() }}>Unlock encrypted sync</button></>}
               {!dataKey && !recoveryPhrase && <p className="settings-help">Write down the displayed recovery phrase and keep it private. It cannot be reset.</p>}
-              <div className="cloud-actions"><div>{dataKey && <button className="settings-action" type="button" onClick={() => { void syncNow() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Syncing…' : 'Sync now'}</button>}{dataKey && recoveryPhrase && <button className="settings-action" type="button" onClick={() => { void copyRecoveryPhrase() }}>Copy recovery phrase</button>}</div><div>{!deleteCloudDataOpen ? <button className="settings-danger-action" type="button" onClick={() => setDeleteCloudDataOpen(true)}>Delete cloud data</button> : <div className="settings-danger-confirm"><strong>Delete all cloud notes and the encryption key?</strong><p>This cannot be undone. Your local notes will be kept, but they will no longer match the deleted cloud key.</p><div className="settings-danger-actions"><button className="settings-action" type="button" onClick={() => setDeleteCloudDataOpen(false)}>Cancel</button><button className="settings-danger-action" type="button" onClick={() => { void deleteCloudData() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Deleting…' : 'Permanently delete'}</button></div></div>}<button className="settings-action" type="button" onClick={() => { void signOutOfGoogle(); setDataKey(undefined); setRecoveryPhrase(''); setSyncState('idle'); setSyncMessage(''); setDeleteCloudDataOpen(false) }}>Sign out</button></div></div>
+              <div className="cloud-actions"><div><button className="settings-action" type="button" onClick={() => { void syncNow() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Syncing…' : 'Sync now'}</button>{dataKey && recoveryPhrase && <button className="settings-action" type="button" onClick={() => { void copyRecoveryPhrase() }}>Copy recovery phrase</button>}</div><div>{!deleteCloudDataOpen ? <button className="settings-danger-action" type="button" onClick={() => setDeleteCloudDataOpen(true)}>Delete cloud data</button> : <div className="settings-danger-confirm"><strong>Delete all cloud notes and the encryption key?</strong><p>This cannot be undone. Your local notes will be kept, but they will no longer match the deleted cloud key.</p><div className="settings-danger-actions"><button className="settings-action" type="button" onClick={() => setDeleteCloudDataOpen(false)}>Cancel</button><button className="settings-danger-action" type="button" onClick={() => { void deleteCloudData() }} disabled={syncState === 'working'}>{syncState === 'working' ? 'Deleting…' : 'Permanently delete'}</button></div></div>}<button className="settings-action" type="button" onClick={() => { void signOutOfGoogle(); setDataKey(undefined); setRecoveryPhrase(''); setSyncState('idle'); setSyncMessage(''); setDeleteCloudDataOpen(false) }}>Sign out</button></div></div>
               {syncMessage && <p className="settings-help">{syncMessage}</p>}
             </>}
           </fieldset>

@@ -183,8 +183,8 @@ The sync flow is:
 2. A new account receives a randomly generated 12-word recovery phrase, or an existing account accepts its original phrase.
 3. The phrase is normalized locally and used with PBKDF2-SHA-256 (600,000 iterations) to derive an AES-GCM-256 wrapping key.
 4. A randomly generated AES-GCM-256 data key is wrapped by that key and stored as a remote key bundle.
-5. Daily and named Markdown plus timestamps are encrypted in the browser before upload, with document-specific associated data.
-6. Firestore stores only the encrypted document envelope and metadata needed for synchronization.
+5. Daily-note Markdown plus timestamps are encrypted in the browser before upload, with document-specific associated data. Named documents are uploaded as plaintext records by design (they carry lane metadata and titles needed across devices).
+6. Firestore stores the encrypted daily-document envelope plus metadata, and plaintext named-document records.
 
 The intended Firestore namespace is:
 
@@ -199,7 +199,7 @@ Only the authenticated user’s namespace should be accessible under the Firesto
 Sync supports:
 
 - Manual sync.
-- Debounced transactional upload of changed daily and named documents after encryption is unlocked.
+- Debounced transactional upload of changed daily and named documents (daily documents only after encryption is unlocked; named documents require only sign-in).
 - Realtime remote document watching for both families.
 - Local-only sync-base tracking and line-based three-way reconciliation for concurrent local/remote Markdown changes.
 - Conflict detection when both sides changed the same Markdown region differently or no usable sync base exists. Named-document conflicts are labeled by note title and resolve identically to daily conflicts.
@@ -208,7 +208,7 @@ Sync supports:
 - Sign-out, which clears the active in-memory key and recovery phrase from the UI but keeps local notes.
 - Permanent cloud-data deletion, which deletes cloud notes and named documents and the remote encryption key while keeping local notes.
 
-Named-document payloads are `{ title, markdown, lane, order, collapsed, updatedAt }` (or `{ deleted, updatedAt }` for tombstones), encrypted with associated data `notes:named-document:${id}`. Markdown content merges three-way through the same machinery as daily documents; metadata (title/lane/order/collapsed) follows last-write-wins on `updatedAt` within the merge transaction.
+Named documents sync as **plaintext records** (`version: 2`) — fields `{ id, title, markdown, lane, order, collapsed, deleted?, updatedAt, writeId? }` live at the document's top level in `users/{uid}/namedDocuments/{id}`. Named-note sync therefore requires only authentication, not the encryption key. Legacy `version: 1` encrypted envelopes (payload encrypted with associated data `notes:named-document:${id}`) are still decrypted on read when a key is available; the next upload rewrites them as plaintext. Remote documents that cannot be decoded are skipped rather than sinking the whole collection, and an undecodable remote record during an upload transaction is overwritten by the local plaintext record. Markdown content merges three-way through the same machinery as daily documents; metadata (title/lane/order/collapsed) follows last-write-wins on `updatedAt` within the merge transaction.
 
 The remote document payload for daily notes remains `{ markdown, updatedAt }`. Each local IndexedDB record may additionally retain a `syncBase` Markdown snapshot used only as the three-way merge ancestor; that base is never included in the encrypted remote payload. External writers such as the Pebble receiver can update the same encrypted daily documents, so uploads must read the latest remote document transactionally and must not overwrite unseen remote changes. A realtime snapshot matching an in-flight upload or carrying a stamped `writeId` is treated as the app's own write echo and adopted as the new merge base rather than merged, so rapid consecutive edits cannot conflict with themselves. Snapshots older than the newest remote version already observed for a document are discarded as superseded (echoes decrypt asynchronously and can surface out of order), so a stale echo cannot regress the merge base.
 
@@ -216,7 +216,7 @@ If Firebase variables are absent, the application must continue operating locall
 
 ## 12. Privacy and security expectations
 
-The Cloud sync section of Settings reports local note counts/range and cloud-sync state above the recovery phrase input; in the mac app it also reports backup state. Local working copies are stored in IndexedDB. Cloud note content is encrypted before upload. Backup and export files are plaintext by design and require user-controlled storage protection.
+The Cloud sync section of Settings reports local note counts/range and cloud-sync state above the recovery phrase input; in the mac app it also reports backup state. Local working copies are stored in IndexedDB. Daily-note content is encrypted before upload; named-note content and metadata are stored in the cloud as plaintext by design. Backup and export files are plaintext by design and require user-controlled storage protection.
 
 The repository must not contain Firebase service-account credentials, private keys, or committed local environment files. Production deployment must use restrictive per-user Firestore rules and verify that ciphertext, rather than note plaintext, is stored remotely.
 
