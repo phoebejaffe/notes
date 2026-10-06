@@ -64,6 +64,10 @@ test('named-note lanes render and swipe pans the track on a phone viewport', asy
     await page.waitForTimeout(500)
   }
 
+  // Every lane is a hard snap-stop so a single gesture can only advance one
+  // lane — a fling can't skip past the next snap point.
+  await expect.poll(() => page.locator('.lane').first().evaluate((el) => getComputedStyle(el).scrollSnapStop)).toBe('always')
+
   await swipe(340, 40)
   await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBe(366)
   await expect(page.locator('.lane-dot').nth(1)).toHaveClass(/lane-dot-active/)
@@ -71,8 +75,12 @@ test('named-note lanes render and swipe pans the track on a phone viewport', asy
   await swipe(340, 40)
   await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBe(732)
 
-  // Tapping a lane dot is the non-swipe navigation path.
+  // Lane-dot taps still jump multiple lanes: programmatic scrolls clear the
+  // snap-type for the animation so snap-stop doesn't truncate them.
   await page.locator('.lane-dot').first().tap()
   await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBe(0)
   await expect(page.locator('.lane-dot').first()).toHaveClass(/lane-dot-active/)
+  await page.locator('.lane-dot').nth(3).tap()
+  await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBe(1098)
+  await expect(page.locator('.lane-dot').nth(3)).toHaveClass(/lane-dot-active/)
 })

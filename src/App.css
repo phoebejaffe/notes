@@ -34,10 +34,11 @@ html, body { touch-action: pan-x pan-y; }
    pans land here because each lane's stream only scrolls vertically. */
 .notes-layout { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: row; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scroll-padding-left: 0; overscroll-behavior-x: contain; scrollbar-width: none; }
 .notes-layout::-webkit-scrollbar { display: none; }
-/* No scroll-snap-stop: a hard snap-stop also halts programmatic jumps (Ctrl-N,
-   lane dots, shortcuts) at the first intermediate lane. Discrete swipes are
-   enforced by the mac app's wheel stepping instead. */
-.lane { flex: 0 0 100%; min-width: 0; display: flex; flex-direction: column; overflow: hidden; scroll-snap-align: start; }
+/* scroll-snap-stop: always makes every touch gesture settle on the next lane —
+   a fling can never skip lanes. Programmatic multi-lane jumps (Ctrl-N, lane
+   dots, shortcuts) still work because they clear snap-type on the track for
+   the duration of the animated scroll. */
+.lane { flex: 0 0 100%; min-width: 0; display: flex; flex-direction: column; overflow: hidden; scroll-snap-align: start; scroll-snap-stop: always; }
 /* Streams scroll vertically only. overflow-x must be `hidden`, not the
    `overflow-y: auto` fallback (`visible` computes to `auto`): any content a
    few px wider than the stream would make it horizontally scrollable, and a
