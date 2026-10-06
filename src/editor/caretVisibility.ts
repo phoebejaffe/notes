@@ -32,22 +32,29 @@ function visibleBand() {
   return { top, bottom }
 }
 
-// Scrollable ancestors of the caret, nearest first, then the document. Some
+// Scrollable ancestors of an element, nearest first, then the document. Some
 // ancestors can carry overflow:auto without ever scrolling (unconstrained
 // height), so callers should fall through the list until a scrollTop change
 // actually moves the caret.
-function caretScrollContainers(): HTMLElement[] {
-  const selection = window.getSelection()
-  let element = selection?.anchorNode instanceof Element ? selection.anchorNode : selection?.anchorNode?.parentElement
+export function scrollableAncestors(element: HTMLElement): HTMLElement[] {
   const containers: HTMLElement[] = []
-  while (element && element !== document.body) {
-    const overflow = getComputedStyle(element).overflowY
-    if (overflow === 'auto' || overflow === 'scroll') containers.push(element as HTMLElement)
-    element = element.parentElement
+  let current: HTMLElement | null = element
+  while (current && current !== document.body) {
+    const overflow = getComputedStyle(current).overflowY
+    if (overflow === 'auto' || overflow === 'scroll') containers.push(current)
+    current = current.parentElement
   }
   const documentScroller = document.scrollingElement as HTMLElement | null
   if (documentScroller && !containers.includes(documentScroller)) containers.push(documentScroller)
   return containers
+}
+
+function caretScrollContainers(): HTMLElement[] {
+  const selection = window.getSelection()
+  const element = selection?.anchorNode instanceof Element ? selection.anchorNode : selection?.anchorNode?.parentElement
+  if (element) return scrollableAncestors(element as HTMLElement)
+  const documentScroller = document.scrollingElement as HTMLElement | null
+  return documentScroller ? [documentScroller] : []
 }
 
 export function ensureCaretVisible(options?: { preferTop?: boolean }) {
@@ -66,13 +73,13 @@ export function ensureCaretVisible(options?: { preferTop?: boolean }) {
     for (const scroller of scrollers) scroller.scrollTo({ top: 0, behavior: 'instant' })
     if (inBand()) return
   }
-  // Scroll the caret to the band's center, re-measuring between steps so the
-  // scroll converges even when `zoom` scaling makes scrollTop units differ
-  // from rect pixels.
+  // Scroll just enough to bring the caret back inside the nearest band edge,
+  // re-measuring between steps so the scroll converges even when `zoom`
+  // scaling makes scrollTop units differ from rect pixels.
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const rect = caretViewportRect()
     if (!rect || (rect.top >= band.top && rect.bottom <= band.bottom)) return
-    const delta = (rect.top + rect.bottom) / 2 - (band.top + band.bottom) / 2
+    const delta = rect.top < band.top ? rect.top - band.top : rect.bottom - band.bottom
     for (const scroller of scrollers) {
       const zoom = parseFloat(getComputedStyle(scroller).zoom) || 1
       const before = scroller.scrollTop

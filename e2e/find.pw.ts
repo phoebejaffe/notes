@@ -163,6 +163,21 @@ test('reveals muted lines while a find query is active', async ({ page }) => {
   await expect.poll(mutedBlockHidden).toBe(true)
 })
 
+test('reveals collapsed tag sections while a find query is active', async ({ page }) => {
+  await seedApp(page, { days: { [todayKey()]: ':::tag{name="folded" collapsed="true"}\nsecret alpha line\n:::\nvisible tail' } })
+  const secret = page.locator('.day-card .mdxeditor-root-contenteditable').getByText('secret alpha line')
+  await expect(secret).toBeHidden()
+
+  await page.keyboard.press('Meta+f')
+  await searchInput(page).fill('alpha')
+  await expect(page.locator('.search-count')).toHaveText('1 of 1')
+  await expect(secret).toBeVisible()
+  await expect.poll(() => findHighlights(page, 'notes-find-match-current')).toEqual(['alpha'])
+
+  await page.keyboard.press('Escape')
+  await expect(secret).toBeHidden()
+})
+
 test('expands a collapsed note when navigation reaches its match', async ({ page }) => {
   await seedApp(page, {
     days: { [todayKey()]: 'nothing here' },

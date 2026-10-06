@@ -10,4 +10,5 @@ export interface MdxNotesEditorProps {
   autoFocus?: boolean
   hideMutedLines?: boolean
   tagColors?: Record<string, string>
+  findActive?: boolean
 }

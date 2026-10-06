@@ -4,6 +4,7 @@ export interface TaggedRange {
   endLine: number
   start: number
   end: number
+  collapsed: boolean
 }
 
 export interface MarkerDiagnostic {
@@ -33,6 +34,30 @@ function directiveTag(attributes: string) {
   return normalizeTag(raw.replace(/&(?:quot|amp|lt|gt|#39);/gu, (entity) => ({ '&quot;': '"', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&#39;': "'" })[entity] ?? entity))
 }
 
+// A tag fence carries `collapsed` (bare or ="true") while its section is
+// folded in the editor; `="false"` records an explicitly expanded section.
+// Quoted values are masked before scanning (positions preserved) so a
+// `collapsed` substring inside name="…" never matches.
+const COLLAPSED_ATTRIBUTE_PATTERN = /(?:^|\s)collapsed(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s}]+))?(?=\s|$)/u
+
+function maskQuotedValues(attributes: string) {
+  return attributes.replace(/"[^"]*"|'[^']*'/gu, (quoted) => `"${'x'.repeat(Math.max(0, quoted.length - 2))}"`)
+}
+
+function collapsedAttributeSpan(attributes: string): { start: number; end: number } | null {
+  const match = COLLAPSED_ATTRIBUTE_PATTERN.exec(maskQuotedValues(attributes))
+  return match ? { start: match.index, end: match.index + match[0].length } : null
+}
+
+function directiveCollapsed(attributes: string) {
+  const span = collapsedAttributeSpan(attributes)
+  if (!span) return false
+  const token = attributes.slice(span.start, span.end)
+  const value = token.match(/collapsed\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s}]+))/u)
+  if (!value) return true
+  return (value[1] ?? value[2] ?? value[3]) !== 'false'
+}
+
 export function markdownMarkState(source: string, from: number, to: number) {
   const before = source.slice(Math.max(0, from - 3), from)
   const after = source.slice(to, to + 3)
@@ -58,7 +83,7 @@ export function sourceMatchesFilter(source: string, filterTags: string[], hideMu
 export function parseMarkdown(source: string): ParsedMarkdown {
   const lines = source.split('\n')
   const diagnostics: MarkerDiagnostic[] = []
-  const stack: Array<{ tag: string; line: number; start: number }> = []
+  const stack: Array<{ tag: string; line: number; start: number; collapsed: boolean }> = []
   const ranges: TaggedRange[] = []
   let offset = 0
 
@@ -70,14 +95,14 @@ export function parseMarkdown(source: string): ParsedMarkdown {
       if (!tag) {
         diagnostics.push({ line: lineIndex, message: 'Tag directives require a name attribute.', severity: 'error' })
       } else {
-        stack.push({ tag, line: lineIndex, start: offset })
+        stack.push({ tag, line: lineIndex, start: offset, collapsed: directiveCollapsed(directiveOpen[1]) })
       }
     } else if (directiveClose) {
       const open = stack.pop()
       if (!open) {
         diagnostics.push({ line: lineIndex, message: 'Tag close without a matching open.', severity: 'error' })
       } else {
-        ranges.push({ tag: open.tag, startLine: open.line, endLine: lineIndex, start: open.start, end: offset })
+        ranges.push({ tag: open.tag, startLine: open.line, endLine: lineIndex, start: open.start, end: offset, collapsed: open.collapsed })
       }
     }
     offset += line.length + 1
@@ -506,6 +531,29 @@ export function extractLinesForMove(source: string, startLine: number, endLine: 
   }
   const moved = lines.slice(start, end + 1)
   return { source: [...lines.slice(0, start), ...lines.slice(end + 1)].join('\n'), moved: moved.join('\n'), startLine: start, endLine: end }
+}
+
+// Adds or removes the `collapsed` attribute on the tag fence that opens at
+// `openLine`, preserving the rest of the attribute string. The toggle is a
+// source edit: collapsing persists in the Markdown and goes through the
+// editor's commit path (undo + sync) like every other marker operation.
+export function toggleTagCollapsed(source: string, openLine: number) {
+  const parsed = parseMarkdown(source)
+  const range = parsed.ranges.find((item) => item.startLine === openLine)
+  if (!range) return { source, error: 'No tag directive opens on this line.' }
+  const lines = [...parsed.lines]
+  const line = lines[openLine]
+  const next = range.collapsed
+    ? line.replace(/\{[^}]*\}/u, (braces) => {
+        const attributes = braces.slice(1, -1)
+        const span = collapsedAttributeSpan(attributes)
+        const cleaned = (span ? attributes.slice(0, span.start) + attributes.slice(span.end) : attributes).replace(/^\s+|\s+$/gu, '')
+        return `{${cleaned}}`
+      })
+    : line.replace(/\}(\s*)$/u, ' collapsed="true"}$1')
+  if (next === line) return { source, error: 'Could not update the tag fence.' }
+  lines[openLine] = next
+  return { source: lines.join('\n'), collapsed: !range.collapsed, endLine: range.endLine }
 }
 
 export function removeTagAtPosition(source: string, lineIndex: number, tag: string) {

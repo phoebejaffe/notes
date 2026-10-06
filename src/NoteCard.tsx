@@ -11,6 +11,7 @@ interface NoteCardProps {
   laneSize: number
   hideMutedLines: boolean
   tagColors: Record<string, string>
+  findActive?: boolean
   onChange: (id: string, markdown: string) => void
   onRename: (id: string, title: string) => void
   onToggleCollapsed: (id: string) => void
@@ -20,7 +21,7 @@ interface NoteCardProps {
   onDelete: (id: string) => void
 }
 
-export function NoteCard({ note, laneCount, laneSize, hideMutedLines, tagColors, onChange, onRename, onToggleCollapsed, onMoveNote, onReorderPreview, onReorderCommit, onDelete }: NoteCardProps) {
+export function NoteCard({ note, laneCount, laneSize, hideMutedLines, tagColors, findActive = false, onChange, onRename, onToggleCollapsed, onMoveNote, onReorderPreview, onReorderCommit, onDelete }: NoteCardProps) {
   const cardRef = useRef<HTMLElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -107,7 +108,7 @@ export function NoteCard({ note, laneCount, laneSize, hideMutedLines, tagColors,
           </nav>}
         </div>
       </div>
-      {!note.collapsed && <MdxNotesEditor value={note.markdown} onChange={(markdown) => onChange(note.id, markdown)} hideMutedLines={hideMutedLines} tagColors={tagColors} />}
+      {!note.collapsed && <MdxNotesEditor value={note.markdown} onChange={(markdown) => onChange(note.id, markdown)} hideMutedLines={hideMutedLines} tagColors={tagColors} findActive={findActive} />}
       {!note.collapsed && parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
     </div>
   </article>

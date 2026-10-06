@@ -115,7 +115,16 @@ export async function listNamedDocuments() {
   })
 }
 
-export async function saveNamedDocument(document: NamedDocument) {
+function isCompleteNamedDocument(document: Partial<NamedDocument>): document is NamedDocument {
+  return typeof document.title === 'string' && typeof document.markdown === 'string' && typeof document.lane === 'number' && typeof document.order === 'number' && typeof document.collapsed === 'boolean' && typeof document.updatedAt === 'number'
+}
+
+// Accepts full records or partial field updates (`{ id, markdown, updatedAt }`
+// etc.) — the put merges onto the stored record, so a window writing only the
+// fields it owns can't clobber metadata another window just changed. With
+// `ifNewer`, the write is skipped when the stored record is newer, which keeps
+// a window's stale pending write from regressing fresher content.
+export async function saveNamedDocument(document: Partial<NamedDocument> & Pick<NamedDocument, 'id'>, options?: { ifNewer?: boolean }) {
   const database = await openDatabase()
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(namedStoreName, 'readwrite')
@@ -123,6 +132,8 @@ export async function saveNamedDocument(document: NamedDocument) {
     const request = store.get(document.id)
     request.onsuccess = () => {
       const existing = request.result as NamedDocument | undefined
+      if (!existing && !isCompleteNamedDocument(document)) return
+      if (options?.ifNewer && existing && typeof document.updatedAt === 'number' && existing.updatedAt > document.updatedAt) return
       store.put({ ...existing, ...document, syncBase: document.syncBase ?? existing?.syncBase, syncedMeta: document.syncedMeta ?? existing?.syncedMeta })
     }
     transaction.oncomplete = () => resolve()

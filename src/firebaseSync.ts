@@ -1,7 +1,7 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, runTransaction, setDoc, type DocumentData } from 'firebase/firestore'
 import { firestore } from './firebase'
 import { decryptDailyDocument, decryptNamedDocument, encryptDailyDocument, encryptNamedDocument, type EncryptedDailyDocument, type EncryptedNamedDocument } from './encryptedSync'
-import { createKeyBundle, recoverDataKey, type KeyBundle } from './crypto'
+import { createKeyBundle, recoverDataKey, type EncryptedEnvelope, type KeyBundle } from './crypto'
 import { mergeMarkdown } from './markdownMerge'
 import type { DailyDocument, DocumentSyncBase, NamedDocument } from './storage'
 
@@ -68,6 +68,23 @@ export type DocumentUploadDecision =
   | { action: 'write'; markdown: string }
   | { action: 'adopt' }
   | { action: 'conflict' }
+
+// Snapshot handlers run after an async decrypt, so they can observe commits
+// out of order — a superseded version must never regress the merge base or
+// the dedupe record. Two consecutive commits can share a Date.now() stamp,
+// so known own writes also compare their registration sequence.
+export function isStaleRemoteDocument(
+  remote: { updatedAt: number; writeId?: string },
+  latestRemote: { updatedAt: number; writeId?: string } | undefined,
+  ownWriteSeq?: ReadonlyMap<string, number>,
+): boolean {
+  if (!latestRemote) return false
+  if (remote.updatedAt !== latestRemote.updatedAt) return remote.updatedAt < latestRemote.updatedAt
+  if (!remote.writeId || !latestRemote.writeId || remote.writeId === latestRemote.writeId) return false
+  const remoteSeq = ownWriteSeq?.get(remote.writeId)
+  const latestSeq = ownWriteSeq?.get(latestRemote.writeId)
+  return remoteSeq !== undefined && latestSeq !== undefined && remoteSeq < latestSeq
+}
 
 export function resolveDocumentUpload(
   document: SyncableDocument,
@@ -166,10 +183,34 @@ export async function syncDocuments(uid: string, localDocuments: DailyDocument[]
   return { documents: [...merged.values()], conflicts }
 }
 
+// Every snapshot re-delivers the whole collection, so memoize decryption on
+// the envelope: identical {iv, ciphertext} provably decrypts to the same
+// document, and most docs are unchanged between snapshots.
+function makeDecryptCache<Encrypted extends { payload: EncryptedEnvelope }, Decrypted>(
+  decrypt: (document: Encrypted, key: CryptoKey) => Promise<Decrypted>,
+  key: CryptoKey,
+) {
+  const cache = new Map<string, { iv: string; ciphertext: string; document: Decrypted }>()
+  return async (documents: { id: string; value: Encrypted }[]) => {
+    const decrypted = await Promise.all(documents.map(async ({ id, value }) => {
+      const { iv, ciphertext } = value.payload
+      const cached = cache.get(id)
+      if (cached && cached.iv === iv && cached.ciphertext === ciphertext) return cached.document
+      const document = await decrypt(value, key)
+      cache.set(id, { iv, ciphertext, document })
+      return document
+    }))
+    const seen = new Set(documents.map((document) => document.id))
+    for (const id of [...cache.keys()]) if (!seen.has(id)) cache.delete(id)
+    return decrypted
+  }
+}
+
 export function watchRemoteDocuments(uid: string, key: CryptoKey, onDocuments: (documents: DailyDocument[]) => void, onError: (error: Error) => void) {
   if (!firestore) return () => undefined
+  const decryptSnapshot = makeDecryptCache(decryptDailyDocument, key)
   return onSnapshot(query(documentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)), (snapshot) => {
-    void Promise.all(snapshot.docs.map(async (snapshot) => decryptDailyDocument(asEncryptedDocument(snapshot.data()), key))).then(onDocuments).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
+    void decryptSnapshot(snapshot.docs.map((snapshot) => ({ id: snapshot.id, value: asEncryptedDocument(snapshot.data()) }))).then(onDocuments).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
   }, onError)
 }
 
@@ -321,8 +362,9 @@ export async function syncNamedDocuments(uid: string, localDocuments: NamedDocum
 
 export function watchRemoteNamedDocuments(uid: string, key: CryptoKey, onDocuments: (documents: NamedDocument[]) => void, onError: (error: Error) => void) {
   if (!firestore) return () => undefined
+  const decryptSnapshot = makeDecryptCache(decryptNamedDocument, key)
   return onSnapshot(query(namedDocumentsPath(uid), orderBy('updatedAt', 'desc'), limit(1000)), (snapshot) => {
-    void Promise.all(snapshot.docs.map(async (snapshot) => decryptNamedDocument(asEncryptedNamedDocument(snapshot.data()), key))).then(onDocuments).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
+    void decryptSnapshot(snapshot.docs.map((snapshot) => ({ id: snapshot.id, value: asEncryptedNamedDocument(snapshot.data()) }))).then(onDocuments).catch((error: unknown) => onError(error instanceof Error ? error : new Error(String(error))))
   }, onError)
 }
 

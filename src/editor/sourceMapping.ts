@@ -12,6 +12,8 @@ import { markdownForEditor } from './markdownSpacing'
 
 export interface MdastNode {
   type: string
+  name?: string
+  attributes?: Record<string, string>
   position?: { start: { line: number; column: number }; end: { line: number; column: number } }
   children?: MdastNode[]
 }
@@ -19,6 +21,9 @@ export interface MdastNode {
 export interface DocumentMap {
   blocks: MdastNode[]
   editorLineToCanonical: number[]
+  // Canonical open/close fence lines of collapsed `:::tag` directives —
+  // canonical lines strictly between them render display:none.
+  collapsedRanges: Array<{ open: number; close: number }>
 }
 
 export function buildDocumentMap(canonical: string): DocumentMap {
@@ -32,12 +37,60 @@ export function buildDocumentMap(canonical: string): DocumentMap {
   } catch {
     blocks = []
   }
-  return { blocks, editorLineToCanonical }
+  const collapsedRanges: DocumentMap['collapsedRanges'] = []
+  const collectCollapsed = (nodes: MdastNode[]) => {
+    nodes.forEach((node) => {
+      if (node.type === 'containerDirective' && node.name === 'tag' && node.position
+        && 'collapsed' in (node.attributes ?? {}) && node.attributes!.collapsed !== 'false') {
+        collapsedRanges.push({
+          open: editorLineToCanonical[node.position.start.line - 1] ?? 0,
+          close: editorLineToCanonical[node.position.end.line - 1] ?? 0,
+        })
+      }
+      if (node.children?.length) collectCollapsed(node.children)
+    })
+  }
+  collectCollapsed(blocks)
+  return { blocks, editorLineToCanonical, collapsedRanges }
 }
 
 export function editorLineForCanonical(map: DocumentMap, canonicalLine: number) {
   const index = map.editorLineToCanonical.indexOf(canonicalLine)
   return index < 0 ? Math.min(Math.max(canonicalLine, 0), map.editorLineToCanonical.length - 1) : index
+}
+
+// Whether a canonical line sits inside a collapsed tag's fences (or on a
+// fence, which maps to an interior DOM point and is likewise unfocusable).
+export function lineInCollapsedTag(map: DocumentMap, canonicalLine: number) {
+  return map.collapsedRanges.some((range) => canonicalLine >= range.open && canonicalLine <= range.close)
+}
+
+// A canonical line can hold a caret when it belongs to a top-level rendered
+// block and isn't hidden inside a collapsed tag. Lines outside every block
+// (blank separators, directive fences) are skipped — the child-alignment
+// fallback would otherwise resolve them into the preceding block, which may
+// be the collapsed tag itself.
+function lineCoveredByTopLevelBlock(map: DocumentMap, canonicalLine: number) {
+  return map.blocks.some((node) => {
+    if (!node.position) return false
+    const start = map.editorLineToCanonical[node.position.start.line - 1] ?? 0
+    const end = map.editorLineToCanonical[node.position.end.line - 1] ?? start
+    return canonicalLine >= start && canonicalLine <= end
+  })
+}
+
+// The nearest canonical line that can hold a caret — skips lines inside
+// collapsed tag blocks the same way nearestVisibleLine skips hidden muted
+// blocks. Returns the input when nothing visible exists in either direction.
+export function focusableCanonicalLine(map: DocumentMap, canonicalLine: number): number {
+  const focusable = (line: number) => lineCoveredByTopLevelBlock(map, line) && !lineInCollapsedTag(map, line)
+  if (focusable(canonicalLine)) return canonicalLine
+  const last = map.editorLineToCanonical.at(-1) ?? 0
+  for (let distance = 1; distance <= last + 1; distance += 1) {
+    if (canonicalLine + distance <= last && focusable(canonicalLine + distance)) return canonicalLine + distance
+    if (canonicalLine - distance >= 0 && focusable(canonicalLine - distance)) return canonicalLine - distance
+  }
+  return canonicalLine
 }
 
 // Lexical injects chrome such as <div contenteditable="false"
@@ -374,8 +427,19 @@ export function canonicalLineRange(host: HTMLElement, map: DocumentMap, canonica
   return range
 }
 
+// Redirects a restore target out of a collapsed tag: lines inside collapsed
+// ranges have rendered DOM but nowhere focusable, so the nearest block-covered
+// visible line takes the caret instead. Returns null when nothing is visible —
+// callers then leave the DOM selection untouched.
+function focusableTarget(map: DocumentMap, canonicalLine: number): number | null {
+  const target = lineInCollapsedTag(map, canonicalLine) ? focusableCanonicalLine(map, canonicalLine) : canonicalLine
+  return lineInCollapsedTag(map, target) ? null : target
+}
+
 export function placeCaretAtCanonicalLine(host: HTMLElement, map: DocumentMap, canonicalLine: number, offset: number): Node | null {
-  const point = domPointForEditorLine(host, map, editorLineForCanonical(map, canonicalLine), offset)
+  const target = focusableTarget(map, canonicalLine)
+  if (target === null) return null
+  const point = domPointForEditorLine(host, map, editorLineForCanonical(map, target), offset)
   if (!point) return null
   const selection = window.getSelection()
   selection?.setBaseAndExtent(point.node, point.offset, point.node, point.offset)
@@ -384,16 +448,22 @@ export function placeCaretAtCanonicalLine(host: HTMLElement, map: DocumentMap, c
 
 export function restoreCanonicalSelection(host: HTMLElement, map: DocumentMap, saved: SelectionLineRange): Node | null {
   if (saved.collapsed) return placeCaretAtCanonicalLine(host, map, saved.anchorLine, saved.anchorOffset)
-  const anchor = domPointForEditorLine(host, map, editorLineForCanonical(map, saved.anchorLine), saved.anchorOffset)
-  const focus = domPointForEditorLine(host, map, editorLineForCanonical(map, saved.focusLine), saved.focusOffset)
+  const anchorLine = focusableTarget(map, saved.anchorLine)
+  const focusLine = focusableTarget(map, saved.focusLine)
+  if (anchorLine === null || focusLine === null) return null
+  const anchor = domPointForEditorLine(host, map, editorLineForCanonical(map, anchorLine), saved.anchorOffset)
+  const focus = domPointForEditorLine(host, map, editorLineForCanonical(map, focusLine), saved.focusOffset)
   if (!anchor || !focus) return null
   window.getSelection()?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
   return anchor.node
 }
 
 export function selectCanonicalLines(host: HTMLElement, map: DocumentMap, startLine: number, endLine: number): Node | null {
-  const anchor = domPointForEditorLine(host, map, editorLineForCanonical(map, startLine), 0)
-  const focus = domPointForEditorLine(host, map, editorLineForCanonical(map, endLine), Number.POSITIVE_INFINITY)
+  const anchorLine = focusableTarget(map, startLine)
+  const focusLine = focusableTarget(map, endLine)
+  if (anchorLine === null || focusLine === null) return null
+  const anchor = domPointForEditorLine(host, map, editorLineForCanonical(map, anchorLine), 0)
+  const focus = domPointForEditorLine(host, map, editorLineForCanonical(map, focusLine), Number.POSITIVE_INFINITY)
   if (!anchor || !focus) return null
   const selection = window.getSelection()
   selection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)

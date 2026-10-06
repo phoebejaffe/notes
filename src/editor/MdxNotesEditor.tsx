@@ -6,10 +6,10 @@ import { TOGGLE_LINK_COMMAND } from '@lexical/link'
 import { $createListNode, $isListItemNode, $isListNode, INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
-import { buildDocumentMap, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, restoreCanonicalSelection, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
+import { buildDocumentMap, canonicalLineAtPoint, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, restoreCanonicalSelection, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
 import { clearMutedDecorations, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
-import { ensureCaretVisible } from './caretVisibility'
-import { addTagDirectiveToRange, checklistToPlainText, indentLines, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines } from '../markerEngine'
+import { ensureCaretVisible, scrollableAncestors } from './caretVisibility'
+import { addTagDirectiveToRange, checklistToPlainText, indentLines, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines, toggleTagCollapsed } from '../markerEngine'
 
 import { $isTagBlockNode } from './TagBlockNode'
 import { AudioPlayerPopover } from './AudioPlayerPopover'
@@ -217,7 +217,7 @@ function moveItemToOwnCheckList(item: ListItemNode) {
   if (list.getChildrenSize() === 0) list.remove()
 }
 
-export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {} }: MdxNotesEditorProps) {
+export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLines = false, tagColors = {}, findActive = false }: MdxNotesEditorProps) {
   const editorRef = useRef<MDXEditorMethods>(null)
   const lexicalEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
   const activeEditorRef = useMemo(() => ({ current: null as LexicalEditor | null }), [])
@@ -242,6 +242,23 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
   const [activeLink, setActiveLink] = useState<string | null>(null)
   const [recentTags, setRecentTags] = useState<string[]>(loadRecentTags)
   const [audioPopover, setAudioPopover] = useState<{ url: string; rect: DOMRect } | null>(null)
+
+  // A programmatic setMarkdown re-import makes Lexical reconcile the stale
+  // selection and scroll it into view — jumpy, since the real caret lands a
+  // frame later. Blur first so its scroll guard (rootElement ===
+  // document.activeElement) fails, restore scroll positions as extra cover,
+  // and refocus without scrolling so the caret restore owns the outcome.
+  const setEditorMarkdown = (markdown: string) => {
+    const host = hostRef.current
+    const editable = host ? contentEditable(host) : null
+    const wasActive = !!editable && document.activeElement === editable
+    if (wasActive) editable.blur()
+    const scrollers = host ? scrollableAncestors(host) : []
+    const positions = scrollers.map((scroller) => scroller.scrollTop)
+    editorRef.current?.setMarkdown(markdownForEditor(markdown).markdown)
+    scrollers.forEach((scroller, index) => { scroller.scrollTop = positions[index] })
+    if (wasActive) editable.focus({ preventScroll: true })
+  }
 
   useEffect(() => {
     tagColorsRef.current = tagColors
@@ -317,6 +334,23 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     reapplyUntilSettled(() => placeCaretAtCanonicalLine(host, map, line, offset))
   }, [hideMutedLines])
 
+  // Find keeps collapsed tags expanded via CSS only ([data-find-active]); when
+  // it closes they fold again, so a caret that ended inside one is re-placed
+  // on the nearest visible line (placeCaretAtCanonicalLine redirects).
+  useEffect(() => {
+    if (findActive) return
+    const host = hostRef.current
+    const selection = window.getSelection()
+    const anchor = selection?.anchorNode
+    const element = anchor instanceof Element ? anchor : anchor?.parentElement
+    const collapsedTag = element?.closest('[data-tag-collapsed]')
+    if (!host || !selection || !collapsedTag || !host.contains(collapsedTag)) return
+    const map = buildDocumentMap(valueRef.current)
+    const line = canonicalLineAtPoint(host, map, anchor!, selection.anchorOffset)
+    if (line === null) return
+    reapplyUntilSettled(() => placeCaretAtCanonicalLine(host, map, line, 0))
+  }, [findActive])
+
   useEffect(() => {
     refreshDecorationsRef.current()
     const host = hostRef.current
@@ -340,7 +374,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       ? selectionLineRange(host, buildDocumentMap(valueRef.current))
       : null
     valueRef.current = value
-    editorRef.current?.setMarkdown(markdownForEditor(value).markdown)
+    setEditorMarkdown(value)
     lastOpRef.current = 'external'
     refreshDecorationsRef.current()
     if (moveCaretLine !== null && host) {
@@ -383,7 +417,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       })
       lastOpRef.current = 'commit'
       valueRef.current = markdown
-      editorRef.current?.setMarkdown(markdownForEditor(markdown).markdown)
+      setEditorMarkdown(markdown)
       onChangeRef.current(markdown)
       if (!restore) return
       const nextMap = buildDocumentMap(markdown)
@@ -694,6 +728,48 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       if (typeof line === 'number' && Number.isInteger(line) && line >= 0) pendingMoveCaretLineRef.current = line
     }
 
+    // Clicking a tag chip folds the section. The chip is a CSS ::before, so
+    // the event target is the directive div itself whenever the click lands on
+    // the chip or its padding band; clicks on children target the children.
+    // Toggling rewrites the fence's `collapsed` attribute as a source commit,
+    // so it persists, syncs, and joins the commit undo stack.
+    const toggleTagChip = (event: globalThis.MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+      const tagDiv = event.target as HTMLElement | null
+      if (!tagDiv?.classList?.contains('notes-tag-directive')) return
+      // Hit-test against the chip's painted bounds: ::before starts at
+      // left:-3px/top:12px, and its computed size is content-box, so padding
+      // (8px×2 + 2px×2) and border (1px) widen it. Clicks further right or
+      // lower are ordinary caret placement, not chip clicks.
+      const chip = getComputedStyle(tagDiv, '::before')
+      const chipWidth = parseFloat(chip.width)
+      const chipHeight = parseFloat(chip.height)
+      const chipRight = -3 + (Number.isFinite(chipWidth) ? chipWidth : 40) + 17
+      const chipBottom = 12 + (Number.isFinite(chipHeight) ? chipHeight : 15) + 6
+      if (event.offsetY > chipBottom || event.offsetX > chipRight) return
+      const editable = contentEditable(host)
+      if (!editable?.contains(tagDiv)) return
+      // DOM preorder order == source open-fence order, including tags nested
+      // in directives or rendered by nested directive editors.
+      const ordinal = [...editable.querySelectorAll('.notes-tag-directive')].indexOf(tagDiv)
+      const parsed = parseMarkdown(valueRef.current)
+      const range = [...parsed.ranges].sort((a, b) => a.startLine - b.startLine)[ordinal]
+      if (!range) return
+      const result = toggleTagCollapsed(valueRef.current, range.startLine)
+      if (result.error || result.source === valueRef.current) return
+      event.preventDefault()
+      userInteractedRef.current = true
+      // Preserve the caret where it was — a caret inside the now-collapsed
+      // section is redirected to the nearest visible line by the restore path.
+      const map = buildDocumentMap(valueRef.current)
+      const selection = selectionLineRange(host, map)
+      commit(result.source, !selection
+        ? undefined
+        : selection.collapsed
+          ? { type: 'caret', line: selection.startLine, offset: selection.caretOffset }
+          : { type: 'range', startLine: selection.startLine, endLine: selection.endLine })
+    }
+
     const runCommand = (event: KeyboardEvent): boolean => {
       const mod = event.metaKey || event.ctrlKey
 
@@ -705,7 +781,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
         const { prevOp, range } = entry
         lastOpRef.current = prevOp as typeof lastOpRef.current
         valueRef.current = entry.source
-        editorRef.current?.setMarkdown(markdownForEditor(entry.source).markdown)
+        setEditorMarkdown(entry.source)
         onChangeRef.current(entry.source)
         if (range) {
           const map = buildDocumentMap(entry.source)
@@ -838,6 +914,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     }
     host.addEventListener('keydown', handler, true)
     host.addEventListener('paste', handlePaste, true)
+    host.addEventListener('mousedown', toggleTagChip, true)
     host.addEventListener('notes-mute-toggle', muteSelection)
     host.addEventListener('notes-line-gesture', handleLineGesture)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
@@ -848,6 +925,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     return () => {
       host.removeEventListener('keydown', handler, true)
       host.removeEventListener('paste', handlePaste, true)
+      host.removeEventListener('mousedown', toggleTagChip, true)
       host.removeEventListener('notes-mute-toggle', muteSelection)
       host.removeEventListener('notes-line-gesture', handleLineGesture)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
@@ -923,7 +1001,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     },
   }), [activeTags, activeLink, recentTags, editorContaining])
 
-  return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor}>
+  return <div className="notes-mdx-editor" ref={hostRef} onClick={focusEditor} data-find-active={findActive || undefined}>
     <EditorActionsProvider value={actions}>
     <MDXEditor
       ref={editorRef}

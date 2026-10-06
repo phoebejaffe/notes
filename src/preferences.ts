@@ -5,6 +5,7 @@ export type BackupFrequency = 'off' | 'daily' | 'weekly'
 export type BackupRetention = 'off' | 'week' | 'month' | 'three-months'
 export interface Preferences {
   zoomLevel: number
+  todoZoomLevel: number
   fontChoice: FontChoice
   rolloverHour: number
   showEmptyDays: boolean
@@ -30,6 +31,7 @@ export interface Preferences {
 
 export const defaultPreferences: Preferences = {
   zoomLevel: 100,
+  todoZoomLevel: 90,
   fontChoice: 'system',
   rolloverHour: 4,
   showEmptyDays: true,
@@ -98,6 +100,7 @@ export function loadPreferences(): Preferences {
     const parsedShortcuts = isRecord(parsed.shortcuts) ? parsed.shortcuts : {}
     return {
       zoomLevel: clampZoom(parsed.zoomLevel),
+      todoZoomLevel: parsed.todoZoomLevel === undefined ? defaultPreferences.todoZoomLevel : clampZoom(parsed.todoZoomLevel),
       fontChoice: parsed.fontChoice === 'serif' || parsed.fontChoice === 'monospace' ? parsed.fontChoice : defaultPreferences.fontChoice,
       rolloverHour: clampRolloverHour(parsed.rolloverHour),
       showEmptyDays: parsed.showEmptyDays !== false,

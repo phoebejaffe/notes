@@ -26,22 +26,30 @@ struct BackupDocument {
     markdown: String,
 }
 
-fn geometry_path(app: &AppHandle) -> Option<PathBuf> {
+fn geometry_path(app: &AppHandle, label: &str) -> Option<PathBuf> {
+    // The main window keeps its original filename so existing installs retain
+    // their saved geometry.
+    let filename = if label == "main" {
+        "window-geometry.json".to_string()
+    } else {
+        format!("window-geometry-{label}.json")
+    };
     app.path()
         .app_config_dir()
         .ok()
-        .map(|path| path.join("window-geometry.json"))
+        .map(|path| path.join(filename))
 }
 
-fn default_window_size(app: &AppHandle) -> PhysicalSize<u32> {
+fn default_window_size(app: &AppHandle, label: &str) -> PhysicalSize<u32> {
+    let (width, height_fraction) = if label == "todo" { (380, 0.5) } else { (520, 0.75) };
     let height = app
         .primary_monitor()
         .ok()
         .flatten()
-        .map(|monitor| (monitor.size().height as f64 * 0.75) as u32)
+        .map(|monitor| (monitor.size().height as f64 * height_fraction) as u32)
         .unwrap_or(600)
         .max(120);
-    PhysicalSize::new(520, height)
+    PhysicalSize::new(width, height)
 }
 
 fn is_geometry_visible(app: &AppHandle, geometry: &SavedGeometry) -> bool {
@@ -61,12 +69,12 @@ fn is_geometry_visible(app: &AppHandle, geometry: &SavedGeometry) -> bool {
         .unwrap_or(false)
 }
 
-fn restore_window_geometry(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
+fn restore_window_geometry(app: &AppHandle, label: &str) {
+    let Some(window) = app.get_webview_window(label) else {
         return;
     };
-    let fallback_size = default_window_size(app);
-    let Some(path) = geometry_path(app) else {
+    let fallback_size = default_window_size(app, label);
+    let Some(path) = geometry_path(app, label) else {
         let _ = window.set_size(fallback_size);
         return;
     };
@@ -84,11 +92,11 @@ fn restore_window_geometry(app: &AppHandle) {
     }
 }
 
-fn save_window_geometry(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
+fn save_window_geometry(app: &AppHandle, label: &str) {
+    let Some(window) = app.get_webview_window(label) else {
         return;
     };
-    let Some(path) = geometry_path(app) else {
+    let Some(path) = geometry_path(app, label) else {
         return;
     };
     let Ok(position) = window.outer_position() else {
@@ -113,13 +121,45 @@ fn save_window_geometry(app: &AppHandle) {
     }
 }
 
-fn focus_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+// The two windows are independent: hide only the requested window, and only
+// hide the whole app once nothing remains visible (so focus returns to the
+// previously active app). Because every window is hidden individually before
+// app.hide(), a later app.show() unhides none of them — only the window the
+// user explicitly summons is shown again.
+fn hide_window(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        save_window_geometry(app, label);
+        let _ = window.hide();
+    }
+    let any_visible = ["main", "todo"]
+        .iter()
+        .filter_map(|window_label| app.get_webview_window(window_label))
+        .any(|window| window.is_visible().unwrap_or(false));
+    if !any_visible {
+        hide_app(app);
+    }
+}
+
+fn show_window(app: &AppHandle, label: &str, focus_event: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        #[cfg(target_os = "macos")]
+        let _ = app.show();
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
-        let _ = app.emit("quick-entry-focus", ());
+        let _ = app.emit(focus_event, ());
     }
+}
+
+fn focus_main_window(app: &AppHandle) {
+    show_window(app, "main", "quick-entry-focus");
+}
+
+fn any_window_visible(app: &AppHandle) -> bool {
+    ["main", "todo"]
+        .iter()
+        .filter_map(|label| app.get_webview_window(label))
+        .any(|window| window.is_visible().unwrap_or(false))
 }
 
 fn hide_app(app: &AppHandle) {
@@ -136,25 +176,47 @@ fn hide_app(app: &AppHandle) {
 }
 
 fn toggle_shortcut_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        if window.is_focused().unwrap_or(false) {
-            save_window_geometry(app);
-            hide_app(app);
-        } else {
-            focus_main_window(app);
-        }
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_focused().unwrap_or(false) {
+        hide_window(app, "main");
+    } else {
+        focus_main_window(app);
     }
 }
 
 fn toggle_tray_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        if window.is_visible().unwrap_or(false) {
-            save_window_geometry(app);
-            hide_app(app);
-        } else {
-            focus_main_window(app);
+    if any_window_visible(app) {
+        for label in ["main", "todo"] {
+            if let Some(window) = app.get_webview_window(label) {
+                if window.is_visible().unwrap_or(false) {
+                    save_window_geometry(app, label);
+                    let _ = window.hide();
+                }
+            }
         }
+        hide_app(app);
+    } else {
+        focus_main_window(app);
     }
+}
+
+fn toggle_todo_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("todo") else {
+        return;
+    };
+    if window.is_focused().unwrap_or(false) {
+        hide_window(app, "todo");
+    } else {
+        show_window(app, "todo", "todo-window-focus");
+    }
+}
+
+#[tauri::command]
+fn toggle_todo_window_command(app: AppHandle) -> Result<(), String> {
+    toggle_todo_window(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -185,16 +247,20 @@ fn hide_standard_window_buttons(window: &tauri::WebviewWindow) -> Result<(), Str
 fn set_capture_window_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let window = app
-            .get_webview_window("main")
-            .ok_or_else(|| "Main window is unavailable".to_string())?;
-        let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())?;
-        let ns_window = unsafe { &*(ns_window_ptr as *mut objc2_app_kit::NSWindow) };
-        ns_window.setOpaque(false);
-        let clear_color = objc2_app_kit::NSColor::clearColor();
-        ns_window.setBackgroundColor(Some(&clear_color));
-        ns_window.setAlphaValue(opacity.clamp(0.5, 1.0));
-        return Ok(())
+        let mut applied = false;
+        for label in ["main", "todo"] {
+            let Some(window) = app.get_webview_window(label) else {
+                continue;
+            };
+            let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())?;
+            let ns_window = unsafe { &*(ns_window_ptr as *mut objc2_app_kit::NSWindow) };
+            ns_window.setOpaque(false);
+            let clear_color = objc2_app_kit::NSColor::clearColor();
+            ns_window.setBackgroundColor(Some(&clear_color));
+            ns_window.setAlphaValue(opacity.clamp(0.5, 1.0));
+            applied = true;
+        }
+        return if applied { Ok(()) } else { Err("No window is available".to_string()) }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -360,10 +426,15 @@ pub fn run() {
                 )?;
             }
 
-            restore_window_geometry(app.handle());
+            restore_window_geometry(app.handle(), "main");
+            restore_window_geometry(app.handle(), "todo");
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
                 #[cfg(target_os = "macos")]
+                hide_standard_window_buttons(&window)?;
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("todo") {
                 hide_standard_window_buttons(&window)?;
             }
 
@@ -381,8 +452,11 @@ pub fn run() {
             let keep_on_top = MenuItemBuilder::with_id("keep-on-top", "Keep on top")
                 .accelerator("CmdOrCtrl+Shift+A")
                 .build(app)?;
+            let todo_window_item = MenuItemBuilder::with_id("toggle-todo-window", "Todo Window")
+                .build(app)?;
             let mut window_menu_builder = SubmenuBuilder::new(app, "Window")
-                .item(&keep_on_top);
+                .item(&keep_on_top)
+                .item(&todo_window_item);
             #[cfg(target_os = "macos")]
             {
                 let transparency = MenuItemBuilder::with_id("toggle-transparency", "Transparency")
@@ -411,6 +485,9 @@ pub fn run() {
                 .build()?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
+                if event.id() == "toggle-todo-window" {
+                    toggle_todo_window(app);
+                }
                 if event.id() == "keep-on-top" {
                     if let Some(window) = app.get_webview_window("main") {
                         if let Ok(current) = window.is_always_on_top() {
@@ -461,27 +538,39 @@ pub fn run() {
                 .build(app)?;
 
             let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
+            // The todo-panel chord is fixed for now — Ctrl+Opt+Cmd+T.
+            let todo_shortcut = Shortcut::new(
+                Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER),
+                Code::KeyT,
+            );
+            let todo_shortcut_for_handler = todo_shortcut.clone();
             let active_shortcut = Arc::new(Mutex::new(shortcut.clone()));
             app.manage(CaptureShortcut(Arc::clone(&active_shortcut)));
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, registered_shortcut, event| {
+                        if event.state() != ShortcutState::Pressed {
+                            return;
+                        }
                         let is_active = active_shortcut.lock().map(|shortcut| *shortcut == *registered_shortcut).unwrap_or(false);
-                        if is_active && event.state() == ShortcutState::Pressed {
+                        if is_active {
                             toggle_shortcut_window(app);
+                        } else if *registered_shortcut == todo_shortcut_for_handler {
+                            toggle_todo_window(app);
                         }
                     })
                     .build(),
             )?;
             app.global_shortcut().register(shortcut)?;
+            app.global_shortcut().register(todo_shortcut)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, write_backup, request_backup_access, last_backup_at, cleanup_backups, read_backup])
+        .invoke_handler(tauri::generate_handler![set_capture_window_always_on_top, set_capture_window_opacity, set_capture_shortcut, set_app_visibility, set_launch_at_login, toggle_todo_window_command, write_backup, request_backup_access, last_backup_at, cleanup_backups, read_backup])
         .on_window_event(|window, event| {
-            if window.label() == "main"
+            if matches!(window.label(), "main" | "todo")
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))
             {
-                save_window_geometry(&window.app_handle());
+                save_window_geometry(&window.app_handle(), window.label());
             }
         })
         .run(tauri::generate_context!())

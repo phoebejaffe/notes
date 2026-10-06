@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main and capture windows",
+  "description": "Permissions for the main, capture, and todo windows",
   "windows": [
-    "main"
+    "main",
+    "todo"
   ],
   "permissions": [
     "core:default",

@@ -179,6 +179,23 @@ Line 2
 Line 3
 :::`
 
+const COLLAPSED_TAGS_MARKDOWN = `prefix alpha
+:::tag{name="work"}
+work inner one
+work inner two
+:::
+middle line
+::::tag{name="outer"}
+outer line
+:::tag{name="inner"}
+inner line
+:::
+::::
+:::tag{name="seeded" collapsed}
+seeded hidden
+:::
+suffix omega`
+
 const SOFTBREAK_MUTED_MARKDOWN = `first half
 second half`
 
@@ -297,6 +314,7 @@ suffix omega`,
   'audio-transcription-checklist': AUDIO_TRANSCRIPTION_MARKDOWN,
   'tagged-list-lines': TAGGED_LIST_MARKDOWN,
   'tagged-muted-lines': TAGGED_MUTE_MARKDOWN,
+  'collapsed-tags': COLLAPSED_TAGS_MARKDOWN,
   'softbreak-muted': SOFTBREAK_MUTED_MARKDOWN,
   tagging: TAGGING_MARKDOWN,
   'tagging-soft': `prefix alpha
@@ -358,8 +376,8 @@ function MultiEditorPrototype() {
       request.host.dispatchEvent(new CustomEvent('notes-move-caret-restore', { detail: { line: extracted.startLine } }))
     }
     docs[request.day][1](extracted.source)
-    const existing = docs[targetDay][0].trimEnd()
-    docs[targetDay][1](existing ? `${existing}\n\n${extracted.moved}` : extracted.moved)
+    const existing = docs[targetDay][0].trim()
+    docs[targetDay][1](existing ? `${extracted.moved}\n\n${existing}` : extracted.moved)
   }
 
   return <section className="day-stream" aria-label="Multi-editor prototype">

@@ -1,5 +1,5 @@
 import { isMutedLine } from '../markerEngine'
-import { blockChildren, buildDocumentMap, canonicalLineRange, contentEditable, type DocumentMap } from './sourceMapping'
+import { blockChildren, buildDocumentMap, canonicalLineRange, contentEditable, lineInCollapsedTag, type DocumentMap } from './sourceMapping'
 
 // Muted lines are styled with CSS highlights, not DOM mutation: `%%` markers
 // never reach the editor's text, so the muted decoration maps canonical source
@@ -70,9 +70,11 @@ export function nearestVisibleLine(canonical: string, line: number): number {
   const lines = canonical.split('\n')
   const map = buildDocumentMap(canonical)
   // Blank lines are skipped too — they have no own DOM block, so a caret
-  // there would land inside the neighboring (possibly hidden) block.
+  // there would land inside the neighboring (possibly hidden) block. Lines
+  // inside collapsed tag blocks are likewise unfocusable.
   const visible = (index: number) =>
     index >= 0 && index < lines.length && !!lines[index].trim() && !lineInCollapsibleBlock(map, lines, index)
+      && !lineInCollapsedTag(map, index)
   if (visible(line)) return line
   for (let distance = 1; distance < lines.length; distance += 1) {
     if (visible(line + distance)) return line + distance

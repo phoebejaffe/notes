@@ -22,7 +22,8 @@ test('ctrl-m opens the target picker and moves the caret line to another editor'
   await expect(dialog).toHaveCount(0)
 
   await expect(source).not.toContainText('First day top line')
-  await expect(editorIn(page, 'day2')).toContainText('First day top line')
+  // Moved lines prepend to the target, ahead of "leading task".
+  await expect(editorIn(page, 'day2')).toHaveText(/^First day top line/)
 })
 
 test('cmd-m restores the source caret to the line below the moved content', async ({ page }) => {

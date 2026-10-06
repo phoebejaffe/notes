@@ -25,6 +25,25 @@
         "hiddenTitle": true,
         "transparent": true,
         "alwaysOnTop": true,
+        "acceptFirstMouse": true,
+        "visible": false,
+        "fullscreen": false
+      },
+      {
+        "label": "todo",
+        "title": "Todo",
+        "url": "index.html?mode=todo",
+        "width": 380,
+        "height": 480,
+        "minWidth": 280,
+        "minHeight": 160,
+        "resizable": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "acceptFirstMouse": true,
         "visible": false,
         "fullscreen": false
       }

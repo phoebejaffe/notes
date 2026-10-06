@@ -2,10 +2,32 @@
 /* Pinch zoom is disabled app-wide: pan gestures still scroll, but omitting
    pinch-zoom blocks it in browsers that honor touch-action. */
 html, body { touch-action: pan-x pan-y; }
-.capture-shell, .app-shell { --tag-chip-base: #fff; }
+.capture-shell, .app-shell, .todo-shell { --tag-chip-base: #fff; }
 .capture-shell { height: 100vh; min-height: 0; display: flex; flex-direction: column; padding: 14px 16px; color: #403a42; background: #fff; overflow: hidden; }
 .capture-shell.capture-unfocused { opacity: .9; }
 .capture-shell .editor-card { padding-top: 0; }
+/* The floating todo window (?mode=todo): a slim dark strip up top (it sits in
+   the hidden-title drag region), then a single vertical stream of todo notes. */
+.todo-shell { height: 100vh; min-height: 0; display: flex; flex-direction: column; color: #403a42; background: #fff; overflow: hidden; }
+.todo-shell.capture-unfocused { opacity: .9; }
+.todo-menu { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 0 4px 0 14px; color: #b8aeb0; background: #2f2c31; }
+.todo-menu-title { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.todo-menu .icon-button { width: 28px; height: 28px; color: #e8e2dc; font-size: 16px; }
+.todo-menu .icon-button:hover, .todo-menu .icon-button[aria-expanded='true'] { background: #48434a; }
+.todo-shell .todo-stream { padding-top: 6px; padding-bottom: 20px; }
+.todo-stream .note-card + .note-card { margin-top: 2px; }
+.todo-stream .note-heading { margin: 4px 0 3px; }
+.todo-stream .note-title { font-size: 13px; }
+.todo-empty { padding: 26px 6px; color: #817970; font-size: 12px; text-align: center; }
+.todo-empty-title { margin: 0 0 6px; color: #625b54; font-weight: 700; }
+.todo-add { width: auto; margin-top: 10px; padding-inline: 18px; }
+/* Tighter reading density than the main streams (default is 14px/1.65). */
+.todo-shell .notes-mdx-editor { line-height: 1.35; }
+.todo-shell .notes-mdx-editor .mdxeditor-root-contenteditable { min-height: 36px !important; }
+/* No formatting bar in the todo window — it is primarily for viewing and
+   checking off tasks; keyboard shortcuts still work. The !important beats the
+   first-card fallback that force-shows a toolbar without focus. */
+.todo-shell .mdxeditor-toolbar { display: none !important; }
 .app-shell { width: min(980px, 100%); height: 100vh; min-height: 0; display: flex; flex-direction: column; margin: 0 auto; padding: 0; background: #fff; overflow: hidden; }
 /* Lanes: a horizontal snap-scrolling track. Lane 0 is the daily stream;
    named lanes and a trailing "new lane" placeholder sit beside it. Horizontal
@@ -75,7 +97,7 @@ button { cursor: pointer; font: inherit; }
 .day-stream, .note-stream { display: flex; flex-direction: column; gap: 0; box-sizing: border-box; padding-top: 100px; padding-bottom: 76px; zoom: var(--editor-zoom, 1); }
 .app-shell:not(.web-shell) .day-stream, .app-shell:not(.web-shell) .note-stream { padding-top: 148px; scroll-padding-top: 148px; }
 .web-shell .day-stream, .web-shell .note-stream { padding-top: 84px; }
-.ios-pwa .day-stream, .ios-pwa .note-stream { padding-top: 108px; padding-bottom: 16px; }
+.ios-pwa .day-stream, .ios-pwa .note-stream { padding-top: 108px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
 .capture-shell .day-stream, .capture-shell .note-stream { padding-top: 48px; scroll-padding-top: 48px; }
 /* Day tints bleed to the capture window's side edges: the lane track punches
    out past the shell's 16px padding (stream children are clipped at the
@@ -184,7 +206,9 @@ button { cursor: pointer; font: inherit; }
 .menu-panel button:disabled { color: #aaa19a; cursor: not-allowed; }
 .compact-spacing.app-shell { padding: 0; }
 .compact-spacing .editor-card { padding-bottom: 2px; }
-.theme-dark.app-shell, .theme-dark.capture-shell { --tag-chip-base: #000; --tag-chip-text: #e8e2dc; color: #e8e2dc; background: #201e21; }
+.theme-dark.app-shell, .theme-dark.capture-shell, .theme-dark.todo-shell { --tag-chip-base: #000; --tag-chip-text: #e8e2dc; color: #e8e2dc; background: #201e21; }
+.theme-dark.todo-shell .todo-empty-title { color: #e8e2dc; }
+.theme-dark.todo-shell .todo-empty { color: #b8aeb0; }
 .theme-dark .topbar { color: #e8e2dc; border-bottom-color: #403b3f; background: #201e21; box-shadow: 0 4px 14px #00000030; }
 .theme-dark .search-panel { color: #e8e2dc; background: #201e21; }
 .theme-dark .editor-card, .theme-dark .day-card { color: #e8e2dc; background: var(--day-tint, #201e21); }
@@ -261,8 +285,14 @@ button { cursor: pointer; font: inherit; }
 .notes-mdx-editor [data-prototype-callout] { margin: 14px 0; padding: 12px 14px; border-left: 4px solid #c88968; border-radius: 5px; color: #704936; background: #fbf2ee; }
 .notes-tag-directive { position: relative; margin: 0; padding: 24px 0 0; border-left: 3px solid transparent; }
 .notes-tag-directive [contenteditable='true'] { caret-color: currentColor; outline: none; }
-.notes-tag-directive::before { position: absolute; top: 12px; left: -3px; display: block; max-width: calc(100% - 8px); padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--notes-tag-color, #8975aa) 35%, var(--tag-chip-base)); border-left: 0; border-radius: 0 999px 999px 0; color: var(--tag-chip-text, #77727b); background: color-mix(in srgb, var(--notes-tag-color, #8975aa) 12%, var(--tag-chip-base)); content: attr(data-tag-tag); font-size: 10px; line-height: 1.45; }
+.notes-tag-directive::before { position: absolute; top: 12px; left: -3px; display: block; max-width: calc(100% - 8px); padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--notes-tag-color, #8975aa) 35%, var(--tag-chip-base)); border-left: 0; border-radius: 0 999px 999px 0; color: var(--tag-chip-text, #77727b); background: color-mix(in srgb, var(--notes-tag-color, #8975aa) 12%, var(--tag-chip-base)); content: '▾ ' attr(data-tag-tag); font-size: 10px; line-height: 1.45; cursor: pointer; }
 .notes-tag-directive::after { position: absolute; top: 12px; bottom: 0; left: -5px; width: 3px; border-radius: 2px; background: var(--notes-tag-color, #8975aa); content: ''; }
+/* Collapsed tag: the ::before chip and ::after border stay painted while the
+   block's children fold away. Find ([data-find-active]) reveals them so
+   matches inside stay visible, like muted lines. */
+.notes-mdx-editor:not([data-find-active]) .notes-tag-directive[data-tag-collapsed] > * { display: none; }
+.notes-tag-directive[data-tag-collapsed] { padding-bottom: 12px; }
+.notes-tag-directive[data-tag-collapsed]::before { content: '▸ ' attr(data-tag-tag); }
 .notes-custom-directive { margin: 0; }
 
 ::highlight(notes-muted-line) { color: #988f86; }
@@ -371,7 +401,10 @@ button { cursor: pointer; font: inherit; }
 .move-lines-empty { padding: 10px; color: #817970; font-size: 12px; }
 .future-day-panel { position: fixed; z-index: 15; top: 62px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 10px; transform: translateX(-50%); border: 1px solid #d9d4cb; border-radius: 8px; background: #fffdf9; box-shadow: 0 12px 30px #392c1f22; font-size: 12px; }
 .future-day-panel button, .future-notice button { padding: 5px 8px; border: 0; border-radius: 5px; color: #fff; background: #806790; font-size: 11px; }
-.future-notice { position: fixed; z-index: 18; right: 16px; bottom: 68px; display: flex; align-items: center; gap: 8px; max-width: min(440px, calc(100% - 32px)); padding: 10px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #62506f; background: #f8f5fa; box-shadow: 0 8px 24px #392c1f18; font-size: 12px; }
+.future-notice { position: fixed; z-index: 18; right: 16px; bottom: calc(68px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 8px; max-width: min(440px, calc(100% - 32px)); padding: 10px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #62506f; background: #f8f5fa; box-shadow: 0 8px 24px #392c1f18; font-size: 12px; }
+.update-toast { position: fixed; z-index: 30; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #d8cbe0; border-radius: 8px; color: #62506f; background: #f8f5fa; box-shadow: 0 8px 24px #392c1f28; font-size: 12px; }
+.update-toast button { padding: 5px 10px; border: 0; border-radius: 6px; color: #fff; background: #806790; font-size: 12px; font-weight: 700; }
+.theme-dark .update-toast { border-color: #4d4649; color: #d9d1d5; background: #2a272b; }
 .settings-status { display: grid; grid-template-columns: minmax(110px, .4fr) 1fr; gap: 8px 14px; margin: 12px 0 18px; padding: 12px 0; border-block: 1px solid #eeeae5; font-size: 12px; }
 .settings-status strong { color: #756a7d; }
 .diff-viewer { max-height: 240px; margin-top: 6px; overflow: auto; border: 1px solid #e1dbd3; border-radius: 5px; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -392,7 +425,7 @@ button { cursor: pointer; font: inherit; }
 .theme-dark .move-lines-section, .theme-dark .move-lines-empty { color: #b8aeb0; }
 .theme-dark .future-notice { color: #e8e2dc; background: #332f3b; border-color: #4d4659; }
 .theme-dark .settings-status { border-color: #403b3f; }
-@media (max-width: 700px) { .mobile-browser.app-shell { padding-bottom: 0; } .mobile-browser .future-day-panel { top: 104px; max-width: calc(100% - 24px); } .mobile-browser .future-notice { right: 12px; bottom: 12px; } }
+@media (max-width: 700px) { .mobile-browser.app-shell { padding-bottom: 0; } .mobile-browser .future-day-panel { top: 104px; max-width: calc(100% - 24px); } .mobile-browser .future-notice { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); } }
 
 /* Named-note lanes */
 .note-card { scroll-margin-top: 78px; }
@@ -413,7 +446,7 @@ button { cursor: pointer; font: inherit; }
 .note-stream-ghost { align-items: center; }
 .note-stream-ghost .lane-add { width: auto; padding: 10px 22px; }
 .lane-ghost-hint { margin: 0; color: #b3aa9f; font-size: 11px; }
-.lane-dots { position: fixed; z-index: 13; bottom: 8px; left: 50%; display: flex; gap: 2px; padding: 3px 6px; transform: translateX(-50%); border-radius: 999px; background: #fffdf9cc; }
+.lane-dots { position: fixed; z-index: 13; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); left: 50%; display: flex; gap: 2px; padding: 3px 6px; transform: translateX(-50%); border-radius: 999px; background: #fffdf9cc; }
 .capture-shell:not(.web-shell) .lane-dots { bottom: 40px; }
 .lane-dot { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; color: #b3aa9f; background: transparent; font-size: 15px; line-height: 1; }
 .lane-dot:hover { background: #f1ede8; }

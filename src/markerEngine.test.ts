@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTagDirectiveToRange, checklistToPlainText, extractLinesForMove, indentLines, lineRangeForSelection, markdownMarkState, moveLines, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines } from './markerEngine'
+import { addTagDirectiveToRange, checklistToPlainText, extractLinesForMove, indentLines, lineRangeForSelection, markdownMarkState, moveLines, parseMarkdown, isMutedLine, preserveMutedLines, removeChecklist, removeTagAtPosition, renameTagEverywhere, sourceMatchesFilter, stripMutedMarkers, toggleChecklist, toggleMutedLines, toggleTagCollapsed } from './markerEngine'
 
 describe('marker engine', () => {
   it('parses nested tag directives including emoji names', () => {
@@ -90,6 +90,55 @@ describe('marker engine', () => {
     const source = '::::tag{name="therapy"}\n:::tag{name="private"}\nsecret\n:::\n::::'
     expect(removeTagAtPosition(source, 2, 'private').source).toBe('::::tag{name="therapy"}\nsecret\n::::')
     expect(removeTagAtPosition(source, 2, 'therapy').source).toBe(':::tag{name="private"}\nsecret\n:::')
+  })
+
+  it('parses the collapsed attribute on tag directives', () => {
+    const source = [
+      ':::tag{name="work" collapsed="true"}',
+      'folded',
+      ':::',
+      ':::tag{name="bare" collapsed}',
+      'also folded',
+      ':::',
+      ':::tag{name="open" collapsed="false"}',
+      'visible',
+      ':::',
+    ].join('\n')
+    const parsed = parseMarkdown(source)
+    expect(parsed.ranges.map(({ tag, collapsed }) => ({ tag, collapsed }))).toEqual([
+      { tag: 'work', collapsed: true },
+      { tag: 'bare', collapsed: true },
+      { tag: 'open', collapsed: false },
+    ])
+  })
+
+  it('does not treat a name value containing "collapsed" as folded', () => {
+    const parsed = parseMarkdown(':::tag{name="not collapsed today"}\nx\n:::')
+    expect(parsed.ranges[0].collapsed).toBe(false)
+  })
+
+  it('toggles the collapsed attribute on the fence that opens at a line', () => {
+    const source = 'top\n:::tag{name="work"}\nfold me\n:::\nbottom'
+    const collapsed = toggleTagCollapsed(source, 1)
+    expect(collapsed.source).toBe('top\n:::tag{name="work" collapsed="true"}\nfold me\n:::\nbottom')
+    expect(collapsed.collapsed).toBe(true)
+    expect(collapsed.endLine).toBe(3)
+    const expanded = toggleTagCollapsed(collapsed.source, 1)
+    expect(expanded.source).toBe(source)
+    expect(expanded.collapsed).toBe(false)
+  })
+
+  it('preserves other attributes and surrounding whitespace when toggling collapsed', () => {
+    const source = '::::tag{name="has space" collapsed="true" extra="1"}\nx\n::::'
+    const result = toggleTagCollapsed(source, 0)
+    expect(result.source).toBe('::::tag{name="has space" extra="1"}\nx\n::::')
+    expect(parseMarkdown(result.source).ranges[0].collapsed).toBe(false)
+  })
+
+  it('errors when no tag opens on the given line', () => {
+    const source = ':::tag{name="work"}\nx\n:::'
+    expect(toggleTagCollapsed(source, 1).error).toContain('No tag directive')
+    expect(toggleTagCollapsed(source, 1).source).toBe(source)
   })
 
   it('mutes and unmutes plain, list, and heading lines with a trailing marker', () => {

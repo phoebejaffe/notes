@@ -12,16 +12,19 @@ import { applyFindHighlights, clearFindHighlights, collectFindMatches, type Find
 import { formatLogicalDay, logicalDayKey, shiftLogicalDay } from './logicalDay'
 import { clearNamedSyncBases, clearSyncBases, deleteNamedDocument, listDailyDocuments, listNamedDocuments, replaceDailyDocuments, saveDailyDocument, saveNamedDocument, type DailyDocument, type DocumentSyncBase, type NamedDocument } from './storage'
 import { loadPreferences, savePreferences, type Preferences } from './preferences'
+import { matchesShortcut } from './shortcuts'
+import { NAMED_DOCS_CHANNEL } from './todoNotes'
 import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
 import { diffLines } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
-import { createRemoteKeyBundle, deleteRemoteUserData, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, syncNamedDocuments, uploadEncryptedDocument, uploadEncryptedNamedDocument, watchRemoteDocuments, watchRemoteNamedDocuments, type SyncConflict } from './firebaseSync'
+import { createRemoteKeyBundle, deleteRemoteUserData, isStaleRemoteDocument, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, syncNamedDocuments, uploadEncryptedDocument, uploadEncryptedNamedDocument, watchRemoteDocuments, watchRemoteNamedDocuments, type SyncConflict } from './firebaseSync'
 import { NoteCard, type NoteMoveTarget } from './NoteCard'
 import { mergeMarkdown } from './markdownMerge'
 import { disablePush, enablePush, pushStatus, type PushStatus } from './pushNotifications'
 import { createRecoveryPhrase, normalizeRecoveryPhrase } from './crypto'
 import type { User } from 'firebase/auth'
 import { MarkdownPrototypePage } from './prototype/MarkdownPrototypePage'
+import { TodoWindow } from './TodoWindow'
 import './App.css'
 
 const SAMPLE = `:::tag{name="therapy 🧠"}
@@ -226,20 +229,6 @@ interface BeforeInstallPromptEvent extends Event {
 type LaneEditorLocator = { kind: 'day' | 'note'; id: string }
 type LaneSelectionMemory = { editor: LaneEditorLocator; selection: SelectionLineRange }
 
-function matchesShortcut(event: KeyboardEvent, shortcut: string) {
-  const parts = shortcut.toLowerCase().split('-')
-  let key = parts.pop() ?? ''
-  if (!key && shortcut.endsWith('--')) key = '-'
-  const wantsMod = parts.includes('mod')
-  const wantsCtrl = parts.includes('ctrl')
-  const wantsAlt = parts.includes('alt') || parts.includes('option')
-  const wantsShift = parts.includes('shift')
-  const isMac = /mac/i.test(navigator.platform) || /macintosh|mac os/i.test(navigator.userAgent)
-  const modifierMatches = wantsMod ? (isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) : wantsCtrl ? event.ctrlKey && !event.metaKey : !event.ctrlKey && !event.metaKey
-  const keyMatches = event.key.toLowerCase() === key || ((key === '/' || key === '?') && event.code === 'Slash')
-  return keyMatches && modifierMatches && (wantsAlt ? event.altKey : !event.altKey) && (wantsShift ? event.shiftKey : !event.shiftKey)
-}
-
 function formatShortcut(shortcut: string) {
   return shortcut.replaceAll('Mod-', '⌘').replaceAll('Ctrl-', '⌃').replaceAll('Alt-', '⌥').replaceAll('Option-', '⌥').replaceAll('Shift-', '⇧').replace('ArrowUp', '↑').replace('ArrowDown', '↓').replace('ArrowLeft', '←').replace('ArrowRight', '→').replace('Escape', 'Esc')
 }
@@ -305,6 +294,7 @@ function NotesApp() {
   const [syncState, setSyncState] = useState<'idle' | 'working' | 'ready' | 'error'>('idle')
   const [syncMessage, setSyncMessage] = useState('')
   const [deleteCloudDataOpen, setDeleteCloudDataOpen] = useState(false)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const [syncConflicts, setSyncConflicts] = useState<SyncConflict[]>([])
   const [moveRequest, setMoveRequest] = useState<{ source: { kind: 'day'; day: string } | { kind: 'note'; id: string }; startLine: number; endLine: number; host: HTMLElement } | null>(null)
   const documentUpdatedAtRef = useRef<Record<string, number>>({})
@@ -318,8 +308,14 @@ function NotesApp() {
   const latestRemoteNotesRef = useRef<Record<string, NamedDocument>>({})
   const dirtyNotesRef = useRef(new Set<string>())
   const uploadingNotesRef = useRef(new Map<string, string>())
+  // Named-doc ids this window changed since the last debounced IDB flush.
+  // Restricting the periodic save to these keeps stale untouched records from
+  // overwriting fresher writes made by the todo window.
+  const pendingNoteWritesRef = useRef(new Set<string>())
+  const namedDocsChannelRef = useRef<BroadcastChannel | null>(null)
   const lastEditorHostRef = useRef<HTMLElement | null>(null)
-  const ownWriteIdsRef = useRef(new Set<string>())
+  const ownWriteIdsRef = useRef(new Map<string, number>())
+  const ownWriteSeqRef = useRef(0)
   const handleRemoteDocumentsRef = useRef<(documents: DailyDocument[]) => void>(() => undefined)
   const handleRemoteNamedDocumentsRef = useRef<(documents: NamedDocument[]) => void>(() => undefined)
   const uploadPendingDocumentsRef = useRef<() => Promise<void>>(async () => undefined)
@@ -507,6 +503,60 @@ function NotesApp() {
   useEffect(() => {
     namedDocsRef.current = namedDocs
   }, [namedDocs])
+
+  // The todo window shares this IndexedDB store; a BroadcastChannel ping (or
+  // a window refocus) means stored named docs may be newer than the in-memory
+  // copies. Adopt records written later than ours — skipping notes with
+  // unsaved local edits — and recompute sync dirtiness so todo-window edits
+  // get uploaded.
+  const refreshNamedDocuments = useCallback(() => {
+    void listNamedDocuments().then((stored) => {
+      const current = namedDocsRef.current
+      const next = { ...current }
+      const storedIds = new Set(stored.map((note) => note.id))
+      let changed = false
+      for (const note of stored) {
+        const local = current[note.id]
+        if (pendingNoteWritesRef.current.has(note.id)) continue
+        if (!local || note.updatedAt > local.updatedAt) {
+          next[note.id] = note
+          changed = true
+          const dirty = note.syncBase ? note.markdown !== note.syncBase.markdown || !namedMetaSynced(note) : !note.deleted
+          if (dirty) dirtyNotesRef.current.add(note.id)
+        }
+      }
+      for (const id of Object.keys(next)) {
+        if (!storedIds.has(id) && !pendingNoteWritesRef.current.has(id)) {
+          delete next[id]
+          changed = true
+        }
+      }
+      if (changed) {
+        namedDocsRef.current = next
+        setNamedDocs(next)
+      }
+    }).catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(NAMED_DOCS_CHANNEL)
+    namedDocsChannelRef.current = channel
+    if (channel) channel.onmessage = refreshNamedDocuments
+    window.addEventListener('focus', refreshNamedDocuments)
+    return () => {
+      channel?.close()
+      namedDocsChannelRef.current = null
+      window.removeEventListener('focus', refreshNamedDocuments)
+    }
+  }, [refreshNamedDocuments])
+
+  // main.tsx fires this when a new service worker takes control — the running
+  // bundle is then stale (fingerprinted assets), so prompt for a reload.
+  useEffect(() => {
+    const onUpdated = () => setUpdateAvailable(true)
+    window.addEventListener('notes-sw-updated', onUpdated)
+    return () => window.removeEventListener('notes-sw-updated', onUpdated)
+  }, [])
 
   // Lanes: track index 0 is the daily stream; named lanes occupy 1..laneCount
   // (note.lane maps directly to the track index); laneCount+1 is the ghost
@@ -773,8 +823,17 @@ function NotesApp() {
   useEffect(() => {
     if (!loaded) return
     const timer = window.setTimeout(() => {
+      const ids = [...pendingNoteWritesRef.current]
+      if (!ids.length) return
+      pendingNoteWritesRef.current.clear()
       setSaveState('saving')
-      Promise.all(Object.values(namedDocs).map((note) => saveNamedDocument(note))).then(() => setSaveState('saved')).catch(() => setSaveState('saved'))
+      Promise.all(ids.flatMap((id) => {
+        const note = namedDocsRef.current[id]
+        return note ? [saveNamedDocument(note, { ifNewer: true })] : []
+      })).then(() => {
+        setSaveState('saved')
+        namedDocsChannelRef.current?.postMessage('changed')
+      }).catch(() => setSaveState('saved'))
     }, 350)
     return () => window.clearTimeout(timer)
   }, [namedDocs, loaded])
@@ -1163,7 +1222,7 @@ function NotesApp() {
   }
 
   function trackOwnWriteId(writeId: string) {
-    ownWriteIdsRef.current.add(writeId)
+    ownWriteIdsRef.current.set(writeId, ++ownWriteSeqRef.current)
   }
 
   function showSyncConflict(conflict: SyncConflict) {
@@ -1187,6 +1246,9 @@ function NotesApp() {
     remoteDocuments.forEach((remote) => {
       const latestRemote = latestRemoteRef.current[remote.day]
       if (latestRemote && remote.markdown === latestRemote.markdown && remote.updatedAt === latestRemote.updatedAt) return
+      // Echoes decrypt asynchronously and can surface out of order — a
+      // superseded version must not regress the merge base or dedupe state.
+      if (isStaleRemoteDocument(remote, latestRemote, ownWriteIdsRef.current)) return
       latestRemoteRef.current[remote.day] = remote
       const base = syncBasesRef.current[remote.day]
       if (base && remote.markdown === base.markdown && remote.updatedAt === base.updatedAt) return
@@ -1370,7 +1432,7 @@ function NotesApp() {
   // --- Named notes ---------------------------------------------------------
 
   function persistNamedDocument(note: NamedDocument) {
-    void saveNamedDocument(note).catch(() => undefined)
+    void saveNamedDocument(note).then(() => namedDocsChannelRef.current?.postMessage('changed')).catch(() => undefined)
   }
 
   function writeNamedDoc(note: NamedDocument) {
@@ -1392,6 +1454,7 @@ function NotesApp() {
       records[note.id] = record
       if (changed) {
         dirtyNotesRef.current.add(note.id)
+        pendingNoteWritesRef.current.add(note.id)
         persistNamedDocument(record)
       }
     }
@@ -1404,6 +1467,7 @@ function NotesApp() {
     if (!note) return
     writeNamedDoc({ ...note, markdown, updatedAt: currentTimestamp() })
     dirtyNotesRef.current.add(id)
+    pendingNoteWritesRef.current.add(id)
   }
 
   function createNote(lane: number) {
@@ -1486,6 +1550,7 @@ function NotesApp() {
       if (!previous || previous.order === note.order && previous.lane === note.lane) return
       next[note.id] = { ...note, updatedAt: stamp }
       dirtyNotesRef.current.add(note.id)
+      pendingNoteWritesRef.current.add(note.id)
     })
     namedDocsRef.current = next
     setNamedDocs(next)
@@ -1496,6 +1561,9 @@ function NotesApp() {
     remoteDocuments.forEach((remote) => {
       const latestRemote = latestRemoteNotesRef.current[remote.id]
       if (latestRemote && remote.updatedAt === latestRemote.updatedAt && remote.markdown === latestRemote.markdown && sameNamedMeta(remote, latestRemote)) return
+      // Same out-of-order guard as daily documents: superseded snapshot
+      // versions must not regress the merge base or dedupe state.
+      if (isStaleRemoteDocument(remote, latestRemote, ownWriteIdsRef.current)) return
       latestRemoteNotesRef.current[remote.id] = remote
       const local = namedDocsRef.current[remote.id]
       const syncBase = { markdown: remote.markdown, updatedAt: remote.updatedAt }
@@ -1794,16 +1862,16 @@ function NotesApp() {
     if (!extracted.moved.trim()) return
     if (targetId.startsWith('day:')) {
       const day = targetId.slice(4)
-      const existing = (documentsRef.current[day] ?? '').trimEnd()
-      updateSource(day, existing ? `${existing}\n\n${extracted.moved}` : extracted.moved)
+      const existing = (documentsRef.current[day] ?? '').trim()
+      updateSource(day, existing ? `${extracted.moved}\n\n${existing}` : extracted.moved)
       // Render the target card if that day wasn't already in the stream.
       setDays((current) => current.includes(day) ? current : [...current, day].sort((left, right) => right.localeCompare(left)))
       return
     }
     const note = namedDocsRef.current[targetId.slice(5)]
     if (!note) return
-    const existing = note.markdown.trimEnd()
-    updateNoteMarkdown(note.id, existing ? `${existing}\n\n${extracted.moved}` : extracted.moved)
+    const existing = note.markdown.trim()
+    updateNoteMarkdown(note.id, existing ? `${extracted.moved}\n\n${existing}` : extracted.moved)
   }
 
   async function generateRecoveryPhrase() {
@@ -1917,6 +1985,7 @@ function NotesApp() {
       setDocuments(nextDocuments)
       const nextNotes = Object.fromEntries(normalizeLanes(namedResult.documents).map((note) => [note.id, note]))
       namedDocsRef.current = nextNotes
+      Object.keys(nextNotes).forEach((id) => pendingNoteWritesRef.current.add(id))
       setNamedDocs(nextNotes)
       const conflicts = [...result.conflicts, ...namedResult.conflicts]
       setSyncConflicts(conflicts)
@@ -1941,6 +2010,7 @@ function NotesApp() {
       ownWriteIdsRef.current.clear()
       latestRemoteNotesRef.current = {}
       dirtyNotesRef.current.clear()
+      pendingNoteWritesRef.current.clear()
       await clearSyncBases()
       await clearNamedSyncBases()
       const clearedNotes = Object.fromEntries(Object.values(namedDocsRef.current).map((note) => {
@@ -2215,6 +2285,7 @@ function NotesApp() {
           <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
           <button type="button" onClick={() => { updateSource(today, SAMPLE); setMenuOpen(false) }}>Reset today</button>
           <span className="shortcut-hint">Ctrl⌥N to show or hide</span>
+          {isTauriEnvironment() && <span className="shortcut-hint">⌃⌥⌘T toggles the todo window</span>}
           <p className="menu-build">{buildTimeLabel}</p>
         </nav>}
         {filterOpen && <div className="filter-panel capture-filter-panel" role="dialog" aria-label="Filter notes by tag"><button className="filter-clear" type="button" onClick={() => { setFilterTags([]); setHideMutedLines(false) }} disabled={!filterTags.length && !hideMutedLines}>Clear filters</button><label className="filter-option"><input type="checkbox" checked={hideMutedLines} onChange={(event) => setHideMutedLines(event.target.checked)} />Hide muted lines</label><div className="filter-divider" /><span className="filter-heading">Tags</span>{allTags.length ? allTags.map((tag) => <label className="filter-option" key={tag}><input type="checkbox" checked={filterTags.includes(tag)} onChange={(event) => setFilterTags((current) => event.target.checked ? [...current, tag] : current.filter((value) => value !== tag))} />{tag}</label>) : <span className="filter-empty">No tags yet.</span>}</div>}
@@ -2234,7 +2305,7 @@ function NotesApp() {
             return <article className="day-card" data-day={documentDay} data-weekday={new Date(`${documentDay}T12:00:00`).getDay()} key={documentDay} ref={documentDay === today ? todayRef : undefined}>
               <div className="editor-card">
                 <h1 className="day-title">{formatLogicalDay(documentDay, preferences.dateFormat)}</h1>
-                <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={effectiveHideMuted} tagColors={tagColors} />
+                <MdxNotesEditor value={source} onChange={(markdown) => updateSource(documentDay, markdown)} autoFocus={captureMode && documentDay === today} hideMutedLines={effectiveHideMuted} tagColors={tagColors} findActive={findActive} />
 
                 {parsed.diagnostics.length > 0 && <div className="diagnostics">{parsed.diagnostics.map((diagnostic) => <div key={`${diagnostic.line}-${diagnostic.message}`}>Line {diagnostic.line + 1}: {diagnostic.message}</div>)}</div>}
               </div>
@@ -2248,7 +2319,7 @@ function NotesApp() {
         return <section className={`lane${activeLane === lane ? ' lane-active' : ''}`} key={lane} data-lane={lane} aria-label={`Notes lane ${lane}`}>
           <div className="note-stream">
             {laneNotes.filter((note) => filterTags.length || effectiveHideMuted ? sourceMatchesFilter(note.markdown, filterTags, effectiveHideMuted) : true).map((note) => (
-              <NoteCard key={note.id} note={note} laneCount={laneCount} laneSize={laneNotes.length} hideMutedLines={effectiveHideMuted} tagColors={tagColors} onChange={updateNoteMarkdown} onRename={renameNote} onToggleCollapsed={toggleNoteCollapsed} onMoveNote={moveNote} onReorderPreview={reorderNotePreview} onReorderCommit={commitNoteReorder} onDelete={deleteNote} />
+              <NoteCard key={note.id} note={note} laneCount={laneCount} laneSize={laneNotes.length} hideMutedLines={effectiveHideMuted} tagColors={tagColors} findActive={findActive} onChange={updateNoteMarkdown} onRename={renameNote} onToggleCollapsed={toggleNoteCollapsed} onMoveNote={moveNote} onReorderPreview={reorderNotePreview} onReorderCommit={commitNoteReorder} onDelete={deleteNote} />
             ))}
             <button className="lane-add" type="button" onClick={() => createNote(lane)}>+ New note</button>
           </div>
@@ -2266,6 +2337,8 @@ function NotesApp() {
           <button key={index} type="button" className={`lane-dot${index === activeLane ? ' lane-dot-active' : ''}`} aria-label={index === 0 ? 'Daily notes' : index === totalLanes - 1 ? 'New lane' : `Notes lane ${index}`} aria-current={index === activeLane ? 'true' : undefined} onClick={() => goToLane(index)}>{index === totalLanes - 1 ? '+' : '•'}</button>
         ))}
       </nav>
+
+      {updateAvailable && <div className="update-toast" role="status"><span>A new version is available.</span><button type="button" onClick={() => window.location.reload()}>Reload</button></div>}
 
       {moveRequest && <MoveLinesDialog lineCount={moveRequest.endLine - moveRequest.startLine + 1} targets={moveTargets} onSelect={moveLinesTo} onClose={() => setMoveRequest(null)} />}
 
@@ -2337,6 +2410,12 @@ function NotesApp() {
             <p className="settings-help">At least one of “Show in menu bar” and “Show dock icon” must be selected.</p>
           </fieldset>
 
+          {isTauriEnvironment() && <fieldset className="settings-group"><legend>Todo window</legend>
+            <p className="settings-help">Notes titled “todo…” also appear in a floating window — toggle or focus it with ⌃⌥⌘T. Multiple todo notes stack alphabetically.</p>
+            <label className="settings-row settings-range-row"><span className="settings-label">Todo zoom</span><span className="settings-range-control"><input type="range" min="60" max="150" step="10" value={preferences.todoZoomLevel} onChange={(event) => setPreferences((current) => ({ ...current, todoZoomLevel: Number(event.target.value) }))} /><output>{preferences.todoZoomLevel}%</output></span></label>
+            <div className="settings-row"><span className="settings-label">Floating todo window</span><button className="settings-action" type="button" onClick={() => { void invokeNative('toggle_todo_window_command') }}>Show or hide</button></div>
+          </fieldset>}
+
           <fieldset className="settings-group"><legend>Keyboard shortcuts</legend>
             {Object.entries(SHORTCUT_LABELS).map(([name, label]) => <label className="settings-row" key={name}><span className="settings-label">{label}</span><input className={`shortcut-input${shortcutConflicts.has(preferences.shortcuts[name]) ? ' shortcut-conflict' : ''}`} value={formatShortcut(preferences.shortcuts[name] ?? '')} onChange={(event) => updateShortcut(name, parseDisplayedShortcut(event.target.value))} aria-label={`${label} shortcut`} /></label>)}
             {shortcutConflicts.size > 0 && <p className="settings-help shortcut-error">Each shortcut must be unique.</p>}
@@ -2369,7 +2448,9 @@ function NotesApp() {
 }
 
 function App() {
-  return window.location.pathname === '/prototype' ? <MarkdownPrototypePage /> : <NotesApp />
+  if (window.location.pathname === '/prototype') return <MarkdownPrototypePage />
+  if (new URLSearchParams(window.location.search).get('mode') === 'todo') return <TodoWindow />
+  return <NotesApp />
 }
 
 export default App
