@@ -261,16 +261,18 @@ export async function decodeRemoteNamedDocument(id: string, value: DocumentData,
 }
 
 function namedDocumentRecord(document: NamedDocument) {
+  // Firestore rejects undefined field values, and local records created before
+  // the metadata fields existed may lack them — coerce to the decoder defaults.
   return {
     version: 2 as const,
     id: document.id,
-    title: document.title,
-    markdown: document.markdown,
-    lane: document.lane,
-    order: document.order,
-    collapsed: document.collapsed,
+    title: typeof document.title === 'string' ? document.title : '',
+    markdown: typeof document.markdown === 'string' ? document.markdown : '',
+    lane: typeof document.lane === 'number' ? document.lane : 1,
+    order: typeof document.order === 'number' ? document.order : 0,
+    collapsed: document.collapsed === true,
     ...(document.deleted ? { deleted: true } : {}),
-    updatedAt: document.updatedAt,
+    updatedAt: typeof document.updatedAt === 'number' ? document.updatedAt : Date.now(),
     ...(document.writeId ? { writeId: document.writeId } : {}),
   }
 }

@@ -1956,14 +1956,23 @@ function NotesApp() {
       localDocuments.forEach((document) => uploadingDaysRef.current.set(document.day, document.markdown))
       localNotes.forEach((note) => uploadingNotesRef.current.set(note.id, note.markdown))
       // Named documents are plaintext and need only auth; daily documents
-      // stay encrypted and still require the unlocked key.
-      const [result, namedResult] = await Promise.all([
-        (dataKey ? syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId }) : Promise.resolve({ documents: [] as DailyDocument[], conflicts: [] as SyncConflict[] }))
+      // stay encrypted and still require the unlocked key. The families run
+      // independently so one failing does not discard the other's results.
+      const settle = <T,>(promise: Promise<T>) => promise.then((value) => ({ value, error: undefined as unknown })).catch((error: unknown) => ({ value: undefined as T | undefined, error }))
+      const [dailyOutcome, namedOutcome] = await Promise.all([
+        settle(dataKey ? syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId }) : Promise.resolve({ documents: [] as DailyDocument[], conflicts: [] as SyncConflict[] }))
           .finally(() => localDocuments.forEach((document) => uploadingDaysRef.current.delete(document.day))),
-        syncNamedDocuments(firebaseUser.uid, localNotes, dataKey, { onWriteId: trackOwnWriteId })
+        settle(syncNamedDocuments(firebaseUser.uid, localNotes, dataKey, { onWriteId: trackOwnWriteId }))
           .finally(() => localNotes.forEach((note) => uploadingNotesRef.current.delete(note.id))),
       ])
-      if (dataKey) {
+      if (dailyOutcome.error && namedOutcome.error) throw dailyOutcome.error
+      const result = dailyOutcome.value ?? { documents: [] as DailyDocument[], conflicts: [] as SyncConflict[] }
+      const namedResult = namedOutcome.value ?? { documents: [] as NamedDocument[], conflicts: [] as SyncConflict[] }
+      const syncFailures = [
+        dailyOutcome.error ? `daily notes (${dailyOutcome.error instanceof Error ? dailyOutcome.error.message : String(dailyOutcome.error)})` : '',
+        namedOutcome.error ? `named notes (${namedOutcome.error instanceof Error ? namedOutcome.error.message : String(namedOutcome.error)})` : '',
+      ].filter(Boolean)
+      if (dataKey && dailyOutcome.value) {
         dirtyDaysRef.current.clear()
         result.documents.forEach((document) => {
           documentUpdatedAtRef.current[document.day] = document.updatedAt
@@ -1981,32 +1990,42 @@ function NotesApp() {
           persistLocalDocument(conflict.day, conflict.local.markdown, conflict.local.updatedAt, mergeBase)
         })
       }
-      dirtyNotesRef.current.clear()
-      const localNotesById = new Map(localNotes.map((note) => [note.id, note]))
-      namedResult.documents.forEach((note) => { latestRemoteNotesRef.current[note.id] = note })
-      namedResult.conflicts.forEach((conflict) => {
-        const mergeBase = conflict.base ?? conflict.local.syncBase
-        const local = localNotesById.get(conflict.day)
-        dirtyNotesRef.current.add(conflict.day)
-        if (local) persistNamedDocument({ ...local, syncBase: mergeBase })
-      })
+      if (namedOutcome.value) {
+        dirtyNotesRef.current.clear()
+        const localNotesById = new Map(localNotes.map((note) => [note.id, note]))
+        namedResult.documents.forEach((note) => { latestRemoteNotesRef.current[note.id] = note })
+        namedResult.conflicts.forEach((conflict) => {
+          const mergeBase = conflict.base ?? conflict.local.syncBase
+          const local = localNotesById.get(conflict.day)
+          dirtyNotesRef.current.add(conflict.day)
+          if (local) persistNamedDocument({ ...local, syncBase: mergeBase })
+        })
+      }
       if (dataKey) {
         const nextDocuments = Object.fromEntries(result.documents.map((document) => [document.day, document.markdown]))
         documentsRef.current = nextDocuments
         setDocuments(nextDocuments)
       }
-      const nextNotes = Object.fromEntries(normalizeLanes(namedResult.documents).map((note) => [note.id, note]))
-      namedDocsRef.current = nextNotes
-      Object.keys(nextNotes).forEach((id) => pendingNoteWritesRef.current.add(id))
-      setNamedDocs(nextNotes)
+      if (namedOutcome.value) {
+        const nextNotes = Object.fromEntries(normalizeLanes(namedResult.documents).map((note) => [note.id, note]))
+        namedDocsRef.current = nextNotes
+        Object.keys(nextNotes).forEach((id) => pendingNoteWritesRef.current.add(id))
+        setNamedDocs(nextNotes)
+      }
       const conflicts = [...result.conflicts, ...namedResult.conflicts]
       setSyncConflicts(conflicts)
       setConflictDrafts(Object.fromEntries(conflicts.map((conflict) => [conflict.day, conflict.local.markdown])))
-      setSyncState('ready')
-      setSyncMessage(conflicts.length ? `${conflicts.length} document${conflicts.length === 1 ? '' : 's'} need conflict resolution.` : `Synced ${result.documents.length + namedResult.documents.length} documents.`)
-    } catch {
+      if (syncFailures.length) {
+        setSyncState('error')
+        setSyncMessage(`Sync failed for ${syncFailures.join(' and ')}.`)
+      } else {
+        setSyncState('ready')
+        setSyncMessage(conflicts.length ? `${conflicts.length} document${conflicts.length === 1 ? '' : 's'} need conflict resolution.` : `Synced ${result.documents.length + namedResult.documents.length} documents.`)
+      }
+    } catch (error) {
       setSyncState('error')
-      setSyncMessage('Sync failed. Check your Firebase setup and recovery phrase.')
+      const details = error instanceof Error && error.message ? ` ${error.message}` : ''
+      setSyncMessage(`Sync failed.${details} Check your Firebase setup and recovery phrase.`)
       void notifyMac(preferences.notificationsEnabled, 'Noteses sync failed', 'Encrypted sync could not complete. Open Notes to retry.')
     }
   }
