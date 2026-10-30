@@ -329,6 +329,7 @@ function NotesApp() {
   const laneViewportRef = useRef<HTMLDivElement>(null)
   const laneScrollIdleRef = useRef(0)
   const laneSwipeAccumRef = useRef(0)
+  const laneSwipeSteppedRef = useRef(false)
   const streamEndRef = useRef<HTMLDivElement>(null)
   const todayRef = useRef<HTMLElement>(null)
   const recoveryWarningNotifiedRef = useRef(false)
@@ -818,8 +819,11 @@ function NotesApp() {
       event.preventDefault()
       laneSwipeAccumRef.current += deltaX
       window.clearTimeout(idle)
-      idle = window.setTimeout(() => { laneSwipeAccumRef.current = 0 }, 200)
-      if (Math.abs(laneSwipeAccumRef.current) >= 80) {
+      idle = window.setTimeout(() => { laneSwipeAccumRef.current = 0; laneSwipeSteppedRef.current = false }, 200)
+      // Latch until the gesture goes idle: momentum after the first step must
+      // not cascade into more lanes.
+      if (!laneSwipeSteppedRef.current && Math.abs(laneSwipeAccumRef.current) >= 80) {
+        laneSwipeSteppedRef.current = true
         goToLane(activeLane + Math.sign(laneSwipeAccumRef.current))
         laneSwipeAccumRef.current = 0
       }

@@ -269,8 +269,17 @@ test('mac app: a horizontal swipe steps one lane per gesture', async ({ page }) 
     for (let i = 0; i < (times as number); i++) viewport!.dispatchEvent(new WheelEvent('wheel', { deltaX: delta as number, deltaY: 0, bubbles: true, cancelable: true }))
   }, [deltaX, count])
   await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('0')
-  await swipe(20) // 120 accumulated crosses the threshold → one lane
+  // Trackpad momentum keeps delivering wheel events across event-loop turns
+  // after the first step — it's still one gesture, so only one lane.
+  await page.evaluate(async () => {
+    const viewport = document.querySelector('.lane-viewport')!
+    for (let round = 0; round < 5; round++) {
+      for (let i = 0; i < 6; i++) viewport.dispatchEvent(new WheelEvent('wheel', { deltaX: 20, deltaY: 0, bubbles: true, cancelable: true }))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  })
   await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('1')
+  await page.waitForTimeout(250) // let the gesture go idle
   await swipe(-20)
   await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('0')
   // A vertical-dominant scroll is ignored, and a sub-threshold wiggle is too.
