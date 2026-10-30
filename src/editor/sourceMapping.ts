@@ -100,6 +100,16 @@ export function blockChildren(container: HTMLElement): HTMLElement[] {
   return [...container.children].filter((el): el is HTMLElement => el instanceof HTMLElement && !el.hasAttribute('data-lexical-cursor'))
 }
 
+// Empty paragraphs have no mdast counterpart — a canonical blank line is a
+// separator between blocks, not a block — so they don't count in the
+// block-index alignment either.
+function isBlankParagraph(el: HTMLElement) {
+  return el.tagName === 'P' && [...el.childNodes].every((node) => node.nodeName === 'BR')
+}
+function contentBlocks(container: HTMLElement): HTMLElement[] {
+  return blockChildren(container).filter((el) => !isBlankParagraph(el))
+}
+
 export function contentEditable(host: HTMLElement | null): HTMLElement | null {
   return host?.querySelector<HTMLElement>('.mdxeditor-root-contenteditable [contenteditable="true"], .mdxeditor-root-contenteditable[contenteditable="true"]') ?? null
 }
@@ -214,7 +224,7 @@ function lineWithinBlock(blockEl: HTMLElement, mdastNode: MdastNode, node: Node,
   if (mdastNode.type === 'blockquote' && mdastNode.children?.length) {
     const childEl = directChildOf(blockEl, node)
     if (childEl) {
-      const index = blockChildren(blockEl).indexOf(childEl)
+      const index = contentBlocks(blockEl).indexOf(childEl)
       const child = mdastNode.children[Math.min(index, mdastNode.children.length - 1)]
       if (child) return lineWithinBlock(childEl, child, node, offset)
     }
@@ -229,7 +239,7 @@ function lineWithinBlock(blockEl: HTMLElement, mdastNode: MdastNode, node: Node,
     if (tagDiv) {
       const childEl = directChildOf(tagDiv, node)
       if (!childEl || !mdastNode.children?.length) return startLine
-      const index = blockChildren(tagDiv).indexOf(childEl)
+      const index = contentBlocks(tagDiv).indexOf(childEl)
       const child = mdastNode.children[Math.min(Math.max(index, 0), mdastNode.children.length - 1)]
       return lineWithinBlock(childEl, child, node, offset)
     }
@@ -246,8 +256,13 @@ function lineWithinBlock(blockEl: HTMLElement, mdastNode: MdastNode, node: Node,
 function editorLineInChildren(container: HTMLElement, nodes: MdastNode[], node: Node, offset: number): number | null {
   const blockEl = directChildOf(container, node)
   if (!blockEl) return null
-  const index = blockChildren(container).indexOf(blockEl)
-  if (index < 0) return null
+  const children = contentBlocks(container)
+  let index = children.indexOf(blockEl)
+  if (index < 0) {
+    // A blank-line paragraph — count it as the next block's position.
+    index = children.findIndex((child) => (child.compareDocumentPosition(blockEl) & Node.DOCUMENT_POSITION_PRECEDING) !== 0)
+    if (index < 0) index = children.length
+  }
   if (index >= nodes.length) {
     // Rendered block with no mdast counterpart (e.g. Lexical's trailing empty paragraph).
     const last = nodes[nodes.length - 1]
@@ -385,7 +400,7 @@ function domPointInBlock(blockEl: HTMLElement, mdastNode: MdastNode, editorLine:
     })
     if (index < 0) index = mdastNode.children.findLastIndex((child) => (child.position?.start.line ?? 0) - 1 <= editorLine)
     if (index < 0) index = 0
-    const childEl = blockChildren(blockEl)[Math.min(index, blockEl.children.length - 1)] as HTMLElement | undefined
+    const childEl = contentBlocks(blockEl)[Math.min(index, blockEl.children.length - 1)] as HTMLElement | undefined
     if (!childEl) return null
     return domPointInBlock(childEl, mdastNode.children[Math.min(index, mdastNode.children.length - 1)], editorLine, offset)
   }
@@ -401,7 +416,7 @@ function domPointInChildren(container: HTMLElement, nodes: MdastNode[], editorLi
   if (index < 0) index = nodes.findLastIndex((node) => (node.position?.start.line ?? 0) - 1 <= editorLine)
   if (index < 0) index = 0
   const node = nodes[Math.min(index, nodes.length - 1)]
-  const children = blockChildren(container)
+  const children = contentBlocks(container)
   const blockEl = children[Math.min(index, children.length - 1)]
   if (!node || !blockEl) return null
   return domPointInBlock(blockEl, node, editorLine, offset)

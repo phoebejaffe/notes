@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { MDXEditor, type MDXEditorMethods } from '@mdxeditor/editor'
-import { $createParagraphNode, $createRangeSelection, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $isTextNode, $setSelection, stopLexicalPropagation, type LexicalEditor } from 'lexical'
+import { $createParagraphNode, $createRangeSelection, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $isElementNode, $isTextNode, $setSelection, stopLexicalPropagation, type LexicalEditor, type LexicalNode } from 'lexical'
 import { $getNearestNodeOfType } from '@lexical/utils'
 import { TOGGLE_LINK_COMMAND } from '@lexical/link'
 import { $createListNode, $isListItemNode, $isListNode, INSERT_CHECK_LIST_COMMAND, ListItemNode } from '@lexical/list'
 import { mdxEditorPlugins } from './mdxEditorPlugins'
 import { markdownForEditor, restoreMarkdownSpacing } from './markdownSpacing'
-import { buildDocumentMap, canonicalLineAtPoint, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, restoreCanonicalSelection, selectCanonicalLines, selectionLineRange, type SelectionLineRange } from './sourceMapping'
+import { buildDocumentMap, canonicalLineAtPoint, contentEditable, placeCaretAtCanonicalLine, reapplyUntilSettled, restoreCanonicalSelection, selectCanonicalLines, selectionLineRange, type MdastNode, type SelectionLineRange } from './sourceMapping'
 import { clearMutedDecorations, nearestVisibleLine, refreshMutedDecorations } from './mutedDecorations'
 import { ensureCaretVisible, scrollableAncestors } from './caretVisibility'
 import { addTagDirectiveToRange, checklistToPlainText, indentLines, moveLinesDetailed, parseMarkdown, preserveMutedLines, removeChecklist, removeTagAtPosition, toggleMutedLines, toggleTagCollapsed } from '../markerEngine'
@@ -49,6 +49,30 @@ function tagColor(tag: string, colors: Record<string, string>) {
 // Tag chips and borders are pure CSS on .notes-tag-directive; only the color
 // needs JS since it comes from a prop. Writing the custom property only when
 // it differs keeps Lexical's mutation observer quiet.
+// mdast has no node for blank runs, so a setMarkdown re-import drops every
+// blank line beyond the first and the next export collapses them into the
+// canonical source. Re-insert the empty paragraphs the canonical source
+// implies: an empty paragraph exports as a blank line, so a run of K
+// canonical blanks needs floor((K-1)/2) of them (K=1 is the normal
+// separator). Blank runs between list items can't be represented.
+function $restoreBlankParagraphs(blocks: MdastNode[], elements: LexicalNode[], toCanonical: (editorLine: number) => number) {
+  blocks.forEach((block, index) => {
+    const element = elements[index]
+    if (index > 0) {
+      const previous = blocks[index - 1]
+      const blanks = toCanonical((block.position?.start.line ?? 1) - 1) - toCanonical((previous.position?.end.line ?? 1) - 1) - 1
+      let anchor: LexicalNode | undefined = elements[index - 1]
+      for (let count = Math.floor((blanks - 1) / 2); count > 0 && anchor; count -= 1) {
+        anchor = anchor.insertAfter($createParagraphNode())
+      }
+    }
+    if (element && $isElementNode(element) && block.children?.length
+      && (block.type === 'blockquote' || (block.type === 'containerDirective' && block.name === 'tag'))) {
+      $restoreBlankParagraphs(block.children, element.getChildren(), toCanonical)
+    }
+  })
+}
+
 function applyTagColors(host: HTMLElement, colors: Record<string, string>) {
   host.querySelectorAll<HTMLElement>('.notes-tag-directive').forEach((element) => {
     const name = element.getAttribute('data-tag-tag') ?? ''
@@ -256,6 +280,11 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     const scrollers = host ? scrollableAncestors(host) : []
     const positions = scrollers.map((scroller) => scroller.scrollTop)
     editorRef.current?.setMarkdown(markdownForEditor(markdown).markdown)
+    const editor = lexicalEditorRef.current
+    if (editor) {
+      const map = buildDocumentMap(markdown)
+      editor.update(() => $restoreBlankParagraphs(map.blocks, $getRoot().getChildren(), (line) => map.editorLineToCanonical[line] ?? line))
+    }
     scrollers.forEach((scroller, index) => { scroller.scrollTop = positions[index] })
     if (wasActive) editable.focus({ preventScroll: true })
   }

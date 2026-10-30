@@ -37,6 +37,21 @@ test('a line outside a tag enters it, then keeps moving inside', async ({ page }
   await expectCaretBlock(page, 'Line above')
 })
 
+test('moving a line leaves blank-line runs elsewhere in the document intact', async ({ page }) => {
+  await page.goto('/prototype?scenario=blank-runs')
+  const root = editorFor(page)
+
+  await setCaretAtText(root, 'gamma', 0)
+  await page.keyboard.press('Alt+ArrowUp')
+  await expect.poll(() => sourceText(page)).toMatch(/^alpha\n\n\n\ngamma\n\nbeta$/u)
+
+  // The re-import collapses the blank run in the Lexical tree even though the
+  // committed source kept it — the next export rewrites the canonical source.
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+  await expect.poll(() => sourceText(page)).toMatch(/^alpha\n\n\n\ngamma!\n\nbeta$/u)
+})
+
 test('a selection straddling a tag boundary moves the fence, not the text', async ({ page }) => {
   await page.goto('/prototype?scenario=tagged-line-movement')
   const root = editorFor(page)

@@ -334,6 +334,13 @@ suffix omega`,
   unicode: UNICODE_MARKDOWN,
   'malformed-directive': MALFORMED_DIRECTIVE_MARKDOWN,
   'muted-edges': MUTED_EDGES_MARKDOWN,
+  'blank-runs': `alpha
+
+
+
+beta
+
+gamma`,
 }
 
 function MultiEditorPrototype() {
