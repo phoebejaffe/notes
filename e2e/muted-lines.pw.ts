@@ -75,6 +75,27 @@ test('arrow-left into a muted line lands before the hidden marker and typing kee
   await expect.poll(() => mutedHighlights(page)).toEqual(['first half!'])
 })
 
+test('inserting a blank line above a muted line keeps the muted highlight on it', async ({ page }) => {
+  await page.goto('/prototype?scenario=muted')
+  const root = editorFor(page)
+  await expect.poll(() => mutedHighlights(page)).toEqual(['already muted'])
+
+  // An empty paragraph above the muted line must not absorb its highlight —
+  // keep it empty and force a decoration refresh by editing elsewhere.
+  await setCaretAtText(root, 'plain target', 'plain target'.length)
+  await page.keyboard.press('Enter')
+  await setCaretAtText(root, 'prefix alpha', 'prefix alpha'.length)
+  await page.keyboard.type('!')
+  await expect.poll(() => mutedHighlights(page)).toEqual(['already muted'])
+
+  // Typing into that paragraph keeps it too.
+  await setCaretAtText(root, 'plain target', 'plain target'.length)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.type('inserted line')
+  await expectSource(page, /plain target\n\ninserted line\n\nalready muted %%/u)
+  await expect.poll(() => mutedHighlights(page)).toEqual(['already muted'])
+})
+
 test('hide muted lines makes muted blocks invisible and restores them on show', async ({ page }) => {
   await page.goto('/prototype?scenario=muted')
   const root = editorFor(page)
