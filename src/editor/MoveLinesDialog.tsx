@@ -4,6 +4,7 @@ export interface MoveLinesTarget {
   id: string
   label: string
   section?: string
+  dimmed?: boolean
 }
 
 interface MoveLinesDialogProps {
@@ -41,7 +42,7 @@ export function MoveLinesDialog({ lineCount, targets, onSelect, onClose }: MoveL
         }} />
       {filtered.map((target, itemIndex) => <Fragment key={target.id}>
         {target.section && (itemIndex === 0 || filtered[itemIndex - 1].section !== target.section) && <span className="move-lines-section">{target.section}</span>}
-        <button className={itemIndex === selected ? 'command-selected' : ''} type="button" onClick={() => onSelect(target.id)}>{target.label}</button>
+        <button className={`${itemIndex === selected ? 'command-selected' : ''}${target.dimmed ? ' move-target-dimmed' : ''}`} type="button" onClick={() => onSelect(target.id)}>{target.label}</button>
       </Fragment>)}
       {filtered.length === 0 && <span className="move-lines-empty">No matching editors.</span>}
     </section>

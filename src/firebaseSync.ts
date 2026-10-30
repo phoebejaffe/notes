@@ -4,10 +4,34 @@ import { decryptDailyDocument, decryptNamedDocument, encryptDailyDocument, type 
 import { createKeyBundle, recoverDataKey, type EncryptedEnvelope, type KeyBundle } from './crypto'
 import { mergeMarkdown } from './markdownMerge'
 import type { DailyDocument, DocumentSyncBase, NamedDocument } from './storage'
+import type { LaneConfigState } from './lanes'
 
 const keyBundlePath = (uid: string) => doc(firestore!, 'users', uid, 'metadata', 'keyBundle')
+const laneConfigPath = (uid: string) => doc(firestore!, 'users', uid, 'metadata', 'laneConfig')
 const documentsPath = (uid: string) => collection(firestore!, 'users', uid, 'documents')
 const namedDocumentsPath = (uid: string) => collection(firestore!, 'users', uid, 'namedDocuments')
+
+// Lane config is a single plaintext metadata doc — last write wins on
+// `updatedAt`. Lane indices are positional, matching `note.lane - 1`.
+export async function uploadLaneConfig(uid: string, state: LaneConfigState) {
+  if (!firestore) throw new Error('Firebase is not configured')
+  await setDoc(laneConfigPath(uid), {
+    version: 1,
+    lanes: state.lanes.map((lane) => ({ ...(lane.disabled ? { disabled: true } : {}) })),
+    updatedAt: state.updatedAt,
+  })
+}
+
+export function watchLaneConfig(uid: string, onConfig: (state: LaneConfigState) => void, onError: (error: Error) => void) {
+  if (!firestore) return () => undefined
+  return onSnapshot(laneConfigPath(uid), (snapshot) => {
+    if (!snapshot.exists()) return
+    const data = snapshot.data()
+    const lanes = Array.isArray(data?.lanes) ? data.lanes.map((entry: unknown) => ({ disabled: (entry as { disabled?: unknown })?.disabled === true ? true : undefined })) : []
+    if (typeof data?.updatedAt !== 'number') return
+    onConfig({ lanes, updatedAt: data.updatedAt })
+  }, onError)
+}
 
 export async function loadRemoteKeyBundle(uid: string) {
   if (!firestore) return undefined
@@ -434,5 +458,5 @@ export async function deleteRemoteUserData(uid: string) {
   const documents = await getDocs(documentsPath(uid))
   const namedDocuments = await getDocs(namedDocumentsPath(uid))
   await Promise.all([...documents.docs, ...namedDocuments.docs].map((snapshot) => deleteDoc(snapshot.ref)))
-  await deleteDoc(keyBundlePath(uid))
+  await Promise.all([keyBundlePath(uid), laneConfigPath(uid)].map((ref) => deleteDoc(ref).catch(() => undefined)))
 }

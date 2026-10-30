@@ -38,9 +38,9 @@ test('named-note lanes render and swipe pans the track on a phone viewport', asy
   await seedApp(page)
   const viewport = page.locator('.notes-layout')
 
-  // daily + 2 named lanes + ghost "New lane"
-  await expect(page.locator('.lane')).toHaveCount(4)
-  await expect(page.locator('.lane-dot')).toHaveCount(4)
+  // daily + 2 named lanes
+  await expect(page.locator('.lane')).toHaveCount(3)
+  await expect(page.locator('.lane-dot')).toHaveCount(3)
 
   // Each lane fills the track width and tiles horizontally.
   const metrics = await viewport.evaluate((el) => ({
@@ -48,7 +48,7 @@ test('named-note lanes render and swipe pans the track on a phone viewport', asy
     scrollWidth: el.scrollWidth,
     lanes: [...el.querySelectorAll<HTMLElement>('.lane')].map((lane) => lane.offsetWidth),
   }))
-  expect(metrics.scrollWidth).toBe(metrics.clientWidth * 4)
+  expect(metrics.scrollWidth).toBe(metrics.clientWidth * 3)
   for (const width of metrics.lanes) expect(width).toBe(metrics.clientWidth)
 
   const cdp = await page.context().newCDPSession(page)
@@ -80,7 +80,7 @@ test('named-note lanes render and swipe pans the track on a phone viewport', asy
   await page.locator('.lane-dot').first().tap()
   await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBe(0)
   await expect(page.locator('.lane-dot').first()).toHaveClass(/lane-dot-active/)
-  await page.locator('.lane-dot').nth(3).tap()
-  await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBe(1098)
-  await expect(page.locator('.lane-dot').nth(3)).toHaveClass(/lane-dot-active/)
+  await page.locator('.lane-dot').nth(2).tap()
+  await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBe(732)
+  await expect(page.locator('.lane-dot').nth(2)).toHaveClass(/lane-dot-active/)
 })

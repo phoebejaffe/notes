@@ -7,7 +7,8 @@ export type NoteMoveTarget = 'up' | 'down' | 'left' | 'right' | 'new-lane'
 
 interface NoteCardProps {
   note: NamedDocument
-  laneCount: number
+  canMoveLaneLeft: boolean
+  canMoveLaneRight: boolean
   laneSize: number
   hideMutedLines: boolean
   tagColors: Record<string, string>
@@ -21,7 +22,7 @@ interface NoteCardProps {
   onDelete: (id: string) => void
 }
 
-export function NoteCard({ note, laneCount, laneSize, hideMutedLines, tagColors, findActive = false, onChange, onRename, onToggleCollapsed, onMoveNote, onReorderPreview, onReorderCommit, onDelete }: NoteCardProps) {
+export function NoteCard({ note, canMoveLaneLeft, canMoveLaneRight, laneSize, hideMutedLines, tagColors, findActive = false, onChange, onRename, onToggleCollapsed, onMoveNote, onReorderPreview, onReorderCommit, onDelete }: NoteCardProps) {
   const cardRef = useRef<HTMLElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -99,8 +100,8 @@ export function NoteCard({ note, laneCount, laneSize, hideMutedLines, tagColors,
             {menuItem(note.collapsed ? 'Expand' : 'Collapse', () => onToggleCollapsed(note.id))}
             {menuItem('Move up', () => onMoveNote(note.id, 'up'), note.order === 0)}
             {menuItem('Move down', () => onMoveNote(note.id, 'down'), note.order >= laneSize - 1)}
-            {menuItem('Move left', () => onMoveNote(note.id, 'left'), note.lane <= 1)}
-            {menuItem('Move right', () => onMoveNote(note.id, 'right'), note.lane >= laneCount)}
+            {menuItem('Move left', () => onMoveNote(note.id, 'left'), !canMoveLaneLeft)}
+            {menuItem('Move right', () => onMoveNote(note.id, 'right'), !canMoveLaneRight)}
             {menuItem('Move to new lane', () => onMoveNote(note.id, 'new-lane'))}
             {confirmingDelete
               ? <button className="note-delete-confirm" type="button" onClick={() => onDelete(note.id)}>Delete permanently?</button>

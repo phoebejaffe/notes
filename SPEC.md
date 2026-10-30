@@ -37,7 +37,7 @@ Named notes are `NamedDocument` records in the `named-documents` object store (I
 - `deleted`: a tombstone flag retained for cloud sync.
 - `updatedAt`, `syncBase`, and `writeId`: the same synchronization fields used by daily documents.
 
-Lanes are implicit in the data — there is no lane table. `laneCount` is the maximum stored `lane`; emptied lanes are reindexed away after a move or delete, so lane numbers stay contiguous. A trailing ghost lane is rendered after the last real lane so the first named note can always be created.
+Lane identity lives in a lane config (`src/lanes.ts`): a `lanes: {disabled?: boolean}[]` array where index `i` covers `note.lane = i + 1`. The config is stored in `localStorage` (`notes-lane-config`) and synced as a single last-writer-wins plaintext record at `users/{uid}/metadata/laneConfig` — it is not encrypted and carries no note content. The set of lane indices rendered is the union of config-covered indices (`1..lanes.length`) and lanes referenced by live notes, so explicitly configured empty or disabled lanes persist while unconfigured empty lanes collapse. Indices beyond the config are implicitly enabled, so notes from a device with fewer lanes still render. Structural operations (add, reorder, disable, delete) first compact the union to contiguous `1..N`, remapping notes and config entries together so positions stay meaningful.
 
 Preferences and lightweight UI state are stored in `localStorage`, including editor preferences, onboarding state, recovery phrases associated with a signed-in user, future-day state, recent tags, tag colors, and the last backup signature.
 
@@ -49,7 +49,8 @@ The current day is calculated using a configurable rollover hour, from midnight 
 
 ### Lanes
 
-- The workspace is a horizontal lane viewport (`.lane-viewport` → `.lane-track` → `.lane` sections) using native scrolling with `scroll-snap-type: x mandatory`. Lane 0 is the daily stream and is always leftmost; lanes 1+ hold named notes; a trailing ghost lane shows only a note-add affordance.
+- The workspace is a horizontal lane viewport (`.lane-viewport` → `.lane-track` → `.lane` sections) using native scrolling with `scroll-snap-type: x mandatory`. Lane 0 is the daily stream and is always leftmost; lanes 1+ hold named notes. Only enabled lanes render; disabled lanes hide their notes entirely.
+- "Manage lanes" (in the menu and command palette) opens a modal listing every lane with per-lane controls: move earlier/later, disable/enable, and delete (a two-step confirm that tombstones the lane's notes), plus an "Add lane" button. Reordering moves each lane's notes with it; deleting shifts later lanes down. Lane moves in the ⋯ menu skip disabled lanes, and the move-lines target picker lists notes in disabled lanes dimmed under a "Disabled lanes" section.
 - Navigation: Cmd-Option-Shift-Left/Right (configurable `lanePrevious`/`laneNext` shortcuts), touch swipes and trackpad horizontal pans via native scroll snapping — lanes use `scroll-snap-stop: always` so one gesture can only advance one lane, and in the mac app a window-level wheel handler instead steps exactly one lane per gesture so swipes work even while the window is unfocused — and clickable lane dots beneath the viewport. Programmatic multi-lane jumps (dots, shortcuts) temporarily clear the track's snap-type so the hard snap-stop does not truncate them. Switching lanes restores the last-interacted editor and exact caret or selection in that lane; an unvisited lane focuses its first editor at the start. Cmd-Option-Shift-Up (`todayTop`) returns to the daily lane from anywhere and lands the caret at the top of today's editor. Switching lanes animates via native smooth scrolling; plain arrow keys never shift lanes.
 - Lanes render identically in the macOS capture window; the capture layout is scoped to the daily lane's `.day-stream` styling.
 
@@ -67,9 +68,9 @@ The current day is calculated using a configurable rollover hour, from midnight 
 ### Named lanes
 
 - Each named lane contains a vertical stack of `NoteCard`s, each a titled Markdown editor using the same editor component as day cards.
-- Every lane (and the ghost lane) has a "+ New note" button that creates an untitled note in that lane.
+- Every visible lane has a "+ New note" button that creates an untitled note in that lane.
 - Notes collapse/expand by clicking the title or pressing Cmd+\ (configurable `noteCollapse` shortcut, only when the caret is inside that note's editor).
-- A ⋯ menu on each note offers: Rename (inline editable title), Move up/down (vertical reorder within the lane), Move left/right and Move to new lane (lane reassignment; emptied lanes collapse and the viewport follows the note), and Delete (with confirm).
+- A ⋯ menu on each note offers: Rename (inline editable title), Move up/down (vertical reorder within the lane), Move left/right and Move to new lane (lane reassignment; unconfigured emptied lanes collapse and the viewport follows the note), and Delete (with confirm).
 - A drag handle on each note supports pointer-based vertical reordering within a lane and across lanes.
 - Cross-editor ArrowUp/ArrowDown navigation and the formatting toolbar work identically on note cards; arrow navigation is scoped to siblings within a lane.
 - Named notes participate in search, tag filtering, and the known-tags manager (entries are labeled by note title); deleting a note removes its tag associations.
@@ -287,7 +288,7 @@ This section is intentionally maintained as a living backlog. It should be updat
 - Extend search coverage: matches in day/note titles, Markdown source syntax (link URLs, `%%`, directive fences), and tag-filtered cards are currently invisible to find; matches spanning formatting boundaries (e.g. half-bolded text) are not detected; and date-range semantics remain undefined.
 - Add broader date navigation/history controls for large note collections.
 - Include named notes in automatic backups (currently day-only) and in import workflows.
-- Add lane-level management (lane titles, reordering lanes, deleting a lane wholesale).
+- Add user-named lane titles (lane reordering, adding, disabling, and deleting exist via "Manage lanes"; lanes are labeled "Lane N" for now).
 - Consider CRDT or operation-based syncing for richer real-time collaboration, and improve deleted/empty-document conflict handling.
 - Revisit the 1,000-document sync limit and define pagination/retention behavior for long-lived accounts.
 - Add robust validation and recovery flows for malformed imports, interrupted backups, and corrupted local storage.

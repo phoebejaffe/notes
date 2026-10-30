@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { MdxNotesEditor } from './editor/MdxNotesEditor'
 import { MoveLinesDialog, type MoveLinesTarget } from './editor/MoveLinesDialog'
+import { compactLanes, enabledLanes, laneDisabled, laneIndices, loadLaneConfig, saveLaneConfig, type LaneConfig, type LaneConfigState } from './lanes'
 import { ensureCaretVisible } from './editor/caretVisibility'
 import type { SelectionLineRange } from './editor/sourceMapping'
 import { extractLinesForMove, parseMarkdown, renameTagEverywhere, sourceMatchesFilter } from './markerEngine'
@@ -17,7 +18,7 @@ import { NAMED_DOCS_CHANNEL } from './todoNotes'
 import { backupFolderName, backupRetentionCutoff, backupSignature, cleanupBrowserBackups, pickBackupDirectory, readBackupDirectory, writeBackup, type ImportedBackupDocument } from './backup'
 import { diffLines } from './editorCommands'
 import { firebaseConfigured, signInWithGoogle, signOutOfGoogle, watchAuth } from './firebase'
-import { createRemoteKeyBundle, deleteRemoteUserData, isStaleRemoteDocument, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, syncNamedDocuments, uploadEncryptedDocument, uploadNamedDocument, watchRemoteDocuments, watchRemoteNamedDocuments, type SyncConflict } from './firebaseSync'
+import { createRemoteKeyBundle, deleteRemoteUserData, isStaleRemoteDocument, loadRemoteKeyBundle, recoverRemoteDataKey, syncDocuments, syncNamedDocuments, uploadEncryptedDocument, uploadLaneConfig, uploadNamedDocument, watchLaneConfig, watchRemoteDocuments, watchRemoteNamedDocuments, type SyncConflict } from './firebaseSync'
 import { NoteCard, type NoteMoveTarget } from './NoteCard'
 import { mergeMarkdown } from './markdownMerge'
 import { disablePush, enablePush, pushStatus, type PushStatus } from './pushNotifications'
@@ -145,15 +146,13 @@ function formatDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-// Lane numbers are contiguous starting at 1 (lane 0 is the daily stream) and
-// `order` is the note's index within its lane. Every structural mutation runs
-// the result through this so the invariant survives moves and deletions.
+// Lanes are explicit: `note.lane` (1+) indexes the lane config, so this only
+// clamps lane >= 1 and compacts `order` within each lane. Lanes themselves are
+// never renumbered here — lane order/deletion is managed via lane config.
 function normalizeLanes(notes: NamedDocument[]) {
-  // Tombstones don't hold a lane open — only live notes renumber lanes.
-  const renumber = new Map([...new Set(notes.filter((note) => !note.deleted).map((note) => Math.max(1, note.lane || 1)))].sort((a, b) => a - b).map((lane, index) => [lane, index + 1]))
   const byLane = new Map<number, NamedDocument[]>()
   notes.forEach((note) => {
-    const lane = renumber.get(Math.max(1, note.lane || 1)) ?? 1
+    const lane = Math.max(1, note.lane || 1)
     const list = byLane.get(lane) ?? []
     list.push(note)
     byLane.set(lane, list)
@@ -322,6 +321,10 @@ function NotesApp() {
   const uploadPendingNotesRef = useRef<() => Promise<void>>(async () => undefined)
   const toggleNoteCollapsedRef = useRef<(id: string) => void>(() => undefined)
   const [activeLane, setActiveLane] = useState(0)
+  const [laneConfigState, setLaneConfigState] = useState<LaneConfigState>(loadLaneConfig)
+  const laneConfigRef = useRef(laneConfigState)
+  const [lanesOpen, setLanesOpen] = useState(false)
+  const [confirmLaneDelete, setConfirmLaneDelete] = useState<number | null>(null)
   const laneSelectionMemoryRef = useRef(new Map<number, LaneSelectionMemory>())
   const laneViewportRef = useRef<HTMLDivElement>(null)
   const laneScrollIdleRef = useRef(0)
@@ -558,11 +561,13 @@ function NotesApp() {
     return () => window.removeEventListener('notes-sw-updated', onUpdated)
   }, [])
 
-  // Lanes: track index 0 is the daily stream; named lanes occupy 1..laneCount
-  // (note.lane maps directly to the track index); laneCount+1 is the ghost
-  // "new lane" placeholder at the end.
+  // Lanes: track index 0 is the daily stream. `note.lane` indexes the lane
+  // config (1-based); disabled lanes are hidden, and lane indices beyond the
+  // config are implicitly enabled so remote notes always land somewhere.
   const sortedNotes = useMemo(() => Object.values(namedDocs).filter((note) => !note.deleted).sort((a, b) => a.lane - b.lane || a.order - b.order), [namedDocs])
-  const laneCount = useMemo(() => sortedNotes.reduce((max, note) => Math.max(max, note.lane), 0), [sortedNotes])
+  const allLanes = useMemo(() => laneIndices(sortedNotes, laneConfigState), [sortedNotes, laneConfigState])
+  const visibleLanes = useMemo(() => enabledLanes(sortedNotes, laneConfigState), [sortedNotes, laneConfigState])
+  const laneTrackIndex = useMemo(() => new Map(visibleLanes.map((lane, position) => [lane, position + 1])), [visibleLanes])
   const lanes = useMemo(() => {
     const byLane = new Map<number, NamedDocument[]>()
     sortedNotes.forEach((note) => {
@@ -572,7 +577,7 @@ function NotesApp() {
     })
     return byLane
   }, [sortedNotes])
-  const totalLanes = laneCount + 2
+  const totalLanes = visibleLanes.length + 1
 
   // Find mode is active once a query exists — the panel alone doesn't change
   // the document view. Muted lines stay revealed while finding so matches
@@ -670,6 +675,12 @@ function NotesApp() {
     observer.observe(viewport)
     return () => observer.disconnect()
   }, [activeLane])
+
+  // Deleting or disabling the last lane can leave activeLane past the end of
+  // the track. The shrinking track clamps scrollLeft and fires a scroll event
+  // that realigns state via handleLaneScroll; until then render the clamped
+  // lane so the highlight never points past the end.
+  const shownLane = Math.max(0, Math.min(activeLane, totalLanes - 1))
 
   const setFindIndex = useCallback((index: number) => {
     findIndexRef.current = index
@@ -1194,6 +1205,20 @@ function NotesApp() {
     })
   }, [dataKey, firebaseUser, loaded])
 
+  // Lane config is a plaintext metadata doc, LWW on updatedAt.
+  useEffect(() => {
+    if (!loaded || !firebaseUser) return
+    return watchLaneConfig(firebaseUser.uid, (remote) => {
+      if (remote.updatedAt <= laneConfigRef.current.updatedAt) return
+      laneConfigRef.current = remote
+      setLaneConfigState(remote)
+      saveLaneConfig(remote)
+    }, (error) => {
+      setSyncState('error')
+      setSyncMessage(error.message || 'Realtime sync failed.')
+    })
+  }, [firebaseUser, loaded])
+
   useEffect(() => {
     if (!loaded || !firebaseUser || !isOnline) return
     const timer = window.setTimeout(() => {
@@ -1468,6 +1493,57 @@ function NotesApp() {
     setNamedDocs(records)
   }
 
+  // Lane config is a single LWW record (localStorage + metadata/laneConfig
+  // doc). `note.lane` is 1-based; config index i covers lane i+1.
+  function commitLaneConfig(next: LaneConfig[]) {
+    const state: LaneConfigState = { lanes: next, updatedAt: currentTimestamp() }
+    laneConfigRef.current = state
+    setLaneConfigState(state)
+    saveLaneConfig(state)
+    if (firebaseUser) void uploadLaneConfig(firebaseUser.uid, state).catch(() => undefined)
+  }
+
+  // Every structural lane op compacts first so the config's positional
+  // mapping (index i ↔ lane i+1) stays tidy. `position` is the lane's index
+  // in the full lane list; post-compaction it equals lane - 1.
+  function addLane() {
+    const { notes, lanes: configLanes } = compactLanes(Object.values(namedDocsRef.current), laneConfigRef.current)
+    commitNamedDocuments(notes)
+    commitLaneConfig([...configLanes, {}])
+    goToLane(visibleLanes.length + 1)
+  }
+
+  function moveLane(position: number, direction: -1 | 1) {
+    const { notes, lanes: configLanes, count } = compactLanes(Object.values(namedDocsRef.current), laneConfigRef.current)
+    const other = position + direction
+    if (position < 0 || other < 0 || other >= count) return
+    const next = configLanes.slice()
+    ;[next[position], next[other]] = [next[other], next[position]]
+    const lane = position + 1
+    const otherLane = other + 1
+    commitNamedDocuments(notes.map((note) => note.lane === lane ? { ...note, lane: otherLane } : note.lane === otherLane ? { ...note, lane } : note))
+    commitLaneConfig(next)
+  }
+
+  function deleteLane(position: number) {
+    const { notes, lanes: configLanes, count } = compactLanes(Object.values(namedDocsRef.current), laneConfigRef.current)
+    const lane = position + 1
+    if (position < 0 || lane > count) return
+    // Notes in the deleted lane tombstone (syncing the deletion); lanes after
+    // it shift down to stay contiguous with the config.
+    commitNamedDocuments(notes.map((note) => note.lane === lane ? (note.deleted ? note : { ...note, deleted: true }) : note.lane > lane ? { ...note, lane: note.lane - 1 } : note))
+    commitLaneConfig(configLanes.filter((_, index) => index !== position))
+    setConfirmLaneDelete(null)
+  }
+
+  function toggleLaneDisabled(position: number) {
+    const { notes, lanes: configLanes } = compactLanes(Object.values(namedDocsRef.current), laneConfigRef.current)
+    commitNamedDocuments(notes)
+    const next = configLanes.slice()
+    next[position] = { ...next[position], disabled: next[position]?.disabled ? undefined : true }
+    commitLaneConfig(next)
+  }
+
   function updateNoteMarkdown(id: string, markdown: string) {
     const note = namedDocsRef.current[id]
     if (!note) return
@@ -1504,7 +1580,7 @@ function NotesApp() {
     const notes = Object.values(namedDocsRef.current)
     const note = notes.find((current) => current.id === id)
     if (!note) return
-    const maxLane = notes.reduce((max, current) => current.deleted ? max : Math.max(max, current.lane), 0)
+    const enabled = enabledLanes(notes, laneConfigRef.current)
     let lane = note.lane
     let order = note.order
     if (target === 'up' || target === 'down') {
@@ -1515,15 +1591,15 @@ function NotesApp() {
       commitNamedDocuments(notes.map((current) => current.id === id ? { ...current, order: swap.order } : current.id === swap.id ? { ...current, order: note.order } : current))
       return
     }
-    if (target === 'new-lane') lane = maxLane + 1
-    else lane = Math.max(1, Math.min(maxLane, note.lane + (target === 'left' ? -1 : 1)))
+    if (target === 'new-lane') lane = (laneIndices(notes, laneConfigRef.current).pop() ?? 0) + 1
+    else if (target === 'left') lane = enabled.filter((candidate) => candidate < note.lane).pop() ?? 0
+    else lane = enabled.find((candidate) => candidate > note.lane) ?? 0
+    if (!lane) return
     order = notes.filter((current) => current.lane === lane && !current.deleted && current.id !== id).length
     const updated = notes.map((current) => current.id === id ? { ...current, lane, order } : current)
-    // The note's lane can shift when normalization collapses an emptied lane —
-    // navigate to its final position.
-    const moved = normalizeLanes(updated).find((current) => current.id === id)
     commitNamedDocuments(updated)
-    if (moved) goToLane(moved.lane)
+    const trackIndex = target === 'new-lane' ? enabled.length + 1 : laneTrackIndex.get(lane)
+    if (trackIndex !== undefined) goToLane(trackIndex)
   }
 
   // Live reorder during a handle drag: preview without dirty stamps; the
@@ -1839,9 +1915,14 @@ function NotesApp() {
     const sourceDay = moveRequest.source.kind === 'day' ? moveRequest.source.day : null
     const targets: MoveLinesTarget[] = []
     if (sourceDay !== today) targets.push({ id: `day:${today}`, label: 'Today', section: 'Daily notes' })
-    sortedNotes.forEach((note) => {
-      if (moveRequest.source.kind === 'note' && moveRequest.source.id === note.id) return
+    // Enabled lanes first, then disabled-lane notes grouped and dimmed —
+    // they remain valid targets but are visually de-emphasized.
+    const namedNotes = sortedNotes.filter((note) => !(moveRequest.source.kind === 'note' && moveRequest.source.id === note.id))
+    namedNotes.filter((note) => !laneDisabled(note.lane, laneConfigState)).forEach((note) => {
       targets.push({ id: `note:${note.id}`, label: note.title || 'Untitled note', section: 'Named notes' })
+    })
+    namedNotes.filter((note) => laneDisabled(note.lane, laneConfigState)).forEach((note) => {
+      targets.push({ id: `note:${note.id}`, label: note.title || 'Untitled note', section: 'Disabled lanes', dimmed: true })
     })
     for (let offset = 1; offset <= 14; offset += 1) {
       const day = shiftLogicalDay(today, -offset)
@@ -1849,7 +1930,7 @@ function NotesApp() {
       targets.push({ id: `day:${day}`, label: formatLogicalDay(day, preferences.dateFormat), section: 'Past days' })
     }
     return targets
-  }, [moveRequest, preferences.dateFormat, sortedNotes, today])
+  }, [moveRequest, preferences.dateFormat, sortedNotes, laneConfigState, today])
 
   function moveLinesTo(targetId: string) {
     const request = moveRequest
@@ -1959,11 +2040,12 @@ function NotesApp() {
       // stay encrypted and still require the unlocked key. The families run
       // independently so one failing does not discard the other's results.
       const settle = <T,>(promise: Promise<T>) => promise.then((value) => ({ value, error: undefined as unknown })).catch((error: unknown) => ({ value: undefined as T | undefined, error }))
-      const [dailyOutcome, namedOutcome] = await Promise.all([
+      const [dailyOutcome, namedOutcome, laneConfigOutcome] = await Promise.all([
         settle(dataKey ? syncDocuments(firebaseUser.uid, localDocuments, dataKey, { onWriteId: trackOwnWriteId }) : Promise.resolve({ documents: [] as DailyDocument[], conflicts: [] as SyncConflict[] }))
           .finally(() => localDocuments.forEach((document) => uploadingDaysRef.current.delete(document.day))),
         settle(syncNamedDocuments(firebaseUser.uid, localNotes, dataKey, { onWriteId: trackOwnWriteId }))
           .finally(() => localNotes.forEach((note) => uploadingNotesRef.current.delete(note.id))),
+        settle(uploadLaneConfig(firebaseUser.uid, laneConfigRef.current)),
       ])
       if (dailyOutcome.error && namedOutcome.error) throw dailyOutcome.error
       const result = dailyOutcome.value ?? { documents: [] as DailyDocument[], conflicts: [] as SyncConflict[] }
@@ -1971,6 +2053,7 @@ function NotesApp() {
       const syncFailures = [
         dailyOutcome.error ? `daily notes (${dailyOutcome.error instanceof Error ? dailyOutcome.error.message : String(dailyOutcome.error)})` : '',
         namedOutcome.error ? `named notes (${namedOutcome.error instanceof Error ? namedOutcome.error.message : String(namedOutcome.error)})` : '',
+        laneConfigOutcome.error ? `lane config (${laneConfigOutcome.error instanceof Error ? laneConfigOutcome.error.message : String(laneConfigOutcome.error)})` : '',
       ].filter(Boolean)
       if (dataKey && dailyOutcome.value) {
         dirtyDaysRef.current.clear()
@@ -2042,6 +2125,9 @@ function NotesApp() {
       latestRemoteNotesRef.current = {}
       dirtyNotesRef.current.clear()
       pendingNoteWritesRef.current.clear()
+      laneConfigRef.current = { lanes: [], updatedAt: 0 }
+      setLaneConfigState(laneConfigRef.current)
+      saveLaneConfig(laneConfigRef.current)
       await clearSyncBases()
       await clearNamedSyncBases()
       const clearedNotes = Object.fromEntries(Object.values(namedDocsRef.current).map((note) => {
@@ -2252,6 +2338,7 @@ function NotesApp() {
     if (command === 'today') jumpToToday()
     if (command === 'search') setSearchOpen(true)
     if (command === 'settings') setSettingsOpen(true)
+    if (command === 'lanes') setLanesOpen(true)
     if (command === 'sync') void syncNow()
     if (command === 'backup') void performBackup()
     if (command === 'import') void previewImport()
@@ -2260,7 +2347,7 @@ function NotesApp() {
   }
 
   const commandItems = [
-    ['today', 'Jump to today'], ['future', 'Show future days'], ['search', 'Search notes'], ['settings', 'Open settings'],
+    ['today', 'Jump to today'], ['future', 'Show future days'], ['search', 'Search notes'], ['settings', 'Open settings'], ['lanes', 'Manage lanes'],
     ['sync', 'Sync now'], ...(isTauriEnvironment() ? [['backup', 'Backup now']] : []), ['import', 'Import backup'], ['export', 'Export all notes'],
   ].filter(([, label]) => label.toLocaleLowerCase().includes(commandQuery.toLocaleLowerCase()))
 
@@ -2291,6 +2378,7 @@ function NotesApp() {
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
+          <button type="button" onClick={() => { setLanesOpen(true); setConfirmLaneDelete(null); setMenuOpen(false) }}>Manage lanes</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
           <button type="button" onClick={() => { exportAllMarkdown(); setMenuOpen(false) }}>Export all</button>
           <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
@@ -2311,6 +2399,7 @@ function NotesApp() {
           <button type="button" onClick={() => { setMenuOpen(false); reloadApp() }}>Reload app</button>
           <button type="button" onClick={() => { setShortcutHelpOpen(true); setMenuOpen(false) }}>Keyboard shortcuts</button>
           <button type="button" onClick={() => { setTagsOpen(true); setMenuOpen(false) }}>Tags</button>
+          <button type="button" onClick={() => { setLanesOpen(true); setConfirmLaneDelete(null); setMenuOpen(false) }}>Manage lanes</button>
           <button type="button" onClick={() => { exportMarkdown(today); setMenuOpen(false) }}>Export today</button>
           <button type="button" onClick={() => { exportAllMarkdown(); setMenuOpen(false) }}>Export all</button>
           <button type="button" onClick={() => { jumpToToday(); setMenuOpen(false) }}>Jump to today</button>
@@ -2327,8 +2416,32 @@ function NotesApp() {
       {importPreview && <div className="modal-backdrop" role="presentation"><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-heading"><div><span className="eyebrow">Data</span><h2 id="import-title">Review backup import</h2></div><button className="modal-close" type="button" onClick={() => setImportPreview(undefined)}>×</button></div><p className="settings-help">{importPreview.documents.length} Markdown days found; {importPreview.invalid.length} files ignored. Importing can change local notes.</p>{importPreview.documents.filter((document) => document.day in documents).map((document) => <label className="settings-row import-collision" key={document.day}><span className="settings-label">{formatLogicalDay(document.day, preferences.dateFormat)} collision</span><select value={importChoices[document.day] ?? 'local'} onChange={(event) => setImportChoices((current) => ({ ...current, [document.day]: event.target.value as 'local' | 'imported' | 'append' }))}><option value="local">Keep local</option><option value="imported">Keep imported</option><option value="append">Append imported</option></select></label>)}<label className="settings-row"><span className="settings-label">Import mode</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as 'additive' | 'replace')}><option value="additive">Add missing and append collisions</option><option value="replace">Replace all local notes</option></select></label><div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={applyImport}>Import and continue</button><button className="settings-action" type="button" onClick={() => setImportPreview(undefined)}>Cancel</button></div></section></div>}
       {!firebaseConfigured ? <p className="sync-prompt" role="status">{syncPrompt}</p> : !firebaseUser && !preferences.syncPromptDismissed ? <p className="sync-prompt" role="status"><button className="sync-prompt-link" type="button" onClick={() => { void signIn() }}>Sign in with Google</button> to enable encrypted sync.<button className="sync-prompt-close" type="button" aria-label="Dismiss sync prompt" onClick={() => setPreferences((current) => ({ ...current, syncPromptDismissed: true }))}>×</button></p> : syncPrompt && <p className="sync-prompt" role="status">{syncPrompt}</p>}
 
+      {lanesOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) { setLanesOpen(false); setConfirmLaneDelete(null) } }}>
+        <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="lanes-title">
+          <div className="modal-heading"><div><span className="eyebrow">Workspace</span><h2 id="lanes-title">Manage lanes</h2></div><button className="modal-close" type="button" onClick={() => { setLanesOpen(false); setConfirmLaneDelete(null) }}>×</button></div>
+          {allLanes.length === 0 && <p className="settings-help">No lanes yet. Add one to hold named notes alongside the daily stream.</p>}
+          {allLanes.map((lane, position) => {
+            const laneNotes = lanes.get(lane) ?? []
+            const disabled = laneDisabled(lane, laneConfigState)
+            const titles = laneNotes.map((note) => note.title || 'Untitled note').join(', ')
+            return <div className="lane-row" key={lane}>
+              <span className={`lane-row-label${disabled ? ' lane-row-disabled' : ''}`}>Lane {lane}<span className="lane-row-notes">{titles || 'Empty'}{disabled ? ' · disabled' : ''}</span></span>
+              <span className="lane-row-actions">
+                <button type="button" aria-label={`Move lane ${lane} earlier`} disabled={position === 0} onClick={() => moveLane(position, -1)}>↑</button>
+                <button type="button" aria-label={`Move lane ${lane} later`} disabled={position === allLanes.length - 1} onClick={() => moveLane(position, 1)}>↓</button>
+                <button type="button" onClick={() => toggleLaneDisabled(position)}>{disabled ? 'Enable' : 'Disable'}</button>
+                {confirmLaneDelete === lane
+                  ? <button className="note-delete-confirm" type="button" onClick={() => deleteLane(position)}>Delete{laneNotes.length ? ` + ${laneNotes.length} note${laneNotes.length === 1 ? '' : 's'}` : ''}?</button>
+                  : <button type="button" onClick={() => setConfirmLaneDelete(lane)}>Delete</button>}
+              </span>
+            </div>
+          })}
+          <div className="sync-conflict-actions"><button className="settings-action" type="button" onClick={addLane}>+ Add lane</button></div>
+        </section>
+      </div>}
+
       <div className="notes-layout lane-viewport" ref={laneViewportRef} onScroll={handleLaneScroll}>
-      <section className={`lane${activeLane === 0 ? ' lane-active' : ''}`} data-lane={0} aria-label="Daily lane">
+      <section className={`lane${shownLane === 0 ? ' lane-active' : ''}`} data-lane={0} aria-label="Daily lane">
         <section className="day-stream" aria-label="Daily notes">
           {days.filter((documentDay) => (filterTags.length || effectiveHideMuted ? sourceMatchesFilter(documents[documentDay] ?? '', filterTags, effectiveHideMuted) : documentDay === today || preferences.showEmptyDays || documents[documentDay])).map((documentDay) => {
             const source = documents[documentDay] ?? ''
@@ -2345,27 +2458,24 @@ function NotesApp() {
           <div className="stream-sentinel" ref={streamEndRef} aria-hidden="true" />
         </section>
       </section>
-      {[...lanes.keys()].sort((a, b) => a - b).map((lane) => {
+      {visibleLanes.map((lane, position) => {
+        const trackIndex = position + 1
         const laneNotes = lanes.get(lane) ?? []
-        return <section className={`lane${activeLane === lane ? ' lane-active' : ''}`} key={lane} data-lane={lane} aria-label={`Notes lane ${lane}`}>
+        const laneHasLeft = visibleLanes.some((candidate) => candidate < lane)
+        const laneHasRight = visibleLanes.some((candidate) => candidate > lane)
+        return <section className={`lane${shownLane === trackIndex ? ' lane-active' : ''}`} key={lane} data-lane={trackIndex} aria-label={`Notes lane ${trackIndex}`}>
           <div className="note-stream">
             {laneNotes.filter((note) => filterTags.length || effectiveHideMuted ? sourceMatchesFilter(note.markdown, filterTags, effectiveHideMuted) : true).map((note) => (
-              <NoteCard key={note.id} note={note} laneCount={laneCount} laneSize={laneNotes.length} hideMutedLines={effectiveHideMuted} tagColors={tagColors} findActive={findActive} onChange={updateNoteMarkdown} onRename={renameNote} onToggleCollapsed={toggleNoteCollapsed} onMoveNote={moveNote} onReorderPreview={reorderNotePreview} onReorderCommit={commitNoteReorder} onDelete={deleteNote} />
+              <NoteCard key={note.id} note={note} canMoveLaneLeft={laneHasLeft} canMoveLaneRight={laneHasRight} laneSize={laneNotes.length} hideMutedLines={effectiveHideMuted} tagColors={tagColors} findActive={findActive} onChange={updateNoteMarkdown} onRename={renameNote} onToggleCollapsed={toggleNoteCollapsed} onMoveNote={moveNote} onReorderPreview={reorderNotePreview} onReorderCommit={commitNoteReorder} onDelete={deleteNote} />
             ))}
             <button className="lane-add" type="button" onClick={() => createNote(lane)}>+ New note</button>
           </div>
         </section>
       })}
-      <section className={`lane lane-ghost${activeLane === laneCount + 1 ? ' lane-active' : ''}`} data-lane={laneCount + 1} aria-label="New lane">
-        <div className="note-stream note-stream-ghost">
-          <button className="lane-add" type="button" onClick={() => createNote(laneCount + 1)}>+ New note</button>
-          <p className="lane-ghost-hint">New lane</p>
-        </div>
-      </section>
       </div>
       <nav className="lane-dots" aria-label="Lanes">
         {Array.from({ length: totalLanes }, (_, index) => (
-          <button key={index} type="button" className={`lane-dot${index === activeLane ? ' lane-dot-active' : ''}`} aria-label={index === 0 ? 'Daily notes' : index === totalLanes - 1 ? 'New lane' : `Notes lane ${index}`} aria-current={index === activeLane ? 'true' : undefined} onClick={() => goToLane(index)}>{index === totalLanes - 1 ? '+' : '•'}</button>
+          <button key={index} type="button" className={`lane-dot${index === shownLane ? ' lane-dot-active' : ''}`} aria-label={index === 0 ? 'Daily notes' : `Notes lane ${index}`} aria-current={index === shownLane ? 'true' : undefined} onClick={() => goToLane(index)}>•</button>
         ))}
       </nav>
 

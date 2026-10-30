@@ -28,13 +28,18 @@ async function seedApp(page: Page, notes: { id: string; title: string; markdown:
 
 const lane = (page: Page, index: number) => page.locator(`.lane[data-lane="${index}"]`)
 
-test('creates a note in a new lane from the ghost lane', async ({ page }) => {
+test('creates a note in a new lane via Manage lanes', async ({ page }) => {
   await seedApp(page)
-  await expect(page.locator('.lane')).toHaveCount(2) // daily + ghost
-  await page.locator('.lane-ghost .lane-add').click()
+  await expect(page.locator('.lane')).toHaveCount(1) // daily only
+  await page.getByRole('button', { name: 'Open menu' }).click()
+  await page.getByRole('button', { name: 'Manage lanes' }).click()
+  await page.getByRole('button', { name: '+ Add lane' }).click()
+  await page.locator('.modal-close').click()
+  await expect(page.locator('.lane')).toHaveCount(2) // daily + lane 1
+  await lane(page, 1).locator('.lane-add').click()
   await expect(page.locator('.note-card')).toHaveCount(1)
   await expect(page.locator('.note-title')).toContainText('Untitled')
-  await expect(page.locator('.lane')).toHaveCount(3) // daily + lane 1 + ghost
+  await expect(page.locator('.lane')).toHaveCount(2)
 })
 
 test('navigates lanes with the keyboard shortcut', async ({ page }) => {
@@ -103,7 +108,7 @@ test('restores each lane selection to its last-interacted editor', async ({ page
 
 test('plain arrow keys never shift lanes', async ({ page }) => {
   await seedApp(page, [{ id: 'n1', title: 'Ideas', markdown: 'x', lane: 1, order: 0 }])
-  await expect(page.locator('.lane')).toHaveCount(3)
+  await expect(page.locator('.lane')).toHaveCount(2)
   // Focus outside any editable — bare arrows must not scroll the lane track.
   await page.keyboard.press('ArrowRight')
   await page.keyboard.press('ArrowRight')
@@ -128,7 +133,7 @@ test('a horizontal touch swipe changes lanes on mobile', async ({ browser }) => 
   const page = await context.newPage()
   try {
     await seedApp(page, [{ id: 'n1', title: 'Ideas', markdown: 'x', lane: 1, order: 0 }])
-    await expect(page.locator('.lane')).toHaveCount(3)
+    await expect(page.locator('.lane')).toHaveCount(2)
     const client = await page.context().newCDPSession(page)
     // synthesizeScrollGesture drives Chromium's real scroll pipeline (scroll
     // latching + chaining + snap) — the same path a finger flick takes. A
@@ -178,7 +183,7 @@ test('Ctrl-1/2 jumps straight to a lane', async ({ page }) => {
   await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('0')
   // Out-of-range digits clamp to the last lane, never past it.
   await page.keyboard.press('Control+9')
-  await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('2')
+  await expect.poll(() => page.locator('.lane.lane-active').getAttribute('data-lane')).toBe('1')
 })
 
 test('the day tint shows through the editor surface', async ({ page }) => {
@@ -244,10 +249,10 @@ test('deletes a note via the two-step menu confirm', async ({ page }) => {
   // The menu stays open for the confirm step.
   await page.getByRole('button', { name: 'Delete permanently?' }).click()
   await expect(page.locator('.note-card')).toHaveCount(1)
-  // The emptied lane reindexes away: the survivor is now in lane 1 and the
-  // ghost lane is the only thing at index 2.
+  // The emptied lane has no config entry, so it collapses — only explicitly
+  // managed lanes persist when empty.
   await expect(lane(page, 1).locator('.note-title')).toContainText('Keep')
-  await expect(page.locator('.lane')).toHaveCount(3)
+  await expect(page.locator('.lane')).toHaveCount(2)
 })
 
 test('mac app: a horizontal swipe steps one lane per gesture', async ({ page }) => {
