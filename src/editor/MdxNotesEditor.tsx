@@ -593,6 +593,14 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       else if (direction === 'indent' || direction === 'outdent') indentSelection(direction)
     }
 
+    const requestMoveLines = () => {
+      const map = buildDocumentMap(valueRef.current)
+      const range = selectionLineRange(host, map) ?? lastRangeRef.current
+      if (!range) return false
+      host.dispatchEvent(new CustomEvent('notes-move-lines', { detail: { startLine: range.startLine, endLine: range.endLine }, bubbles: true }))
+      return true
+    }
+
     const toggleChecklistItem = () => {
       const editor = lexicalEditorRef.current
       if (!editor) return
@@ -848,15 +856,12 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
 
       if (!mod) return false
 
-      // Cmd/Ctrl-M asks the app to move the selected canonical lines into a
-      // different editor. The host bubbles the request up; whichever surface
-      // owns the document collection resolves the source card and moves them.
+      // Cmd/Ctrl-M and the mobile toolbar button ask the app to move the
+      // selected canonical lines into a different editor. The host bubbles the
+      // request up; whichever surface owns the document collection resolves
+      // the source card and moves them.
       if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === 'm') {
-        const map = buildDocumentMap(valueRef.current)
-        const range = selectionLineRange(host, map) ?? lastRangeRef.current
-        if (!range) return false
-        host.dispatchEvent(new CustomEvent('notes-move-lines', { detail: { startLine: range.startLine, endLine: range.endLine }, bubbles: true }))
-        return true
+        return requestMoveLines()
       }
 
       if (!event.shiftKey && event.key === '/') return muteSelection()
@@ -945,6 +950,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
     host.addEventListener('paste', handlePaste, true)
     host.addEventListener('mousedown', toggleTagChip, true)
     host.addEventListener('notes-mute-toggle', muteSelection)
+    host.addEventListener('notes-request-move-lines', requestMoveLines)
     host.addEventListener('notes-line-gesture', handleLineGesture)
     host.addEventListener('notes-focus-edge', handleFocusEdge)
     host.addEventListener('notes-restore-caret', handleRestoreCaret)
@@ -956,6 +962,7 @@ export function MdxNotesEditor({ value, onChange, autoFocus = false, hideMutedLi
       host.removeEventListener('paste', handlePaste, true)
       host.removeEventListener('mousedown', toggleTagChip, true)
       host.removeEventListener('notes-mute-toggle', muteSelection)
+      host.removeEventListener('notes-request-move-lines', requestMoveLines)
       host.removeEventListener('notes-line-gesture', handleLineGesture)
       host.removeEventListener('notes-focus-edge', handleFocusEdge)
       host.removeEventListener('notes-restore-caret', handleRestoreCaret)

@@ -33,6 +33,10 @@ function MoveIcon() {
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3V9M12 3L9 6M12 3L15 6M12 15V21M12 21L15 18M12 21L9 18M3 12H9M3 12L6 15M3 12L6 9M15 12H21M21 12L18 9M21 12L18 15" /></svg>
 }
 
+function MoveToEditorIcon() {
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5" /><path d="M3 12h12M11 8l4 4-4 4" /></svg>
+}
+
 type GestureDirection = 'up' | 'down' | 'indent' | 'outdent'
 
 const GESTURE_LOCK_PX = 16
@@ -204,6 +208,7 @@ export function MdxEditorToolbar() {
     <LinkControl />
     <button className="notes-editor-toolbar-button notes-editor-mute-button" type="button" aria-label="Mute selected lines" title="Mute selected lines" onClick={(event) => event.currentTarget.dispatchEvent(new CustomEvent('notes-mute-toggle', { bubbles: true }))}><MuteIcon /></button>
     <GestureMoveButton />
+    <button className="notes-editor-toolbar-button notes-editor-move-button" type="button" aria-label="Move lines to another editor" title="Move lines to another editor" onClick={(event) => event.currentTarget.dispatchEvent(new CustomEvent('notes-request-move-lines', { bubbles: true }))}><MoveToEditorIcon /></button>
     {activeTags.length > 0 && <span className="notes-editor-active-tags" aria-label="Active tags">{activeTags.map((tag) => <span className="notes-editor-active-tag" key={tag}>{tag}<button type="button" aria-label={`Remove ${tag}`} onClick={() => actions?.removeTag(tag)}>×</button></span>)}</span>}
     <AddTagControl />
   </>

@@ -26,6 +26,25 @@ test('ctrl-m opens the target picker and moves the caret line to another editor'
   await expect(editorIn(page, 'day2')).toHaveText(/^First day top line/)
 })
 
+test('the mobile move button opens the target picker', async ({ browser }) => {
+  const context = await browser.newContext({ hasTouch: true })
+  const page = await context.newPage()
+  try {
+    await page.goto('/prototype?multi')
+    const source = editorIn(page, 'day1')
+    await setCaretAtText(source, 'First day top line', 0)
+    await page.locator('.day-card[data-day="day1"] .notes-editor-move-button').tap()
+
+    const dialog = page.locator('.move-lines-dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'day2' }).click()
+    await expect(source).not.toContainText('First day top line')
+    await expect(editorIn(page, 'day2')).toHaveText(/^First day top line/)
+  } finally {
+    await context.close()
+  }
+})
+
 test('cmd-m restores the source caret to the line below the moved content', async ({ page }) => {
   await page.goto('/prototype?multi')
   const source = editorIn(page, 'day1')
