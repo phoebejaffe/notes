@@ -98,6 +98,23 @@ test('audio transcription links only render a checkbox for the actual task and k
   await expect(task).toHaveJSProperty('tagName', 'LI')
 })
 
+test('tapping a checkbox on a touch device toggles without focusing the editor', async ({ browser }) => {
+  const context = await browser.newContext({ hasTouch: true })
+  const page = await context.newPage()
+  try {
+    await page.goto('/prototype?scenario=checklist')
+    const target = editorFor(page).locator('li', { hasText: 'first task' })
+    const box = await target.boundingBox()
+    expect(box).not.toBeNull()
+    await page.touchscreen.tap(box!.x + 5, box!.y + 5)
+    await expectSource(page, /[-*] \[x\] first task/u)
+    await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).not.toBe('LI')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[contenteditable="true"]'))).toBeNull()
+  } finally {
+    await context.close()
+  }
+})
+
 test('checking a task changes only its marker and preserves editor selection and scroll', async ({ page }) => {
   await page.goto('/prototype?scenario=checklist')
   const root = editorFor(page)
